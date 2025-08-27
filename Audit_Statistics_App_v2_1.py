@@ -354,7 +354,7 @@ def main():
             with adv:
                 st.caption("Chọn kiểu dữ liệu để giảm chi phí suy luận. Bỏ trống nếu chưa chắc.")
                 dtype_choice = st.text_area(
-                    "Khai báo dtype dạng JSON (vd: {"Amount":"float64","Branch":"string"})",
+                    "Khai báo dtype dạng JSON (vd: {\"Amount\":\"float64\",\"Branch\":\"string\"})"
                     value="",
                     height=80,
                 )
