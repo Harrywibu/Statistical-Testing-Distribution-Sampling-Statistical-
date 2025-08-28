@@ -52,7 +52,7 @@ try:
 except Exception:
     HAS_PDF = False
 
-st.set_page_config(page_title="Audit Statistics v3.4 — Hybrid (Statefix + Presets Auto)", layout="wide")
+st.set_page_config(page_title="Audit Statistics - FULL COMBO BÁ CHÁY BỌ CHÉT)", layout="wide")
 
 # ============================== UTILITIES ==============================
 
@@ -157,7 +157,7 @@ for k, v in {
     'usecols_default': None, 'file_bytes': None, 'sha12': None, 'uploaded_name': None,
     'xlsx_sheet': None, 'header_row': 1, 'skip_top': 0, 'dtype_choice': '',
     'col_filter': '', 'pv_n': 100,
-    # Column UI versioning to avoid assigning to widget-keyed state
+    # Column UI versioning
     'col_ui_key': 1, 'pinned_default': [], 'selected_default': None,
     # Auto-preset controls
     'auto_preset_enabled': False, 'auto_preset_data': None, '_auto_applied_lock': set(),
@@ -165,44 +165,58 @@ for k, v in {
     if k not in SS: SS[k] = v
 
 # =============================== SIDEBAR ===============================
-st.sidebar.header('⚙️ Modules & Options')
-MOD_DATA = st.sidebar.checkbox('Data/Profiling', True, key='mod_data')
-MOD_WIZ = st.sidebar.checkbox('Auto‑wizard', True, key='mod_wiz')
-MOD_FLAGS = st.sidebar.checkbox('Fraud Flags', True, key='mod_flags')
-MOD_BENFORD = st.sidebar.checkbox('Benford F2D', True, key='mod_ben')
-MOD_SAMPLING = st.sidebar.checkbox('Sampling & Power', True, key='mod_samp')
-MOD_REPORT = st.sidebar.checkbox('Report', True, key='mod_rep')
+# Arrange groups by internal-audit analytics workflow
+st.sidebar.title('🧭 Quy trình phân tích')
 
-# Optional sub‑features (OFF by default to reduce visual noise)
-SHOW_QUALITY = st.sidebar.checkbox('Show Data Quality (optional)', False)
-SHOW_REG = st.sidebar.checkbox('Show Regression (optional)', False)
-
-st.sidebar.markdown('---')
-st.sidebar.subheader('Preset (Auto)')
+# 0) Nhập dữ liệu & Preset
+st.sidebar.header('0) Nhập dữ liệu & Preset')
 SS['auto_preset_enabled'] = st.sidebar.toggle('Auto‑apply Preset theo (file + sheet)', value=SS.get('auto_preset_enabled', False))
 up_auto = st.sidebar.file_uploader('Tải Preset JSON (auto)', type=['json'], key='up_preset_auto')
 if up_auto is not None:
     try:
         P = json.loads(up_auto.read().decode('utf-8'))
         SS['auto_preset_data'] = P
-        st.sidebar.success(f"Đã nạp Preset Auto cho: file='{P.get('file','?')}', sheet='{P.get('sheet','?')}'")
+        st.sidebar.success(f"Preset Auto: file='{P.get('file','?')}', sheet='{P.get('sheet','?')}'")
     except Exception as e:
         st.sidebar.error(f'Preset auto lỗi: {e}')
 
-st.sidebar.markdown('---')
-st.sidebar.subheader('Plot options')
+# 1) Khám phá dữ liệu
+st.sidebar.header('1) Khám phá dữ liệu')
+MOD_DATA = st.sidebar.checkbox('Mô tả & Phân phối', True, key='mod_data')
+SHOW_QUALITY = st.sidebar.checkbox('Chất lượng dữ liệu (DQ)', False, key='show_quality')
+
+# 2) Kế hoạch mẫu
+st.sidebar.header('2) Kế hoạch mẫu')
+MOD_SAMPLING = st.sidebar.checkbox('Sampling & Power', True, key='mod_samp')
+
+# 3) Kiểm định & Phân tích
+st.sidebar.header('3) Kiểm định & Phân tích')
+MOD_WIZ = st.sidebar.checkbox('Kiểm định thống kê (Auto‑wizard)', True, key='mod_wiz')
+SHOW_REG = st.sidebar.checkbox('Hồi quy (tuỳ chọn)', False, key='show_reg')
+
+# 4) Phát hiện bất thường
+st.sidebar.header('4) Phát hiện bất thường')
+MOD_BENFORD = st.sidebar.checkbox('Benford F2D', True, key='mod_ben')
+MOD_FLAGS = st.sidebar.checkbox('Fraud Flags', True, key='mod_flags')
+
+# 5) Báo cáo & Xuất
+st.sidebar.header('5) Báo cáo & Xuất')
+MOD_REPORT = st.sidebar.checkbox('Report', True, key='mod_rep')
+
+# Tuỳ chọn biểu đồ & Hiệu năng
+st.sidebar.header('Tuỳ chọn biểu đồ')
 SS['bins'] = st.sidebar.slider('Histogram bins', 10, 200, SS.get('bins', 50), step=5)
-SS['kde_threshold'] = st.sidebar.number_input('KDE tối đa n=', value=int(SS.get('kde_threshold', 50_000)), min_value=1_000, step=1_000)
 SS['log_scale'] = st.sidebar.checkbox('Log scale (X)', value=SS.get('log_scale', False))
 
-st.sidebar.markdown('---')
+st.sidebar.header('Hiệu năng')
+SS['kde_threshold'] = st.sidebar.number_input('KDE tối đa n=', value=int(SS.get('kde_threshold', 50_000)), min_value=1_000, step=1_000)
 downsample = st.sidebar.checkbox('Downsample hiển thị (50k dòng)', value=True, key='opt_down')
 if st.sidebar.button('🧹 Clear cache'):
     st.cache_data.clear(); st.toast('Đã xoá cache.', icon='🧹')
 
 # =============================== HEADER ===============================
-st.title('📊 Audit Statistics — Hybrid v3.4')
-st.caption('Excel‑first (Statefix chọn cột + Preset JSON; Auto‑apply) + Unified modules (Auto‑wizard/Fraud/Benford/Power/Report). UI tinh gọn, ổn định Session State.')
+st.title('📊 Audit Statistics — Hybrid v3.4 (Ordered)')
+st.caption('Excel‑first (Preset Auto) → Khám phá → Kế hoạch mẫu → Kiểm định → Bất thường → Báo cáo. Ổn định Session State, không lồng expander.')
 
 # -------------------- FILE UPLOAD & EXCEL‑FIRST INGEST --------------------
 uploaded = st.file_uploader('Upload dữ liệu (CSV/XLSX)', type=['csv','xlsx'], key='uploader')
@@ -212,13 +226,12 @@ if uploaded is None and SS['file_bytes'] is None:
 if uploaded is not None:
     pos = uploaded.tell(); uploaded.seek(0); fb = uploaded.read(); uploaded.seek(pos)
     new_sha = file_sha12(fb)
-    # Reset state if underlying file changed
     if SS.get('sha12') and SS['sha12'] != new_sha:
         for k in ['df','df_preview','xlsx_sheet']:
             SS.pop(k, None)
         SS['pinned_default'] = []
         SS['selected_default'] = None
-        SS['col_ui_key'] += 1  # re-mount widgets
+        SS['col_ui_key'] += 1
         SS['_auto_applied_lock'] = set()
     SS['file_bytes'] = fb; SS['sha12'] = new_sha; SS['uploaded_name'] = uploaded.name
 
@@ -247,10 +260,8 @@ if fname and fname.lower().endswith('.csv'):
     key_sel = f'sel_cols_ui_{salt}'
     selected = st.multiselect('Chọn cột cần nạp', options=list(SS['df_preview'].columns),
                               default=SS.get('selected_default', list(SS['df_preview'].columns)), key=key_sel)
-    # Small selection box
-    with st.expander('📦 Cột đã chọn', expanded=False):
-        st.caption(f'{len(selected)} cột được chọn')
-        st.code(', '.join(selected) if selected else '(none)')
+    st.caption(f'📦 {len(selected)} cột được chọn')
+    st.code(', '.join(selected) if selected else '(none)')
 
     if st.button('📥 Nạp toàn bộ CSV theo cột đã chọn', key='btn_load_csv'):
         with st.spinner('Đang nạp CSV…'):
@@ -265,6 +276,7 @@ else:
     except Exception as e:
         st.error(f'Không đọc được danh sách sheet: {e}'); st.stop()
 
+    # Outer expander ONLY; no nested expanders inside
     with st.expander('📁 Chọn sheet & header (XLSX)', expanded=True):
         c1,c2,c3 = st.columns([2,1,1])
         SS['xlsx_sheet'] = c1.selectbox('Sheet', options=sheets, index=0 if sheets else 0, key='xlsx_sheet_sel')
@@ -278,23 +290,22 @@ else:
 
         headers = []
         if SS['xlsx_sheet']:
-            with st.status('⏳ Đang lấy header…', expanded=False):
+            with st.spinner('⏳ Đang lấy header…'):
                 headers = get_headers_xlsx(file_bytes, SS['xlsx_sheet'], SS['header_row'], dtype_map)
         st.caption(f'📄 File SHA: {sha12} • Columns: {len(headers)}')
 
-        # Auto‑apply Preset when (file,sheet) matches, apply once per combo
+        # Auto‑apply Preset one‑time per (file,sheet)
         if SS['auto_preset_enabled'] and SS['auto_preset_data']:
             P = SS['auto_preset_data']
             combo = (fname, SS['xlsx_sheet'])
             if P.get('file') == fname and P.get('sheet') == SS['xlsx_sheet'] and combo not in SS['_auto_applied_lock']:
-                # Apply preset to defaults (never assign to widget-keyed state)
                 SS['header_row'] = int(P.get('header_row', SS['header_row']))
                 SS['skip_top'] = int(P.get('skip_top', SS['skip_top']))
                 SS['pinned_default'] = P.get('pinned', [])
                 SS['selected_default'] = P.get('selected', headers)
                 if P.get('dtype_map'): SS['dtype_choice'] = json.dumps(P['dtype_map'], ensure_ascii=False)
                 SS['col_filter'] = P.get('filter','')
-                SS['col_ui_key'] += 1  # force re-mount widgets with new defaults
+                SS['col_ui_key'] += 1
                 SS['_auto_applied_lock'].add(combo)
                 st.toast('Đã auto‑apply Preset cho file + sheet.', icon='✅')
 
@@ -302,14 +313,12 @@ else:
         q = st.text_input('🔎 Lọc tên cột', value=SS.get('col_filter',''), key='col_filter')
         filtered = [h for h in headers if q.lower() in h.lower()] if q else headers
 
-        # Defaults for first render / when headers changed
         if SS.get('_headers_key') != (SS['xlsx_sheet'], tuple(headers)):
             SS['_headers_key'] = (SS['xlsx_sheet'], tuple(headers))
             if SS['selected_default'] is None:
                 SS['selected_default'] = headers[:]
             SS['col_ui_key'] += 1
 
-        # Control buttons use versioning to avoid direct widget state mutation
         def _select_all():
             SS['selected_default'] = (filtered[:] if filtered else headers[:])
             SS['col_ui_key'] += 1
@@ -322,8 +331,9 @@ else:
         cB.button('❌ Bỏ chọn tất cả', on_click=_clear_all, use_container_width=True, key='btn_clearall')
         cC.caption('Tip: Gõ từ khoá rồi “Chọn tất cả” để chọn theo nhóm cột.')
 
-        # Preset JSON (manual) — minimal UI
-        with st.expander('💾 Preset (JSON) – Lưu & Mở (thủ công)', expanded=False):
+        # Manual Preset toggle (no nested expander)
+        show_preset = st.checkbox('Hiện Preset (JSON) — Lưu & Mở (thủ công)', value=False, key='show_preset_manual')
+        if show_preset:
             colp1, colp2 = st.columns([1,1])
             with colp1:
                 if st.button('💾 Lưu preset', key='btn_save_preset'):
@@ -340,7 +350,6 @@ else:
                     try:
                         P = json.loads(up.read().decode('utf-8'))
                         if P.get('sheet') == SS['xlsx_sheet']:
-                            # Apply to defaults only; re-mount widgets
                             SS['pinned_default'] = P.get('pinned', [])
                             SS['selected_default'] = P.get('selected', headers)
                             SS['header_row'] = int(P.get('header_row', SS['header_row']))
@@ -354,7 +363,7 @@ else:
                     except Exception as e:
                         st.error(f'Preset lỗi: {e}')
 
-        # Build column selectors with versioned keys (no direct assignment to widget keys)
+        # Column selectors (versioned keys)
         salt = SS['col_ui_key']
         key_pin = f'pinned_cols_ui_{salt}'
         key_sel = f'sel_cols_ui_{salt}'
@@ -362,9 +371,7 @@ else:
         selected_default = SS.get('selected_default', headers)
 
         pinned_cols = st.multiselect('📌 Cột bắt buộc (luôn nạp)', options=headers, default=pinned_default, key=key_pin)
-        # Order visible: pinned first then filtered remaining
         visible = [*pinned_cols, *[h for h in filtered if h not in pinned_cols]] if headers else []
-        # Defaults for selected: union of current selected_default (respecting visible) + pinned
         default_sel = [*pinned_cols, *[c for c in (selected_default or []) if (c in visible and c not in pinned_cols)]] if visible else (selected_default or headers)
         selected_cols = st.multiselect('🧮 Chọn cột cần nạp', options=(visible if visible else headers),
                                        default=default_sel, key=key_sel)
@@ -373,13 +380,11 @@ else:
         if len(final_cols)==0:
             st.warning('Hãy chọn ít nhất 1 cột.'); st.stop()
 
-        # Compact selection box for clarity
-        with st.expander('📦 Cột đã chọn', expanded=False):
-            st.caption(f'{len(final_cols)} / {len(headers)} cột sẽ được nạp')
-            st.code(', '.join(final_cols))
+        st.caption(f'📦 Sẽ nạp {len(final_cols)} / {len(headers)} cột')
+        st.code(', '.join(final_cols))
 
         # Preview
-        with st.status('⏳ Đang đọc Preview…', expanded=False):
+        with st.spinner('⏳ Đang đọc Preview…'):
             try:
                 df_prev = read_selected_columns_xlsx(file_bytes, SS['xlsx_sheet'], final_cols, nrows=SS['pv_n'],
                                                      header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map)
@@ -388,27 +393,25 @@ else:
                 st.error(f'Không đọc được preview: {e}'); st.stop()
         st.subheader('👀 Preview'); st.dataframe(SS['df_preview'], use_container_width=True, height=260)
 
-        # Main actions only; advanced in expander
-        b1,b2 = st.columns([1,1])
-        load_full = b1.button('📥 Nạp full dữ liệu', key='btn_load_full')
-        with b2.expander('⚙️ Nâng cao', expanded=False):
-            save_parquet = st.button('💾 Save as Parquet', key='btn_save_parquet')
+        # Main actions (no inner expander)
+        c1, c2 = st.columns([1,1])
+        load_full = c1.button('📥 Nạp full dữ liệu', key='btn_load_full')
+        show_adv = c2.checkbox('Hiện nâng cao (Parquet)', value=False, key='show_adv')
         if load_full:
-            with st.status('⏳ Đang nạp full dữ liệu…', expanded=False):
+            with st.spinner('⏳ Đang nạp full dữ liệu…'):
                 df_full = read_selected_columns_xlsx(file_bytes, SS['xlsx_sheet'], final_cols, nrows=None,
                                                      header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map)
                 SS['df'] = df_full
-                # Persist current defaults for future preset save
                 SS['pinned_default'] = pinned_cols
                 SS['selected_default'] = selected_cols
             st.success(f'Đã nạp: {len(SS["df"]):,} dòng × {len(SS["df"].columns)} cột • SHA12={sha12}')
-        if 'save_parquet' in locals() and save_parquet:
+        if show_adv:
             try:
                 df_save = SS['df'] if SS['df'] is not None else SS['df_preview']
                 buf = io.BytesIO(); df_save.to_parquet(buf, index=False)
                 st.download_button('⬇️ Tải Parquet', data=buf.getvalue(), file_name=f"{os.path.splitext(fname)[0]}__{SS['xlsx_sheet']}.parquet",
                                    mime='application/octet-stream', key='dl_parquet')
-                st.toast('Đã tạo Parquet — lần sau đọc rất nhanh.', icon='💾')
+                st.caption('💾 Parquet: lần sau đọc rất nhanh.')
             except Exception as e:
                 st.warning(f'Không thể ghi Parquet (cần pyarrow/fastparquet). Lỗi: {e}')
 
@@ -425,9 +428,9 @@ st.success(f"Dataset sẵn sàng: {len(df):,} dòng × {len(df.columns)} cột �
 num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 cat_cols = df.select_dtypes(include=['object','category','bool']).columns.tolist()
 
-# ========================= DATA / PROFILING (minimal) =========================
+# ========================= 1) KHÁM PHÁ DỮ LIỆU =========================
 if MOD_DATA:
-    st.markdown('### 📈 Descriptive & Distribution')
+    st.markdown('## 1) 📈 Khám phá & Mô tả')
     if len(num_cols)==0:
         st.info('Không có cột numeric.')
     else:
@@ -442,53 +445,74 @@ if MOD_DATA:
         else:
             st.caption('Cần plotly để xem biểu đồ tương tác.')
 
-    # Optional 1: Data Quality (off by default)
     if SHOW_QUALITY:
-        with st.expander('🧪 Data Quality (optional)', expanded=True):
-            rep, n_dupes = quality_report(df)
-            st.write(f'Bản ghi trùng lặp: **{n_dupes}**')
-            st.dataframe(rep, use_container_width=True, height=280)
+        st.markdown('### 🧪 Chất lượng dữ liệu (DQ)')
+        rep, n_dupes = quality_report(df)
+        st.write(f'Bản ghi trùng lặp: **{n_dupes}**')
+        st.dataframe(rep, use_container_width=True, height=280)
 
-    # Optional 2: Regression (off by default)
-    if SHOW_REG:
-        with st.expander('📘 Regression (optional)', expanded=True):
-            if not HAS_SK:
-                st.info('Cần cài scikit‑learn để dùng Regression: `pip install scikit-learn`.')
-            elif len(num_cols)>=2:
-                y_t = st.selectbox('Target (y)', num_cols, key='reg_y')
-                X_t = st.multiselect('Features (X)', [c for c in num_cols if c!=y_t], default=[c for c in num_cols if c!=y_t][:2])
-                test_size = st.slider('Test size', 0.1, 0.5, 0.25, 0.05)
-                if st.button('Run Linear Regression', key='btn_reg'):
-                    sub = df[[y_t] + X_t].dropna()
-                    if len(sub) < (len(X_t)+5):
-                        st.error('Không đủ dữ liệu sau khi loại missing.')
-                    else:
-                        X = sub[X_t]; yv = sub[y_t]
-                        Xtr,Xte,ytr,yte = train_test_split(X,yv,test_size=test_size,random_state=42)
-                        mdl = LinearRegression().fit(Xtr,ytr); yhat = mdl.predict(Xte)
-                        r2 = r2_score(yte,yhat); adj = 1-(1-r2)*(len(yte)-1)/(len(yte)-Xte.shape[1]-1)
-                        rmse = float(np.sqrt(mean_squared_error(yte,yhat)))
-                        st.write({"R2":round(r2,3),"Adj_R2":round(adj,3),"RMSE":round(rmse,3)})
-                        if HAS_PLOTLY:
-                            resid = yte - yhat
-                            fig1 = px.scatter(x=yhat, y=resid, labels={'x':'Fitted','y':'Residuals'}, title='Residuals vs Fitted')
-                            fig2 = px.histogram(resid, nbins=SS['bins'], title='Residuals')
-                            st.plotly_chart(fig1, use_container_width=True, config={'displaylogo': False})
-                            st.plotly_chart(fig2, use_container_width=True, config={'displaylogo': False})
-                        else:
-                            st.caption('Cần plotly để xem biểu đồ phần dư.')
-            else:
-                st.info('Cần ít nhất 2 biến numeric để chạy hồi quy.')
-
-# =============================== TABS (Unified) ===============================
-TAB1, TAB2, TAB3, TAB4, TAB5 = st.tabs([
-    'Auto‑wizard', 'Fraud Flags', 'Benford F2D', 'Sampling & Power', 'Report'
+# ========================= TABS (2→5) THEO QUY TRÌNH =========================
+TAB_SAMP, TAB_WIZ, TAB_BEN, TAB_FLAGS, TAB_REP = st.tabs([
+    '2) Sampling & Power', '3) Kiểm định thống kê', '4) Benford F2D', '4) Fraud Flags', '5) Báo cáo'
 ])
 
-# ---- TAB 1: Auto‑wizard ----
-with TAB1:
+# ---- 2) Sampling & Power ----
+with TAB_SAMP:
+    if not MOD_SAMPLING:
+        st.info('Module Sampling & Power đang tắt trong Sidebar.')
+    else:
+        st.subheader('🎯 Sampling & Power')
+        c1,c2 = st.columns(2)
+        with c1:
+            st.markdown('**Proportion sampling**')
+            conf = st.selectbox('Confidence', [90,95,99], index=1, key='sp_conf')
+            zmap = {90:1.645,95:1.96,99:2.576}; z = zmap[conf]
+            e = st.number_input('Margin of error (±)', value=0.05, min_value=0.0001, max_value=0.5, step=0.01, key='sp_e')
+            p0 = st.slider('Expected proportion p', 0.01, 0.99, 0.5, 0.01, key='sp_p0')
+            N = st.number_input('Population size (optional, FPC)', min_value=0, value=0, step=1, key='sp_N')
+            n0 = (z**2 * p0*(1-p0)) / (e**2); n = n0/(1+(n0-1)/N) if N>0 else n0
+            st.success(f'Cỡ mẫu (proportion): **{int(np.ceil(n))}**')
+        with c2:
+            st.markdown('**Mean sampling**')
+            sigma = st.number_input('Ước lượng σ', value=1.0, min_value=0.0001, key='sm_sigma')
+            e2 = st.number_input('Sai số cho mean (±)', value=1.0, min_value=0.0001, key='sm_e2')
+            conf2 = st.selectbox('Confidence (mean)', [90,95,99], index=1, key='sm_conf2'); z2 = zmap[conf2]
+            n0m = (z2**2 * sigma**2) / (e2**2); nm = n0m/(1+(n0m-1)/N) if N>0 else n0m
+            st.success(f'Cỡ mẫu (mean): **{int(np.ceil(nm))}**')
+        st.markdown('---')
+        st.markdown('**Power Analysis (xấp xỉ để lập kế hoạch)**')
+        c3,c4,c5 = st.columns(3)
+        def z_from_p(p): return stats.norm.ppf(p)
+        def power_ttest_2sample(d: float, alpha: float=0.05, power: float=0.8):
+            if d<=0: return np.nan
+            z_alpha = z_from_p(1 - alpha/2); z_power = z_from_p(power)
+            return int(np.ceil(2 * (z_alpha + z_power)**2 / (d**2)))
+        def power_anova_cohen_f(f: float, k: int, alpha: float=0.05, power: float=0.8):
+            if f<=0 or k<2: return np.nan
+            z_alpha = z_from_p(1 - alpha); z_power = z_from_p(power)
+            return int(np.ceil(((k - 1) * (z_alpha + z_power)**2) / (f**2) + k))
+        def power_corr_fisher_z(r: float, alpha: float=0.05, power: float=0.8):
+            if abs(r)<=0 or abs(r)>=0.999: return np.nan
+            zr = np.arctanh(r); z_alpha = z_from_p(1 - alpha/2); z_power = z_from_p(power)
+            return int(np.ceil(((z_alpha + z_power)**2 / (zr**2)) + 3))
+        with c3:
+            d = st.number_input("Cohen d", value=0.5, min_value=0.01, max_value=3.0, step=0.01, key='pw_d')
+            alpha = st.number_input("α", value=0.05, min_value=0.0001, max_value=0.5, step=0.01, format="%f", key='pw_alpha')
+            power = st.number_input("Power", value=0.8, min_value=0.5, max_value=0.999, step=0.01, key='pw_power')
+            st.info(f"≈ n mỗi nhóm: **{power_ttest_2sample(d, alpha, power)}**")
+        with c4:
+            f = st.number_input("Cohen f", value=0.25, min_value=0.01, max_value=2.0, step=0.01, key='pw_f')
+            k = st.number_input("k nhóm", value=3, min_value=2, max_value=50, step=1, key='pw_k')
+            st.info(f"≈ tổng N: **{power_anova_cohen_f(f, int(k), alpha, power)}**")
+        with c5:
+            r = st.number_input("r (|r|<1)", value=0.3, min_value=-0.99, max_value=0.99, step=0.01, key='pw_r')
+            st.info(f"≈ n cần thiết: **{power_corr_fisher_z(r, alpha, power)}**")
+        st.caption('Ghi chú: Xấp xỉ nhanh để lập kế hoạch; dữ liệu lệch mạnh nên kiểm định power chi tiết.')
+
+# ---- 3) Kiểm định thống kê (Auto‑wizard) ----
+with TAB_WIZ:
     if not MOD_WIZ:
-        st.info('Module Auto‑wizard đang tắt trong Sidebar.')
+        st.info('Module Kiểm định thống kê đang tắt trong Sidebar.')
     else:
         st.subheader('🧭 Auto‑wizard — Chọn mục tiêu → Test phù hợp')
         dt_guess = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c]) or re.search(r"date|time", str(c), re.IGNORECASE)]
@@ -627,8 +651,31 @@ with TAB1:
                     for title, tbl in res['posthoc'].items():
                         st.markdown(f'*{title}*'); st.dataframe(tbl, use_container_width=True, height=260)
 
-# ---- TAB 2: Fraud Flags ----
-with TAB2:
+# ---- 4) Benford F2D ----
+with TAB_BEN:
+    if not MOD_BENFORD:
+        st.info('Module Benford đang tắt trong Sidebar.')
+    else:
+        st.subheader('🔢 Benford First‑2 digits (10–99)')
+        amt = st.selectbox('Chọn cột số tiền (Amounts)', options=num_cols or df.columns.tolist(), key='bf_amt')
+        if st.button('📈 Run Benford F2D', key='bf_run'):
+            res = benford_f2d(df[amt])
+            if not res: st.error('Không trích xuất được 2 chữ số đầu.')
+            else:
+                tb = res['table']
+                if HAS_PLOTLY:
+                    fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
+                    fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                    fig.update_layout(title='Benford F2D — Observed vs Expected', xaxis_title='First‑2 digits', yaxis_title='Proportion', height=420)
+                    st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
+                st.json({k:(float(v) if isinstance(v,(int,float,np.floating)) else v) for k,v in {k:res[k] for k in ['n','chi2','p','MAD','level']}.items()})
+                if (res['p']<0.05) or (res['MAD']>0.015):
+                    SS['fraud_flags'].append({'flag':'Benford F2D bất thường','column': amt,'threshold':'p<0.05 hoặc MAD>0.015','value': f"p={res['p']:.4g}; MAD={res['MAD']:.3f}; level={res['level']}",'note':'Xem drill‑down theo chi nhánh/nhân sự/kỳ.'})
+                    st.warning('Đã thêm Benford vào Fraud Flags để theo dõi tiếp.')
+                SS['last_test'] = {'name': 'Benford F2D', 'metrics': {k:res[k] for k in ['n','chi2','p','MAD','level']}, 'ctx': {'type':'benford','table':tb}}
+
+# ---- 4) Fraud Flags ----
+with TAB_FLAGS:
     if not MOD_FLAGS:
         st.info('Module Fraud Flags đang tắt trong Sidebar.')
     else:
@@ -707,85 +754,14 @@ with TAB2:
                 else:
                     st.info(f'{title}: Cần plotly để hiển thị biểu đồ.')
 
-# ---- TAB 3: Benford F2D ----
-with TAB3:
-    if not MOD_BENFORD:
-        st.info('Module Benford đang tắt trong Sidebar.')
-    else:
-        st.subheader('🔢 Benford First‑2 digits (10–99)')
-        amt = st.selectbox('Chọn cột số tiền (Amounts)', options=num_cols or df.columns.tolist(), key='bf_amt')
-        if st.button('📈 Run Benford F2D', key='bf_run'):
-            res = benford_f2d(df[amt])
-            if not res: st.error('Không trích xuất được 2 chữ số đầu.')
-            else:
-                tb = res['table']
-                if HAS_PLOTLY:
-                    fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                    fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    fig.update_layout(title='Benford F2D — Observed vs Expected', xaxis_title='First‑2 digits', yaxis_title='Proportion', height=420)
-                    st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
-                st.json({k:(float(v) if isinstance(v,(int,float,np.floating)) else v) for k,v in {k:res[k] for k in ['n','chi2','p','MAD','level']}.items()})
-                if (res['p']<0.05) or (res['MAD']>0.015):
-                    SS['fraud_flags'].append({'flag':'Benford F2D bất thường','column': amt,'threshold':'p<0.05 hoặc MAD>0.015','value': f"p={res['p']:.4g}; MAD={res['MAD']:.3f}; level={res['level']}",'note':'Xem drill‑down theo chi nhánh/nhân sự/kỳ.'})
-                    st.warning('Đã thêm Benford vào Fraud Flags để theo dõi tiếp.')
-                SS['last_test'] = {'name': 'Benford F2D', 'metrics': {k:res[k] for k in ['n','chi2','p','MAD','level']}, 'ctx': {'type':'benford','table':tb}}
-
-# ---- TAB 4: Sampling & Power ----
-with TAB4:
-    if not MOD_SAMPLING:
-        st.info('Module Sampling & Power đang tắt trong Sidebar.')
-    else:
-        st.subheader('🎯 Sampling & Power'); c1,c2 = st.columns(2)
-        with c1:
-            st.markdown('**Proportion sampling**'); conf = st.selectbox('Confidence', [90,95,99], index=1, key='sp_conf')
-            zmap = {90:1.645,95:1.96,99:2.576}; z = zmap[conf]
-            e = st.number_input('Margin of error (±)', value=0.05, min_value=0.0001, max_value=0.5, step=0.01, key='sp_e')
-            p0 = st.slider('Expected proportion p', 0.01, 0.99, 0.5, 0.01, key='sp_p0')
-            N = st.number_input('Population size (optional, FPC)', min_value=0, value=0, step=1, key='sp_N')
-            n0 = (z**2 * p0*(1-p0)) / (e**2); n = n0/(1+(n0-1)/N) if N>0 else n0
-            st.success(f'Cỡ mẫu (proportion): **{int(np.ceil(n))}**')
-        with c2:
-            st.markdown('**Mean sampling**'); sigma = st.number_input('Ước lượng σ', value=1.0, min_value=0.0001, key='sm_sigma')
-            e2 = st.number_input('Sai số cho mean (±)', value=1.0, min_value=0.0001, key='sm_e2')
-            conf2 = st.selectbox('Confidence (mean)', [90,95,99], index=1, key='sm_conf2'); z2 = zmap[conf2]
-            n0m = (z2**2 * sigma**2) / (e2**2); nm = n0m/(1+(n0m-1)/N) if N>0 else n0m
-            st.success(f'Cỡ mẫu (mean): **{int(np.ceil(nm))}**')
-        st.markdown('---'); st.markdown('**Power Analysis (xấp xỉ để lập kế hoạch)**'); c3,c4,c5 = st.columns(3)
-        def z_from_p(p): return stats.norm.ppf(p)
-        def power_ttest_2sample(d: float, alpha: float=0.05, power: float=0.8):
-            if d<=0: return np.nan
-            z_alpha = z_from_p(1 - alpha/2); z_power = z_from_p(power)
-            return int(np.ceil(2 * (z_alpha + z_power)**2 / (d**2)))
-        def power_anova_cohen_f(f: float, k: int, alpha: float=0.05, power: float=0.8):
-            if f<=0 or k<2: return np.nan
-            z_alpha = z_from_p(1 - alpha); z_power = z_from_p(power)
-            return int(np.ceil(((k - 1) * (z_alpha + z_power)**2) / (f**2) + k))
-        def power_corr_fisher_z(r: float, alpha: float=0.05, power: float=0.8):
-            if abs(r)<=0 or abs(r)>=0.999: return np.nan
-            zr = np.arctanh(r); z_alpha = z_from_p(1 - alpha/2); z_power = z_from_p(power)
-            return int(np.ceil(((z_alpha + z_power)**2 / (zr**2)) + 3))
-        with c3:
-            d = st.number_input("Cohen d", value=0.5, min_value=0.01, max_value=3.0, step=0.01, key='pw_d')
-            alpha = st.number_input("α", value=0.05, min_value=0.0001, max_value=0.5, step=0.01, format="%f", key='pw_alpha')
-            power = st.number_input("Power", value=0.8, min_value=0.5, max_value=0.999, step=0.01, key='pw_power')
-            st.info(f"≈ n mỗi nhóm: **{power_ttest_2sample(d, alpha, power)}**")
-        with c4:
-            f = st.number_input("Cohen f", value=0.25, min_value=0.01, max_value=2.0, step=0.01, key='pw_f')
-            k = st.number_input("k nhóm", value=3, min_value=2, max_value=50, step=1, key='pw_k')
-            st.info(f"≈ tổng N: **{power_anova_cohen_f(f, int(k), alpha, power)}**")
-        with c5:
-            r = st.number_input("r (|r|<1)", value=0.3, min_value=-0.99, max_value=0.99, step=0.01, key='pw_r')
-            st.info(f"≈ n cần thiết: **{power_corr_fisher_z(r, alpha, power)}**")
-        st.caption('Ghi chú: Xấp xỉ nhanh để lập kế hoạch; dữ liệu lệch mạnh nên kiểm định power chi tiết.')
-
-# ---- TAB 5: Report ----
-with TAB5:
+# ---- 5) Báo cáo ----
+with TAB_REP:
     if not MOD_REPORT:
         st.info('Module Report đang tắt trong Sidebar.')
     else:
         st.subheader('🧾 Xuất báo cáo ngắn (DOCX/PDF)')
         last = SS.get('last_test', None); flags = SS.get('fraud_flags', [])
-        if not last: st.info('Chưa có kết quả kiểm định gần nhất. Hãy chạy Auto‑wizard/Benford trước.')
+        if not last: st.info('Chưa có kết quả kiểm định gần nhất. Hãy chạy Kiểm định/Benford trước.')
         title = st.text_input('Tiêu đề báo cáo', value= last['name'] if last else 'Audit Statistics — Findings', key='rep_title')
         add_flags = st.checkbox('Đính kèm Fraud Flags', value=True, key='rep_addflags')
 
@@ -864,5 +840,5 @@ with TAB5:
                 st.error('Không xuất được DOCX/PDF (thiếu python-docx hoặc PyMuPDF).')
 
 # Footer
-meta = {"app":"v3.4-hybrid-presets-auto", "time": datetime.now().isoformat(), "file": fname, "sha12": sha12}
+meta = {"app":"v3.4-hybrid-presets-auto-ordered", "time": datetime.now().isoformat(), "file": fname, "sha12": sha12}
 st.download_button('🧾 Tải audit log (JSON)', data=json.dumps(meta, ensure_ascii=False, indent=2).encode('utf-8'), file_name=f"audit_log_{int(time.time())}.json", key='dl_log')
