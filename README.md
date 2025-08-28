@@ -1,7 +1,7 @@
 ## 🚀 Cách chạy
 ```bash
 pip install -r requirements.txt
-streamlit run Audit_Statistics_App_v3_8_2_full.py
+streamlit run Audit_Statistics_App_v2_1.py
 ```
 > Yêu cầu: Python 3.9–3.12. `requirements.txt` bao gồm `plotly`, `kaleido`, `scipy`, `statsmodels`, `scikit-learn`, `python-docx`, `PyMuPDF`, `openpyxl`, `pyarrow/fastparquet`.
 
