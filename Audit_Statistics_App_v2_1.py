@@ -936,6 +936,3 @@ with TAB7:
                     else: st.error('Export failed. Make sure visuals are generated first.')
                 for _,_,_,img in img_paths:
                     with contextlib.suppress(Exception): os.remove(img)
-
-st.caption('All features restored: Risk Assessment + Export DOCX/PDF + all Profiling, Trend/Correlation, Benford, Tests, Regression, Fraud Flags; with performance caching & type-safe fixes.')
-''')
