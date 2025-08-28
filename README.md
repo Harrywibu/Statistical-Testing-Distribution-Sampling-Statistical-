@@ -188,7 +188,6 @@ pip install -U python-docx pymupdf
 
 ---
 
-## 11) License & Credits
-- Nội dung hợp nhất dựa trên các phiên bản trước của bạn và tinh chỉnh bởi M365 Copilot.
-- Thư viện bên thứ ba thuộc sở hữu tác giả tương ứng.
+## 11) License & Credi
+- Thư viện bên thứ ba (AI hỗ trợ) thuộc sở hữu tác giả tương ứng.
 
