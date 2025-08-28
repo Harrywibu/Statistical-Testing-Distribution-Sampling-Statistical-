@@ -4,6 +4,7 @@ numpy>=1.26
 scipy>=1.11
 openpyxl>=3.1
 plotly>=5.18
+kaleido>=0.2.1
 statsmodels>=0.14
 scikit-learn>=1.4
 python-docx>=1.1
