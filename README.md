@@ -1,155 +1,194 @@
-# 📊 Audit Statistics App (v2.1)
-**Minimalist • Rule‑Driven Insights • Data Auditor Workflow**
+# Audit Statistics — Hybrid v3.4 (Statefix + Unified)
 
-Ứng dụng Streamlit hỗ trợ kiểm toán dữ liệu với visual tối giản và **cảnh báo tự động** dựa trên ngưỡng tiêu chuẩn (Shapiro, Levene, Cohen’s d, r, eta², …).  
-Triển khai nhanh qua **GitHub → Streamlit Cloud** hoặc chạy **local / Codespaces**.
+**Ngày phát hành**: 2025-08-28  
+**Tác giả hợp nhất**:Tran Huy Hoang
+
+Ứng dụng Streamlit phục vụ kiểm toán nội bộ & phân tích thống kê, kết hợp **luồng nạp dữ liệu Excel‑first kiểu _statefix_** (chọn sheet/cột trước khi nạp) với các **module phân tích hợp nhất** (Auto‑wizard, Fraud Flags, Benford F2D, Sampling & Power, Report). Bản v3.4 bổ sung **Preset JSON (Save/Load + Auto‑apply theo file + sheet)** và **UI tinh gọn**.
 
 ---
 
-## 🗂 Cấu trúc dự án
+## 1) Tính năng chính
 
+- **Excel‑first ingestion (statefix):** chọn *sheet*, thiết lập *header row* & *skip rows*, **lọc tên cột**, **pin** cột, **Chọn tất cả/Bỏ chọn**, **Preview** (100–500 dòng), **Save Parquet**.
+- **Preset JSON:**
+  - **Lưu** preset (file, sheet, header_row, skip_top, pinned, selected, dtype_map, filter).
+  - **Auto‑apply** *(mới)*: bật ở Sidebar → tải **Preset JSON (auto)** → khi đúng **file + sheet**, app tự áp dụng preset (không cần bấm thêm).
+- **Modules hợp nhất:**
+  - **Auto‑wizard** (cut‑off / group mean / pre‑post / proportion / chi‑square / correlation)
+  - **Fraud Flags** (rule‑of‑thumb trực quan)
+  - **Benford F2D** (10–99, MAD & p‑value, auto-flag)
+  - **Sampling & Power** (ước lượng cỡ mẫu & power xấp xỉ)
+  - **Report** (xuất DOCX/PDF, nhúng hình preview)
+- **Tuỳ chọn (OFF mặc định)**: **Data Quality** (missing, unique, constant, mixed types, duplicates), **Regression** (Linear, R²/Adj‑R²/RMSE, biểu đồ residuals).
+- **Ổn định & hiệu năng:** Downsample hiển thị 50k, Save Parquet, soft‑import thư viện (thiếu lib **không crash**), state giữ ổn định khi click.
+
+---
+
+## 2) Yêu cầu hệ thống
+
+- Python 3.9+ (khuyến nghị 3.10–3.12)
+- Thư viện:
+```txt
+streamlit>=1.32
+plotly>=5.24,<6      # đồ thị tương tác
+scipy>=1.10
+statsmodels>=0.14    # post-hoc Tukey (tuỳ chọn)
+openpyxl>=3.1        # đọc Excel
+python-docx>=1.1     # xuất DOCX (tuỳ chọn)
+pymupdf>=1.23        # xuất PDF (tuỳ chọn)
+scikit-learn>=1.3    # Regression (tuỳ chọn)
+pyarrow>=14          # Save Parquet (khuyến nghị)
 ```
-audit-statistics-app/
-├─ Audit_Statistics_App_v2_1.py     # Ứng dụng Streamlit
-├─ requirements.txt                  # Thư viện cần thiết (đã pin version ổn định)
-├─ runtime.txt                       # Phiên bản Python cho Streamlit Cloud
-├─ .gitignore                        # Bỏ qua file tạm/venv
-└─ .streamlit/
-   └─ config.toml                    # Theme & cấu hình server
-```
 
-> ✅ Tuỳ chọn (nếu dùng GitHub Codespaces): thêm `.devcontainer/devcontainer.json` để tự cài `requirements.txt` sau khi mở Codespaces.
+> Ứng dụng vẫn chạy nếu thiếu một số thư viện; tính năng phụ thuộc sẽ bị ẩn và hiển thị hướng dẫn cài đặt.
 
 ---
 
-## 🚀 Deploy lên Streamlit Cloud (qua GitHub)
-
-1. **Tạo repo GitHub** (Public/Private) và **đẩy toàn bộ file** trong thư mục trên.
-2. Truy cập **https://share.streamlit.io** (Streamlit Cloud) → **New app** → kết nối GitHub.
-3. Chọn **repo** và **branch** (thường `main`), nhập **App file path**:
-   ```
-   Audit_Statistics_App_v2_1.py
-   ```
-4. **Deploy** và chờ build (lần đầu 2–5 phút). Lỗi phụ thuộc? Xem mục **Troubleshooting** bên dưới.
-5. Mở URL app được cấp.
-
-**Ghi chú:**
-- `runtime.txt` (ví dụ `python-3.11`) giúp cố định phiên bản Python trên Cloud.
-- `requirements.txt` đã pin các phiên bản tương thích (tránh xung đột NumPy/Statsmodels).
-
----
-
-## 🧑‍💻 Chạy Local (máy cá nhân)
+## 3) Cài đặt & khởi chạy nhanh
 
 ```bash
-# 1) Tạo & kích hoạt môi trường ảo
-python -m venv .venv
-# Windows:
-.venv\Scripts ctivate
-# macOS/Linux:
-source .venv/bin/activate
+# 1) Tạo môi trường & cài phụ thuộc
+pip install -U streamlit plotly scipy statsmodels openpyxl python-docx pymupdf scikit-learn pyarrow
 
-# 2) Cài thư viện
-pip install -r requirements.txt
+# 2) Chạy ứng dụng
+streamlit run Audit_Statistics_App_v3_4_hybrid_statefix_presets_auto.py
+```
 
-# 3) Chạy ứng dụng
-streamlit run Audit_Statistics_App_v2_1.py
+Mặc định mở tại `http://localhost:8501`.
+
+---
+
+## 4) Luồng sử dụng (Workflow)
+
+### 4.1. Upload & Preview
+1. **Upload** file `.xlsx` hoặc `.csv`.
+2. Nếu là **XLSX**: chọn **sheet**, thiết lập **Header row** (1-based) & **Skip rows** (bỏ qua N dòng sau header), điền **dtype JSON** (nếu cần).
+3. Bấm **🔍 Xem nhanh** → hiển thị **Preview**.
+
+### 4.2. Chọn cột kiểu *statefix*
+- Nhập **🔎 Lọc tên cột** → **📌 Pin** các cột bắt buộc.
+- Dùng **✅ Chọn tất cả** / **❌ Bỏ chọn tất cả**.
+- Chọn các cột cần nạp ở **🧮 Chọn cột cần nạp**.
+
+### 4.3. Preset JSON
+- **Lưu preset**: mở *expander Preset* → **Lưu preset** → tải file JSON.
+- **Mở preset thủ công**: *expander Preset* → tải preset JSON, áp dụng cho **đúng sheet**.
+- **Auto‑apply preset (mới)**:
+  1) Sidebar → **bật Auto‑apply Preset**.
+  2) Sidebar → **Preset JSON (auto)**: tải lên file preset.
+  3) Khi chọn **đúng file + sheet**, app tự áp preset và hiển thị thông báo.
+
+### 4.4. Nạp dữ liệu đầy đủ / Lưu Parquet
+- **📥 Nạp full dữ liệu**: đọc toàn bộ theo cột đã chọn.
+- **💾 Save as Parquet**: lưu nhanh để lần sau đọc tốc độ cao.
+
+---
+
+## 5) Modules phân tích
+
+### 5.1. Auto‑wizard
+Chọn **Mục tiêu** và các biến liên quan → bấm **🚀 Run**. Kết quả trả về:
+- **Biểu đồ** (box/heatmap/scatter, tuỳ bài toán)
+- **Metrics** (t/p/Levene/Cohen d, ANOVA F, r/p, …)
+- **Giải thích** ngắn gọn ý nghĩa p‑value & khuyến nghị hành động
+- **Post‑hoc** (Tukey HSD) nếu có statsmodels
+
+### 5.2. Fraud Flags
+Chọn *Amount*, *Datetime*, *Group keys* tuỳ ý → **🔎 Scan**. Một số rule:
+- **Tỷ lệ 0** cao (>30%) cho cột số
+- **Đuôi phải dày** (P99 outliers)
+- **Ngoài giờ** (trước 7h, sau 20h)
+- **Pattern DOW** bất thường (±2σ)
+- **Tổ hợp khóa trùng** (>1)
+
+### 5.3. Benford F2D (10–99)
+- Hiển thị **Observed vs Expected**; tính **χ², p‑value, MAD, level** (Close/Acceptable/Marginal/Nonconformity).
+- Nếu `p<0.05` hoặc `MAD>0.015` → **tự thêm vào Fraud Flags**.
+
+### 5.4. Sampling & Power
+- **Cỡ mẫu** cho Proportion/Mean (có FPC nếu nhập N).
+- **Power** xấp xỉ cho t‑test (Cohen d), ANOVA (Cohen f), Correlation (r).
+
+### 5.5. Report (DOCX/PDF)
+- Chọn **tiêu đề**, tick **đính kèm Fraud Flags**.
+- **Export DOCX/PDF** *(cần `python-docx`/`pymupdf`)*.
+
+---
+
+## 6) Tuỳ chọn nâng cao (OFF mặc định)
+
+### 6.1. Data Quality
+- Bảng `missing_ratio`, `n_unique`, `constant`, `mixed_types`, số `duplicates`.
+
+### 6.2. Regression
+- Linear Regression (R², Adj‑R², RMSE), biểu đồ **Residuals vs Fitted** & **Residuals**.
+- Cần `scikit-learn`. Thiếu → app sẽ nhắc cài.
+
+---
+
+## 7) Mẹo hiệu năng & độ tin cậy dữ liệu
+- **Parquet first**: Sau khi nạp XLSX lớn, nên **Save Parquet** và dùng Parquet cho lần sau.
+- **Downsample hiển thị 50k**: chỉ ảnh hưởng hiển thị, không làm sai số nếu bạn chạy phân tích trên mẫu đã downsample (hãy tắt nếu cần tính toàn bộ).
+- **Ép kiểu**: sử dụng mục dtype JSON trong ingest hoặc chuẩn hoá số liệu trước khi test.
+
+---
+
+## 8) Preset JSON — ví dụ
+```json
+{
+  "file": "Transactions_Q3.xlsx",
+  "sheet": "Data",
+  "header_row": 2,
+  "skip_top": 1,
+  "pinned": ["Branch", "Amount", "TransDate"],
+  "selected": ["Branch", "Employee", "Amount", "TransDate", "Type"],
+  "dtype_map": {"Branch": "string", "Employee": "string", "Amount": "float64"},
+  "filter": "amt|date"
+}
 ```
 
 ---
 
-## 🧭 Quickstart trên GitHub Codespaces (tùy chọn)
+## 9) Xử lý sự cố (Troubleshooting)
 
-1. **Open in Codespaces** trên repo → Codespace sẽ khởi tạo môi trường.
-2. Trong **Terminal** (bên trong Codespaces):
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-3. Chọn **Python Interpreter**: `Ctrl+Shift+P` → *Python: Select Interpreter* → chọn `.venv/bin/python`.
-4. Chạy app:
-   ```bash
-   streamlit run Audit_Statistics_App_v2_1.py
-   ```
+**A. Lỗi `ModuleNotFoundError: No module named 'plotly'` / app 503**  
+→ Cài `plotly` và chạy lại:
+```bash
+pip install -U plotly
+```
+Phiên bản v3.4 đã có **soft‑import**, thiếu lib sẽ không crash, nhưng bạn cần cài để có đồ thị.
 
-> Muốn tự động cài thư viện khi tạo Codespaces? Tạo `.devcontainer/devcontainer.json` với `postCreateCommand: "pip install -r requirements.txt"`.
-
----
-
-## 🔧 Tính năng chính
-
-- **Data Quality**: phát hiện `missing`, `mixed types`, `constant`, `duplicates`; **Chuẩn hoá số** (xoá ký hiệu tiền, đổi dấu thập phân/ngăn cách nghìn).
-- **Profiling**: thống kê mô tả (count, mean, std, IQR), **Distribution** (hist/KDE, Q‑Q), **Outlier** (IQR).
-- **Sampling & Size (FPC)**: bộ tính **sample size** cho *proportion* & *mean* có **finite population correction**.
-- **Statistical Tests**:
-  - *Normality*: Shapiro (n ≤ 5000), Anderson–Darling (statistic).
-  - *Variance*: Levene (khuyến nghị Welch khi p<0.05).
-  - *Group*: t‑test (Student/Welch), Mann–Whitney; ANOVA, Welch ANOVA, Kruskal–Wallis.
-  - *Correlation*: Pearson / Spearman (scatter/regplot).
-  - *Regression*: Linear (R² / Adj‑R² / RMSE), VIF, residual plots.
-- **Insights (Auto)**: **rule‑engine** sinh cảnh báo **Info / Caution / Action** theo ngưỡng chuẩn; tránh spam “if…else” thủ công.
-- **Export**: `audit_log.json` (tham số, versions, facts) và `descriptive.xlsx`.
-
----
-
-## 📥 Định dạng dữ liệu khuyến nghị
-
-- **Header** ở hàng đầu tiên; không trùng tên cột.
-- **Numeric**: dùng **dấu chấm** `.` làm thập phân; **không** để ký hiệu tiền trong ô (nếu có → dùng **Chuẩn hoá số**).
-- Tránh ngăn cách nghìn (`,`, `.`); nếu có, hãy chuẩn hoá trong app.
-- **Ngày** dạng ISO `YYYY-MM-DD`.
-- CSV mã hoá **UTF‑8**.
-
----
-
-## 🧠 Tuỳ biến rule cảnh báo
-
-Các rule được định nghĩa trong hằng `RULES` (mảng dict) của `Audit_Statistics_App_v2_1.py`.  
-Mỗi rule gồm: `metric`, `op`, `value`, `severity`, `message`, `ref`, `ref_id`.
-
-Ví dụ chỉnh ngưỡng *effect size*:
+**B. `StreamlitAPIException` khi dùng `st.session_state`**  
+Nguyên nhân thường gặp: gán vào `st.session_state['key']` **trùng `key` của widget**.  
+**Không làm:**
 ```python
-{"metric": "cohen_d", "op": ">", "value": 0.8, "severity": "action",
- "message": "Cohen’s d lớn (>0.8): khác biệt thực sự đáng kể.",
- "ref": "Cohen thresholds", "ref_id": "your-ref"}
+SS['pinned_cols'] = st.multiselect(..., key='pinned_cols')
+```
+**Làm đúng:**
+```python
+pinned_cols = st.multiselect(..., key='pinned_cols')  # đọc từ widget
+# dùng pinned_cols hoặc st.session_state['pinned_cols'] về sau
+```
+Bản v3.4 đã sửa triệt để pattern này.
+
+**C. Không đọc được XLSX / sai header**  
+Kiểm tra `header_row` (1‑based) & `skip_top`. Nếu dữ liệu rất lớn, nên **Save Parquet** rồi dùng Parquet cho lần sau.
+
+**D. PDF/DOCX không tạo được**  
+Cài đủ thư viện:
+```bash
+pip install -U python-docx pymupdf
 ```
 
-> Có thể tách rules ra file `rules.json` (tùy biến nâng cao) và nạp khi khởi động app.
+---
+
+## 10) Gợi ý tích hợp CI/CD
+- Đưa các gói bắt buộc vào `requirements.txt`.
+- Nếu deploy Streamlit Cloud, đảm bảo file preset (auto) **không chứa thông tin nhạy cảm**.
 
 ---
 
-## 🆘 Troubleshooting
+## 11) License & Credits
+- Nội dung hợp nhất dựa trên các phiên bản trước của bạn và tinh chỉnh bởi M365 Copilot.
+- Thư viện bên thứ ba thuộc sở hữu tác giả tương ứng.
 
-- **Pylance báo “Import ... could not be resolved” trong Codespaces**  
-  → Chưa cài lib hoặc VS Code trỏ sai interpreter.  
-  Giải pháp: tạo `.venv`, `pip install -r requirements.txt`, **Select Interpreter** → `.venv/bin/python`, rồi `Developer: Reload Window`.
-
-- **Build fail trên Streamlit Cloud do dependency**  
-  → Lùi/nhích nhẹ phiên bản trong `requirements.txt` theo log Cloud; giữ `numpy==1.26.x` để tương thích `statsmodels`.
-
-- **Không thấy Welch ANOVA**  
-  → Cần `statsmodels>=0.13` (đã pin `0.14.2`). Kiểm tra lại môi trường cài đặt.
-
-- **Unicode/CSV lỗi dấu**  
-  → Dùng **Chuẩn hoá số** (đổi `,` ↔ `.`; bỏ ký hiệu tiền) trong tab **Data Quality**.
-
-- **Hiệu năng**  
-  → Lọc bớt cột/hàng trước khi upload; tắt bớt biểu đồ (Sidebar).
-
----
-
-## 🔐 Quyền riêng tư
-
-- Tránh upload dữ liệu nhạy cảm/PII lên Cloud công khai.
-- Dùng **Private repo** và giới hạn quyền truy cập khi cần.
-
----
-
-## 📄 Giấy phép
-
-Sử dụng nội bộ/phi thương mại trong hoạt động kiểm toán nội bộ.  
-Tuỳ chỉnh theo chính sách doanh nghiệp của bạn.
-
----
