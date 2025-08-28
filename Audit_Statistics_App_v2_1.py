@@ -215,8 +215,8 @@ if st.sidebar.button('🧹 Clear cache'):
     st.cache_data.clear(); st.toast('Đã xoá cache.', icon='🧹')
 
 # =============================== HEADER ===============================
-st.title('📊 Audit Statistics — Hybrid v3.4 (Ordered)')
-st.caption('Excel‑first (Preset Auto) → Khám phá → Kế hoạch mẫu → Kiểm định → Bất thường → Báo cáo. Ổn định Session State, không lồng expander.')
+st.title('📊 Audit Statistics')
+st.caption('Khám phá → Kế hoạch mẫu → Kiểm định → Bất thường → Báo cáo')
 
 # -------------------- FILE UPLOAD & EXCEL‑FIRST INGEST --------------------
 uploaded = st.file_uploader('Upload dữ liệu (CSV/XLSX)', type=['csv','xlsx'], key='uploader')
