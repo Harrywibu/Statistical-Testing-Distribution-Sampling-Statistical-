@@ -376,11 +376,13 @@ def register_fig(section, title, fig, caption):
 with TAB1:
     st.subheader('📈 Distribution & Shape — Tab 1')
 
-    col_nav, col_quick = st.columns([2,3])
+    # ===============================
+    # 🧭 Test Navigator
+    # ===============================
+    st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
+    col_nav1, col_nav2 = st.columns([2,3])
 
-    # --- Test Navigator ---
-    with col_nav:
-        st.markdown("### 🧭 Test Navigator")
+    with col_nav1:
         col_selected_tab1 = st.selectbox("Chọn cột", df.columns.tolist())
         s_nav = df[col_selected_tab1]
 
@@ -393,6 +395,7 @@ with TAB1:
 
         st.write(f"**Loại dữ liệu:** {dtype_nav}")
 
+    with col_nav2:
         suggestions_nav = []
         if dtype_nav == "Numeric":
             if (pd.to_numeric(s_nav, errors='coerce') > 0).sum() >= 300:
@@ -407,43 +410,50 @@ with TAB1:
         for sug in suggestions_nav:
             st.write(f"- {sug}")
 
-    # --- Quick Runner ---
-    with col_quick:
-        st.markdown("### ⚡ Quick Runner")
-        if dtype_nav == "Numeric":
+    st.divider()
+
+    # ===============================
+    # ⚡ Quick Runner
+    # ===============================
+    st.markdown("### ⚡ Quick Runner — Chạy nhanh test cơ bản")
+    if dtype_nav == "Numeric":
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("Histogram + KDE"):
                 fig = px.histogram(s_nav.dropna(), nbins=30, marginal="box", title=f"Histogram + KDE — {col_selected_tab1}")
                 st.plotly_chart(fig, use_container_width=True)
+        with c2:
             if st.button("Outlier (IQR)"):
                 q1, q3 = s_nav.quantile([0.25, 0.75])
                 iqr = q3 - q1
                 outliers = s_nav[(s_nav < q1 - 1.5*iqr) | (s_nav > q3 + 1.5*iqr)]
                 st.write(f"Số lượng outlier: {len(outliers)}")
                 st.dataframe(outliers)
-        elif dtype_nav == "Categorical":
+
+    elif dtype_nav == "Categorical":
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("Top-N Chart"):
                 freq = s_nav.value_counts().head(10)
                 fig = px.bar(freq, x=freq.index, y=freq.values, title=f"Top-N — {col_selected_tab1}")
                 st.plotly_chart(fig, use_container_width=True)
+        with c2:
             if st.button("Chi-square GoF"):
                 freq = s_nav.value_counts()
                 exp = [freq.sum()/len(freq)]*len(freq)
                 chi2, p = stats.chisquare(freq, exp)
                 st.write(f"Chi-square: {chi2:.3f}, p-value: {p:.4f}")
-        else:  # Datetime
-            if st.button("Weekday Distribution"):
-                dates = pd.to_datetime(s_nav, errors='coerce').dropna()
-                freq = dates.dt.day_name().value_counts()
-                fig = px.bar(freq, x=freq.index, y=freq.values, title=f"Weekday Distribution — {col_selected_tab1}")
-                st.plotly_chart(fig, use_container_width=True)
+
+    else:  # Datetime
+        if st.button("Weekday Distribution"):
+            dates = pd.to_datetime(s_nav, errors='coerce').dropna()
+            freq = dates.dt.day_name().value_counts()
+            fig = px.bar(freq, x=freq.index, y=freq.values, title=f"Weekday Distribution — {col_selected_tab1}")
+            st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # --- Giữ nguyên 3 sub-tab gốc ---
     sub_num, sub_cat, sub_dt = st.tabs(["Numeric", "Categorical", "Datetime"])
-    # ... phần code gốc của bạn cho từng sub-tab ...
-
-    sub_num, sub_cat, sub_dt = st.tabs(['Numeric','Categorical','Datetime'])
 
     # Numeric
     with sub_num:
