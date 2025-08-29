@@ -374,68 +374,74 @@ def register_fig(section, title, fig, caption):
 
 # ---------- TAB 1: Distribution & Shape ----------
 with TAB1:
-    st.subheader('📈 Distribution & Shape (Profiling) — Numeric / Categorical / Datetime')
-    # ===============================
-# 🧭 Test Navigator (Tab 1)
-# ===============================
-st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
+    st.subheader('📈 Distribution & Shape — Tab 1')
 
-col_nav1, col_nav2 = st.columns([2,3])
+    col_nav, col_quick = st.columns([2,3])
 
-with col_nav1:
-    col_selected_tab1 = st.selectbox(
-        "Chọn cột để điều hướng test",
-        df.columns.tolist(),
-        help="Chọn một cột để hệ thống nhận dạng kiểu dữ liệu và gợi ý test phù hợp."
-    )
-    s_nav = df[col_selected_tab1]
+    # --- Test Navigator ---
+    with col_nav:
+        st.markdown("### 🧭 Test Navigator")
+        col_selected_tab1 = st.selectbox("Chọn cột", df.columns.tolist())
+        s_nav = df[col_selected_tab1]
 
-    # Nhận dạng loại dữ liệu
-    if pd.api.types.is_datetime64_any_dtype(s_nav) or re.search(r"(date|time)", str(col_selected_tab1), re.IGNORECASE):
-        dtype_nav = "Datetime"
-    elif pd.api.types.is_numeric_dtype(s_nav):
-        dtype_nav = "Numeric"
-    else:
-        dtype_nav = "Categorical"
+        if pd.api.types.is_datetime64_any_dtype(s_nav) or re.search(r"(date|time)", str(col_selected_tab1), re.IGNORECASE):
+            dtype_nav = "Datetime"
+        elif pd.api.types.is_numeric_dtype(s_nav):
+            dtype_nav = "Numeric"
+        else:
+            dtype_nav = "Categorical"
 
-    st.write(f"**Loại dữ liệu nhận dạng:** {dtype_nav}")
+        st.write(f"**Loại dữ liệu:** {dtype_nav}")
 
-with col_nav2:
-    suggestions_nav = []
-    notes_nav = []
+        suggestions_nav = []
+        if dtype_nav == "Numeric":
+            if (pd.to_numeric(s_nav, errors='coerce') > 0).sum() >= 300:
+                suggestions_nav.append("Benford 1D/2D")
+            suggestions_nav += ["Histogram + KDE", "Outlier review (IQR/Z-score)"]
+        elif dtype_nav == "Categorical":
+            suggestions_nav += ["Top-N + HHI", "Chi-square GoF", "Rare category flag"]
+        else:
+            suggestions_nav += ["Weekday/Hour distribution", "Seasonality", "Gap/Sequence test"]
 
-    if dtype_nav == "Numeric":
-        num_series = pd.to_numeric(s_nav, errors='coerce')
-        n_pos = int((num_series > 0).sum())
-        if n_pos >= 300:
-            suggestions_nav.append("Benford 1D/2D")
-            notes_nav.append("Phát hiện thao túng/cấu trúc giá trị dựa trên chữ số đầu tiên.")
-        suggestions_nav.append("Histogram + KDE / QQ plot")
-        notes_nav.append("Đánh giá hình dạng phân phối, lệch chuẩn, đuôi dài.")
-        suggestions_nav.append("Outlier review (IQR / Z-score)")
-        notes_nav.append("Xác định giá trị bất thường vượt ngưỡng.")
-    elif dtype_nav == "Categorical":
-        suggestions_nav.append("Top-N + Herfindahl–Hirschman Index (HHI)")
-        notes_nav.append("Đo mức độ tập trung danh mục.")
-        suggestions_nav.append("Chi-square Goodness-of-fit")
-        notes_nav.append("So sánh phân bố thực tế với phân bố kỳ vọng.")
-        suggestions_nav.append("Rare category flag")
-        notes_nav.append("Phát hiện nhóm nhỏ hiếm gặp cần gộp/kiểm tra.")
-    else:  # Datetime
-        suggestions_nav.append("Weekday/Hour distribution")
-        notes_nav.append("Phát hiện mẫu hình theo ngày trong tuần/giờ.")
-        suggestions_nav.append("Seasonality (Month/Quarter)")
-        notes_nav.append("Nhận diện tính mùa vụ, chu kỳ.")
-        suggestions_nav.append("Gap/Sequence test")
-        notes_nav.append("Kiểm tra khoảng trống hoặc chuỗi bất thường.")
+        st.write("**Gợi ý test:**")
+        for sug in suggestions_nav:
+            st.write(f"- {sug}")
 
-    st.write("**Gợi ý test:**")
-    for sug, note in zip(suggestions_nav, notes_nav):
-        st.write(f"- **{sug}** — {note}")
+    # --- Quick Runner ---
+    with col_quick:
+        st.markdown("### ⚡ Quick Runner")
+        if dtype_nav == "Numeric":
+            if st.button("Histogram + KDE"):
+                fig = px.histogram(s_nav.dropna(), nbins=30, marginal="box", title=f"Histogram + KDE — {col_selected_tab1}")
+                st.plotly_chart(fig, use_container_width=True)
+            if st.button("Outlier (IQR)"):
+                q1, q3 = s_nav.quantile([0.25, 0.75])
+                iqr = q3 - q1
+                outliers = s_nav[(s_nav < q1 - 1.5*iqr) | (s_nav > q3 + 1.5*iqr)]
+                st.write(f"Số lượng outlier: {len(outliers)}")
+                st.dataframe(outliers)
+        elif dtype_nav == "Categorical":
+            if st.button("Top-N Chart"):
+                freq = s_nav.value_counts().head(10)
+                fig = px.bar(freq, x=freq.index, y=freq.values, title=f"Top-N — {col_selected_tab1}")
+                st.plotly_chart(fig, use_container_width=True)
+            if st.button("Chi-square GoF"):
+                freq = s_nav.value_counts()
+                exp = [freq.sum()/len(freq)]*len(freq)
+                chi2, p = stats.chisquare(freq, exp)
+                st.write(f"Chi-square: {chi2:.3f}, p-value: {p:.4f}")
+        else:  # Datetime
+            if st.button("Weekday Distribution"):
+                dates = pd.to_datetime(s_nav, errors='coerce').dropna()
+                freq = dates.dt.day_name().value_counts()
+                fig = px.bar(freq, x=freq.index, y=freq.values, title=f"Weekday Distribution — {col_selected_tab1}")
+                st.plotly_chart(fig, use_container_width=True)
 
-# ===============================
-# Kết thúc Navigator Tab 1
-# ===============================
+    st.divider()
+
+    # --- Giữ nguyên 3 sub-tab gốc ---
+    sub_num, sub_cat, sub_dt = st.tabs(["Numeric", "Categorical", "Datetime"])
+    # ... phần code gốc của bạn cho từng sub-tab ...
 
     sub_num, sub_cat, sub_dt = st.tabs(['Numeric','Categorical','Datetime'])
 
