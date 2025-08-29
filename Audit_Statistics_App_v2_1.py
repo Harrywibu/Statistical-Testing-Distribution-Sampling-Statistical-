@@ -375,6 +375,68 @@ def register_fig(section, title, fig, caption):
 # ---------- TAB 1: Distribution & Shape ----------
 with TAB1:
     st.subheader('📈 Distribution & Shape (Profiling) — Numeric / Categorical / Datetime')
+    # ===============================
+# 🧭 Test Navigator (Tab 1)
+# ===============================
+st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
+
+col_nav1, col_nav2 = st.columns([2,3])
+
+with col_nav1:
+    col_selected_tab1 = st.selectbox(
+        "Chọn cột để điều hướng test",
+        df.columns.tolist(),
+        help="Chọn một cột để hệ thống nhận dạng kiểu dữ liệu và gợi ý test phù hợp."
+    )
+    s_nav = df[col_selected_tab1]
+
+    # Nhận dạng loại dữ liệu
+    if pd.api.types.is_datetime64_any_dtype(s_nav) or re.search(r"(date|time)", str(col_selected_tab1), re.IGNORECASE):
+        dtype_nav = "Datetime"
+    elif pd.api.types.is_numeric_dtype(s_nav):
+        dtype_nav = "Numeric"
+    else:
+        dtype_nav = "Categorical"
+
+    st.write(f"**Loại dữ liệu nhận dạng:** {dtype_nav}")
+
+with col_nav2:
+    suggestions_nav = []
+    notes_nav = []
+
+    if dtype_nav == "Numeric":
+        num_series = pd.to_numeric(s_nav, errors='coerce')
+        n_pos = int((num_series > 0).sum())
+        if n_pos >= 300:
+            suggestions_nav.append("Benford 1D/2D")
+            notes_nav.append("Phát hiện thao túng/cấu trúc giá trị dựa trên chữ số đầu tiên.")
+        suggestions_nav.append("Histogram + KDE / QQ plot")
+        notes_nav.append("Đánh giá hình dạng phân phối, lệch chuẩn, đuôi dài.")
+        suggestions_nav.append("Outlier review (IQR / Z-score)")
+        notes_nav.append("Xác định giá trị bất thường vượt ngưỡng.")
+    elif dtype_nav == "Categorical":
+        suggestions_nav.append("Top-N + Herfindahl–Hirschman Index (HHI)")
+        notes_nav.append("Đo mức độ tập trung danh mục.")
+        suggestions_nav.append("Chi-square Goodness-of-fit")
+        notes_nav.append("So sánh phân bố thực tế với phân bố kỳ vọng.")
+        suggestions_nav.append("Rare category flag")
+        notes_nav.append("Phát hiện nhóm nhỏ hiếm gặp cần gộp/kiểm tra.")
+    else:  # Datetime
+        suggestions_nav.append("Weekday/Hour distribution")
+        notes_nav.append("Phát hiện mẫu hình theo ngày trong tuần/giờ.")
+        suggestions_nav.append("Seasonality (Month/Quarter)")
+        notes_nav.append("Nhận diện tính mùa vụ, chu kỳ.")
+        suggestions_nav.append("Gap/Sequence test")
+        notes_nav.append("Kiểm tra khoảng trống hoặc chuỗi bất thường.")
+
+    st.write("**Gợi ý test:**")
+    for sug, note in zip(suggestions_nav, notes_nav):
+        st.write(f"- **{sug}** — {note}")
+
+# ===============================
+# Kết thúc Navigator Tab 1
+# ===============================
+
     sub_num, sub_cat, sub_dt = st.tabs(['Numeric','Categorical','Datetime'])
 
     # Numeric
@@ -648,64 +710,251 @@ with TAB2:
             st.info('Need ≥2 numeric columns for correlation.')
 
 # ---------- TAB 3: Benford ----------
+# --- Benford state (keep results for parallel view)
+for k in ['bf1_res', 'bf2_res', 'bf1_col', 'bf2_col']:
+    if k not in SS: SS[k] = None
 with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     if not num_cols:
         st.info('No numeric columns available.')
     else:
-        c1,c2 = st.columns(2)
+        c1, c2 = st.columns(2)
+
         with c1:
             amt1 = st.selectbox('Amount (1D)', num_cols, key='bf1_col')
             if st.button('Run Benford 1D'):
                 r = benford_1d(df[amt1])
-                if not r: st.error('Cannot extract first digit.')
+                if not r:
+                    st.error('Cannot extract first digit.')
                 else:
-                    tb, var, p, MAD = r['table'], r['variance'], r['p'], r['MAD']
-                    if HAS_PLOTLY:
-                        fig1 = go.Figure(); fig1.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                        fig1.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                        fig1.update_layout(title='Benford 1D — Observed vs Expected', height=340)
-                        st_plotly(fig1); register_fig('Benford 1D', 'Benford 1D — Obs vs Exp', fig1, 'Benford 1D check.')
-                        st.caption('**Ý nghĩa**: Sai lệch lớn ở một số chữ số → dấu hiệu bất thường/nhập liệu định hình.')
-                    st.dataframe(var, width='stretch', height=220)
-                    thr = SS['risk_diff_threshold']
-                    maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
-                    msg = '🟢 Green'
-                    if maxdiff >= 2*thr: msg='🚨 Red'
-                    elif maxdiff >= thr: msg='🟡 Yellow'
-                    sev = '🟢 Green'
-                    if (p<0.01) or (MAD>0.015): sev='🚨 Red'
-                    elif (p<0.05) or (MAD>0.012): sev='🟡 Yellow'
-                    st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
+                    SS['bf1_res'] = r
+                    SS['bf1_col'] = amt1
+
         with c2:
-            amt2 = st.selectbox('Amount (2D)', num_cols, index=min(1,len(num_cols)-1), key='bf2_col')
+            amt2 = st.selectbox('Amount (2D)', num_cols, index=min(1, len(num_cols)-1), key='bf2_col')
             if st.button('Run Benford 2D'):
                 r2 = benford_2d(df[amt2])
-                if not r2: st.error('Cannot extract first‑two digits.')
+                if not r2:
+                    st.error('Cannot extract first–two digits.')
                 else:
-                    tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
-                    if HAS_PLOTLY:
-                        fig2 = go.Figure(); fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
-                        fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                        fig2.update_layout(title='Benford 2D — Observed vs Expected', height=340)
-                        st_plotly(fig2); register_fig('Benford 2D','Benford 2D — Obs vs Exp', fig2, 'Benford 2D check.')
-                        st.caption('**Ý nghĩa**: 2D nhạy hơn 1D; thường lộ pattern chế tác.')
-                    st.dataframe(var2, width='stretch', height=220)
-                    thr = SS['risk_diff_threshold']
-                    maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
-                    msg2 = '🟢 Green'
-                    if maxdiff2 >= 2*thr: msg2='🚨 Red'
-                    elif maxdiff2 >= thr: msg2='🟡 Yellow'
-                    sev2 = '🟢 Green'
-                    if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
-                    elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
-                    st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
+                    SS['bf2_res'] = r2
+                    SS['bf2_col'] = amt2
+
+        # --- Render both panels if available (parallel view)
+        g1, g2 = st.columns(2)
+
+        with g1:
+            if SS.get('bf1_res'):
+                r = SS['bf1_res']; tb, var, p, MAD = r['table'], r['variance'], r['p'], r['MAD']
+                if HAS_PLOTLY:
+                    fig1 = go.Figure()
+                    fig1.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
+                    fig1.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                    fig1.update_layout(title=f"Benford 1D — Obs vs Exp ({SS.get('bf1_col')})", height=340)
+                    st_plotly(fig1); register_fig('Benford 1D', 'Benford 1D — Obs vs Exp', fig1, 'Benford 1D check.')
+                st.dataframe(var, width='stretch', height=220)
+                thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
+                msg = '🟢 Green'
+                if maxdiff >= 2*thr: msg='🚨 Red'
+                elif maxdiff >= thr: msg='🟡 Yellow'
+                sev = '🟢 Green'
+                if (p<0.01) or (MAD>0.015): sev='🚨 Red'
+                elif (p<0.05) or (MAD>0.012): sev='🟡 Yellow'
+                st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
+
+        with g2:
+            if SS.get('bf2_res'):
+                r2 = SS['bf2_res']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
+                if HAS_PLOTLY:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
+                    fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                    fig2.update_layout(title=f"Benford 2D — Obs vs Exp ({SS.get('bf2_col')})", height=340)
+                    st_plotly(fig2); register_fig('Benford 2D','Benford 2D — Obs vs Exp', fig2, 'Benford 2D check.')
+                st.dataframe(var2, width='stretch', height=220)
+                thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
+                msg2 = '🟢 Green'
+                if maxdiff2 >= 2*thr: msg2='🚨 Red'
+                elif maxdiff2 >= thr: msg2='🟡 Yellow'
+                sev2 = '🟢 Green'
+                if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
+                elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
+                st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
 # ---------- TAB 4: Tests (guidance) ----------
 with TAB4:
     st.subheader('🧪 Statistical Tests — hướng dẫn & diễn giải')
-    st.info('Bao gồm: ANOVA, Proportion χ², Independence χ² (+Cramér V), Correlation (Pearson/Spearman), với cảnh báo và diễn giải.')
+    st.caption('Navigator gợi ý test theo loại dữ liệu; có guardrails chặn sai kiểu/không đủ mẫu. Tránh trùng biểu đồ với các tab khác.')
 
+    # --- Helpers (guardrails) ---
+    def is_numeric_series(s: pd.Series) -> bool:
+        return pd.api.types.is_numeric_dtype(s)
+
+    def is_datetime_series(s: pd.Series) -> bool:
+        return pd.api.types.is_datetime64_any_dtype(s)
+
+    def validate_benford_ready(series: pd.Series) -> tuple[bool, str]:
+        s = pd.to_numeric(series, errors='coerce')
+        n_pos = int((s > 0).sum())
+        if n_pos < 300:
+            return False, f"Không đủ mẫu >0 cho Benford (hiện {n_pos}, cần ≥300)."
+        ratio_unique = s.dropna().nunique() / (s.dropna().shape[0] or 1)
+        if ratio_unique > 0.95:
+            return False, "Tỉ lệ unique quá cao (khả năng ID/Code) — tránh Benford."
+        return True, ""
+
+    def chi_square_gof_uniform(freq_df: pd.DataFrame):
+        obs = freq_df.set_index('category')['count']
+        k = len(obs); exp = pd.Series([obs.sum()/k]*k, index=obs.index)
+        chi2 = float(((obs-exp)**2/exp).sum()); dof = k-1; p = float(1 - stats.chi2.cdf(chi2, dof))
+        std_resid = (obs-exp)/np.sqrt(exp)
+        res_tbl = pd.DataFrame({'count': obs, 'expected': exp, 'std_resid': std_resid}).sort_values('std_resid', key=lambda s: s.abs(), ascending=False)
+        return chi2, dof, p, res_tbl
+
+    def concentration_hhi(freq_df: pd.DataFrame) -> float:
+        share = freq_df['share'].values
+        return float(np.sum(share**2))
+
+    # --- Navigator ---
+    colN, colR = st.columns([2,3])
+
+    with colN:
+        col_selected = st.selectbox('Chọn cột để test', df.columns.tolist(), key='t4_col')
+        s0 = df[col_selected]
+        dtype = ('Datetime' if is_datetime_series(s0) or re.search(r"(date|time)", str(col_selected), re.IGNORECASE)
+                 else 'Numeric' if is_numeric_series(s0)
+                 else 'Categorical')
+
+        st.write(f"**Loại dữ liệu nhận diện:** {dtype}")
+        st.markdown("**Gợi ý test ưu tiên**")
+        suggestions = []
+        if dtype == 'Numeric':
+            suggestions = ['Benford 1D/2D (n≥300 & >0)', 'Normality check (QQ/Tab1)', 'Outlier review (IQR/Tab1)']
+        elif dtype == 'Categorical':
+            suggestions = ['Top-N + HHI', 'Chi-square GoF vs Uniform', 'Independence χ² với biến trạng thái (nếu có)']
+        else:
+            suggestions = ['DOW/Hour distribution (Tab1)', 'Seasonality Month/Quarter (Tab1)', 'Gap/Sequence test']
+        st.write('\n'.join([f"- {x}" for x in suggestions]))
+
+        st.divider()
+        st.markdown("**Điều khiển chạy test**")
+
+        run_benford = st.checkbox('Benford 1D/2D (Numeric)', value=(dtype=='Numeric'))
+        run_cgof    = st.checkbox('Chi-square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'))
+        run_hhi     = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'))
+        run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'))
+
+        go = st.button('Chạy các test đã chọn', type='primary', key='t4_run')
+
+    with colR:
+        if not st.session_state.get('t4_results'): st.session_state['t4_results'] = {}
+        out = {}
+
+        if go:
+            # Reset kết quả mỗi lần chạy
+            out = {}
+
+            if run_benford and dtype=='Numeric':
+                ok, msg = validate_benford_ready(s0)
+                if not ok:
+                    st.warning(msg)
+                else:
+                    r1 = benford_1d(s0); r2 = benford_2d(s0)
+                    out['benford'] = {'r1': r1, 'r2': r2}
+
+            if (run_cgof or run_hhi) and dtype=='Categorical':
+                freq = cat_freq(s0.astype(str))
+                if run_cgof and len(freq) >= 2:
+                    chi2, dof, p, tbl = chi_square_gof_uniform(freq)
+                    out['cgof'] = {'chi2': chi2, 'dof': dof, 'p': p, 'tbl': tbl}
+                if run_hhi:
+                    out['hhi'] = {'hhi': concentration_hhi(freq), 'freq': freq}
+
+            if run_timegap and dtype=='Datetime':
+                t = pd.to_datetime(s0, errors='coerce').dropna().sort_values()
+                if len(t) >= 3:
+                    gaps = (t.diff().dropna().dt.total_seconds()/3600.0)  # giờ
+                    gap_df = pd.DataFrame({'gap_hours': gaps})
+                    out['gap'] = {'gaps': gap_df}
+                else:
+                    st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (≥3).')
+
+            st.session_state['t4_results'] = out
+
+        # --- Render kết quả + insight giản lược ---
+        out = st.session_state['t4_results']
+
+        if not out:
+            st.info('Chọn cột và “Chạy các test đã chọn” để hiển thị kết quả. Tránh trùng biểu đồ với Tab 1/2/3: hãy dùng các tab đó khi cần đồ thị đầy đủ.')
+        else:
+            if 'benford' in out and out['benford']['r1'] and out['benford']['r2']:
+                st.markdown('#### Benford 1D & 2D (song song)')
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    r = out['benford']['r1']; tb, var, p, MAD = r['table'], r['variance'], r['p'], r['MAD']
+                    if HAS_PLOTLY:
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
+                        fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                        fig.update_layout(title='Benford 1D — Obs vs Exp', height=320)
+                        st_plotly(fig); register_fig('Tests', 'Benford 1D — Obs vs Exp', fig, 'Benford 1D (Tab4).')
+                    st.dataframe(var, width='stretch', height=200)
+                    st.markdown('''
+- **Ý nghĩa**: Lệch mạnh ở chữ số đầu → khả năng thresholding/làm tròn/chia nhỏ hóa đơn.
+- **Tác động**: Rà soát policy phê duyệt theo ngưỡng; drill-down theo vendor/kỳ.
+- **Lưu ý mẫu**: p nhỏ nhưng n thấp → rủi ro kết luận sớm; tăng n bằng cách gộp kỳ/nhóm.
+                    ''')
+
+                with c2:
+                    r2 = out['benford']['r2']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
+                    if HAS_PLOTLY:
+                        fig2 = go.Figure()
+                        fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
+                        fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                        fig2.update_layout(title='Benford 2D — Obs vs Exp', height=320)
+                        st_plotly(fig2); register_fig('Tests', 'Benford 2D — Obs vs Exp', fig2, 'Benford 2D (Tab4).')
+                    st.dataframe(var2, width='stretch', height=200)
+                    st.markdown('''
+- **Ý nghĩa**: Hotspot ở cặp 19/29/... phản ánh định giá “.99” hoặc cấu trúc giá.
+- **Tác động**: Đối chiếu chính sách giá/nhà cung cấp; không mặc định là gian lận.
+- **Số tròn**: Tỉ trọng .00/.50 cao → khả năng nhập tay/ước lượng.
+                    ''')
+
+            if 'cgof' in out:
+                st.markdown('#### Chi-square GoF vs Uniform (Categorical)')
+                cg = out['cgof']
+                st.write({'Chi2': round(cg['chi2'],3), 'dof': cg['dof'], 'p': round(cg['p'],4)})
+                st.dataframe(cg['tbl'], width='stretch', height=220)
+                if HAS_PLOTLY:
+                    figr = px.bar(cg['tbl'].reset_index().head(20), x='category', y='std_resid',
+                                  title='Standardized residuals (Top |resid|)',
+                                  color='std_resid', color_continuous_scale='RdBu')
+                    st_plotly(figr); register_fig('Tests', 'χ² GoF residuals', figr, 'Nhóm lệch mạnh vs uniform.')
+                st.markdown('''
+- **Ý nghĩa**: Residual dương → nhiều hơn kỳ vọng; âm → ít hơn.
+- **Tác động**: Drill-down nhóm lệch để kiểm tra policy/quy trình và nguồn dữ liệu.
+                ''')
+
+            if 'hhi' in out:
+                st.markdown('#### Concentration HHI (Categorical)')
+                st.write({'HHI': round(out['hhi']['hhi'], 3)})
+                st.dataframe(out['hhi']['freq'].head(20), width='stretch', height=200)
+                st.markdown('''
+- **Ý nghĩa**: HHI cao → tập trung vài nhóm (vendor/GL).
+- **Tác động**: Rà soát rủi ro phụ thuộc nhà cung cấp, kiểm soát phê duyệt/định giá.
+                ''')
+
+            if 'gap' in out:
+                st.markdown('#### Gap/Sequence test (Datetime)')
+                st.dataframe(out['gap']['gaps'].describe().to_frame('gap_hours'), width='stretch', height=200)
+                st.markdown('''
+- **Ý nghĩa**: Khoảng trống dài hoặc cụm dày bất thường → khả năng bỏ sót/chèn nghiệp vụ.
+- **Tác động**: Soát log hệ thống, lịch làm việc/ca trực, đối soát theo kỳ chốt.
+                ''')
+
+    # Nhắc tránh trùng lặp với tab khác
+    st.info('Biểu đồ hình dạng phân phối (Histogram/KDE/Box/ECDF/QQ) đã có ở Tab 1; Trend/Correlation ở Tab 2; Benford gốc ở Tab 3. Tab 4 chỉ tập trung test trọng yếu + diễn giải.')
 # ---------- TAB 5: Regression ----------
 with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
