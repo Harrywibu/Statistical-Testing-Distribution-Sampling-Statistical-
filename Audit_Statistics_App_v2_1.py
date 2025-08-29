@@ -375,10 +375,6 @@ def register_fig(section, title, fig, caption):
 # ---------- TAB 1: Distribution & Shape ----------
 with TAB1:
     st.subheader('📈 Distribution & Shape — Tab 1')
-
-    # ===============================
-    # 🧭 Test Navigator
-    # ===============================
     st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
     col_nav1, col_nav2 = st.columns([2,3])
 
@@ -409,12 +405,7 @@ with TAB1:
         st.write("**Gợi ý test:**")
         for sug in suggestions_nav:
             st.write(f"- {sug}")
-
     st.divider()
-
-    # ===============================
-    # ⚡ Quick Runner
-    # ===============================
     st.markdown("### ⚡ Quick Runner — Chạy nhanh test cơ bản")
     if dtype_nav == "Numeric":
         c1, c2 = st.columns(2)
