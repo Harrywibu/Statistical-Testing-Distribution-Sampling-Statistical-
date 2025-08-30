@@ -276,7 +276,7 @@ with st.sidebar.expander('Plot & Performance', expanded=True):
     use_parquet_cache = st.checkbox('Disk cache (Parquet) for faster reloads', value=True and HAS_PYARROW)
     if st.button('🧹 Clear cache'): st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
-st.title('📊 Audit Statistics — v2.1.6 Unified FULL (Optimized + Risk/Export)')
+st.title('📊 Audit Statistics)')
 
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
