@@ -955,11 +955,12 @@ with TAB4:
 
             if 'gap' in out:
                 st.markdown('#### Gap/Sequence test (Datetime)')
-                desc = out['gap']['gaps'].describe()
-                    if isinstance(desc, pd.Series):
-                        st.dataframe(desc.to_frame(name='gap_hours'), width='stretch', height=200)
-                    else:
-                        st.dataframe(desc, width='stretch', height=200)
+                ddesc = out['gap']['gaps'].describe()
+            if isinstance(desc, pd.Series):
+                st.dataframe(desc.to_frame(name='gap_hours'), width='stretch', height=200)
+            else:
+                st.dataframe(desc, width='stretch', height=200)
+
                 st.markdown('''
 - **Ý nghĩa**: Khoảng trống dài hoặc cụm dày bất thường → khả năng bỏ sót/chèn nghiệp vụ.
 - **Tác động**: Soát log hệ thống, lịch làm việc/ca trực, đối soát theo kỳ chốt.
