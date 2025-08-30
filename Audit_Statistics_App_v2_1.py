@@ -49,7 +49,7 @@ try:
 except Exception:
     HAS_SK=False
 
-st.set_page_config(page_title='Audit Statistics — v2.1.6 Unified FULL (Optimized + Risk/Export)', layout='wide')
+st.set_page_config(page_title='Audit Statistics', layout='wide')
 
 # ---- Utils ----
 
