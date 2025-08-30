@@ -375,6 +375,8 @@ def register_fig(section, title, fig, caption):
 # ---------- TAB 1: Distribution & Shape ----------
 with TAB1:
     st.subheader('📈 Distribution & Shape — Tab 1')
+
+    # --- Test Navigator ---
     st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
     col_nav1, col_nav2 = st.columns([2,3])
 
@@ -405,7 +407,10 @@ with TAB1:
         st.write("**Gợi ý test:**")
         for sug in suggestions_nav:
             st.write(f"- {sug}")
+
     st.divider()
+
+    # --- Quick Runner ---
     st.markdown("### ⚡ Quick Runner — Chạy nhanh test cơ bản")
     if dtype_nav == "Numeric":
         c1, c2 = st.columns(2)
@@ -443,9 +448,7 @@ with TAB1:
             st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-
     sub_num, sub_cat, sub_dt = st.tabs(["Numeric", "Categorical", "Datetime"])
-
     # Numeric
     with sub_num:
         if not num_cols:
@@ -735,7 +738,6 @@ with TAB3:
                     st.error('Cannot extract first digit.')
                 else:
                     SS['bf1_res'] = r
-                    SS['bf1_col'] = amt1
 
         with c2:
             amt2 = st.selectbox('Amount (2D)', num_cols, index=min(1, len(num_cols)-1), key='bf2_col')
@@ -745,7 +747,6 @@ with TAB3:
                     st.error('Cannot extract first–two digits.')
                 else:
                     SS['bf2_res'] = r2
-                    SS['bf2_col'] = amt2
 
         # --- Render both panels if available (parallel view)
         g1, g2 = st.columns(2)
