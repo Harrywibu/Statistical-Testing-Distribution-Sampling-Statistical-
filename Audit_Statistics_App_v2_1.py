@@ -374,7 +374,7 @@ def register_fig(section, title, fig, caption):
 
 # ---------- TAB 1: Distribution & Shape ----------
 with TAB1:
-    st.subheader('📈 Distribution & Shape — Tab 1')
+    st.subheader('📈 Distribution & Shape')
 
     # --- Test Navigator ---
     st.markdown("### 🧭 Test Navigator — Gợi ý test theo loại dữ liệu")
@@ -955,12 +955,15 @@ with TAB4:
 
             if 'gap' in out:
                 st.markdown('#### Gap/Sequence test (Datetime)')
-                st.dataframe(out['gap']['gaps'].describe().to_frame('gap_hours'), width='stretch', height=200)
+                desc = out['gap']['gaps'].describe()
+                    if isinstance(desc, pd.Series):
+                        st.dataframe(desc.to_frame(name='gap_hours'), width='stretch', height=200)
+                    else:
+                        st.dataframe(desc, width='stretch', height=200)
                 st.markdown('''
 - **Ý nghĩa**: Khoảng trống dài hoặc cụm dày bất thường → khả năng bỏ sót/chèn nghiệp vụ.
 - **Tác động**: Soát log hệ thống, lịch làm việc/ca trực, đối soát theo kỳ chốt.
                 ''')
-
     # Nhắc tránh trùng lặp với tab khác
     st.info('Biểu đồ hình dạng phân phối (Histogram/KDE/Box/ECDF/QQ) đã có ở Tab 1; Trend/Correlation ở Tab 2; Benford gốc ở Tab 3. Tab 4 chỉ tập trung test trọng yếu + diễn giải.')
 # ---------- TAB 5: Regression ----------
