@@ -1044,9 +1044,10 @@ with TAB5:
                     else:
                         X = sub[Xb]
                         y = sub[yb]
-                            if not is_numeric_dtype(y):
-                                classes = sorted(y.unique())
-                                y = (y == classes[-1]).astype(int)  # Giữ logic cũ: lớp “lớn nhất” là 1
+                            if not is_numeric_dtype(y):    
+                                classes = y.value_counts().index.tolist()
+                                pos_class = st.selectbox('Positive class (target=1)', classes, index=0, key='logit_pos')
+                                y = (y == pos_class).astype(int)
                         Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=0.25,random_state=42)
                         try:
                             model = LogisticRegression(max_iter=1000).fit(Xtr,ytr)
