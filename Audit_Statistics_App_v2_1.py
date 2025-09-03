@@ -982,7 +982,7 @@ for k in ["bf1_res", "bf2_res", "bf1_col", "bf2_col"]:
 with TAB3:
     st.subheader("🔢 Benford Law — 1D & 2D")
     if "bf_use_full" not in SS:
-    SS["bf_use_full"] = True
+        SS["bf_use_full"] = True
     if not SS["num_cols"]:
         st.info("Không có cột numeric để chạy Benford.")
     else:
