@@ -207,7 +207,7 @@ with st.sidebar.expander("0) Ingest", expanded=True):
         SS["sha12"] = file_sha12(fb)
         SS["uploaded_name"] = uploaded.name
         st.caption(f"SHA12: {SS['sha12']}")
-
+        
 with st.sidebar.expander("1) Display & Performance", expanded=True):
     SS["bins"] = st.slider(
         "Histogram bins",
@@ -217,20 +217,28 @@ with st.sidebar.expander("1) Display & Performance", expanded=True):
         step=5,
         help="Số bins cho histogram; ảnh hưởng độ mịn phân phối."
     )
+
     SS["log_scale"] = st.checkbox(
-        "Log scale (X)", SS["log_scale"], help="Chỉ áp dụng khi mọi giá trị > 0."
-    )
-    SS["kde_threshold"] = st.number_input(
-        "KDE max n", min_value=1_000, max_value=300_000, value=SS["kde_threshold"], step=1_000,
-        help="Nếu số điểm > ngưỡng này thì bỏ KDE để tăng tốc."
-    )
-    if "downsample_view" not in SS:
-        SS["downsample_view"] = True
-    SS["downsample_view"] = st.checkbox(
-        "Downsample view 50k", value=SS["downsample_view"],
-        help="Chỉ hiển thị & vẽ trên sample 50k để nhanh hơn (tính toán nặng vẫn có thể chạy trên full)."
+        "Log scale (X)",
+        value=SS["log_scale"],
+        help="Chỉ áp dụng khi mọi giá trị > 0."
     )
 
+    SS["kde_threshold"] = st.number_input(
+        "KDE max n",
+        min_value=1_000,
+        max_value=300_000,
+        value=SS["kde_threshold"],
+        step=1_000,
+        help="Nếu số điểm > ngưỡng này thì bỏ KDE để tăng tốc."
+    )
+
+    # GIỮ nguyên biến 'downsample' vì phía dưới đang dùng
+    downsample = st.checkbox(
+        "Downsample view 50k",
+        value=True,
+        help="Chỉ hiển thị & vẽ trên sample 50k để nhanh hơn (tính toán nặng vẫn có thể chạy trên full)."
+    )
 with st.sidebar.expander("2) Risk & Advanced", expanded=False):
     SS["risk_diff_threshold"] = st.slider(
         "Benford diff% threshold", 0.01, 0.10, SS["risk_diff_threshold"], 0.01,
