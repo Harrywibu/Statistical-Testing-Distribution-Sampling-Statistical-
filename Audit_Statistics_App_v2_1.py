@@ -1123,12 +1123,13 @@ with TAB4:
         return float(np.sum(share ** 2)) if len(share) > 0 else np.nan
         
 @st.cache_data(ttl=1200, show_spinner=False, max_entries=64)
-    def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
-        t = pd.to_datetime(series, errors="coerce").dropna().sort_values()
-        if len(t) < 3:
-            return None
-        gaps = (t.diff().dropna().dt.total_seconds() / 3600.0)
-        return pd.DataFrame({"gap_hours": gaps})
+def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
+    """Tính khoảng cách thời gian liên tiếp theo giờ."""
+    t = pd.to_datetime(series, errors="coerce").dropna().sort_values()
+    if len(t) < 3:
+        return None
+    gaps = (t.diff().dropna().dt.total_seconds() / 3600.0)
+    return pd.DataFrame({"gap_hours": gaps})
 
     # ---------- Navigator ----------
     navL, navR = st.columns([2, 3])
