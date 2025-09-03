@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy import stats
+from sklearn.metrics import confusion_matrix
 warnings.filterwarnings("ignore")
 
 # ---- Optional deps (soft import -> feature flags) ----
@@ -1625,7 +1626,6 @@ with TAB5:
                         })
 
 # Confusion matrix
-    from sklearn.metrics import confusion_matrix
 cm = confusion_matrix(yte, pred)
 if HAS_PLOTLY:
     try:
