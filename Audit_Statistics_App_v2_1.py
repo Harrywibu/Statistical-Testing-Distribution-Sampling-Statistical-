@@ -845,21 +845,21 @@ def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, ag
                 return pd.DataFrame()
             return sub[keep].corr(numeric_only=True, method=method)
 
-        if len(pick_cols) >= 2:
-            corr = corr_cached(DF_VIEW, pick_cols, mth)
-            if corr.empty:
-                st.warning("Không thể tính ma trận tương quan (có thể do các cột hằng hoặc NA).")
-            else:
-                if HAS_PLOTLY:
-                    figH = px.imshow(
-                        corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                        title=f"Correlation heatmap ({mth.capitalize()})", aspect="auto"
-                    )
+            if len(pick_cols) >= 2:
+                corr = corr_cached(DF_VIEW, pick_cols, mth)
+                if corr.empty:
+                    st.warning("Không thể tính ma trận tương quan (có thể do các cột hằng hoặc NA).")
+                else:
+                    if HAS_PLOTLY:
+                        figH = px.imshow(
+                            corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                            title=f"Correlation heatmap ({mth.capitalize()})", aspect="auto"
+                        )
                     # Đặt tickangle để đỡ chồng chữ
-                    figH.update_xaxes(tickangle=45)
-                    st_plotly(figH)
-                    register_fig("Correlation", f"Correlation heatmap ({mth.capitalize()})", figH,
-                                 "Liên hệ tuyến tính/hạng giữa các biến.")
+                        figH.update_xaxes(tickangle=45)
+                        st_plotly(figH)
+                        register_fig("Correlation", f"Correlation heatmap ({mth.capitalize()})", figH,
+                                     "Liên hệ tuyến tính/hạng giữa các biến.")
                 # Top pairs (|r| cao)
                 with st.expander("📌 Top tương quan theo |r| (bỏ đường chéo)"):
                     tri = corr.where(~np.eye(len(corr), dtype=bool))  # mask diagonal
