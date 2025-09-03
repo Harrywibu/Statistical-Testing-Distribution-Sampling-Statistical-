@@ -1,4 +1,3 @@
-# === Audit Statistics — v2.2 (refactor by Copilot) ===
 from __future__ import annotations
 
 # ---- Core & typing ----
@@ -1628,7 +1627,9 @@ with TAB5:
 # ---- Confusion Matrix (safe block) ----
 # ==== TAB 6: FRAUD FLAGS ====
 
-with TAB6:
+try:
+    with TAB6:
+    finally: pass
     st.subheader("🚩 Fraud Flags")
 
     # --- Controls ---
