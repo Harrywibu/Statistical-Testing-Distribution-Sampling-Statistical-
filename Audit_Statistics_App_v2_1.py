@@ -293,17 +293,7 @@ with st.sidebar.expander('3) Cache', expanded=False):
     if st.button('🧹 Clear cache'):
         st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
-st.title('📊 Audit Statistics')
-# --- Sticky dataset summary ---
-with st.container():
-    n_full = len(SS['df']) if SS['df'] is not None else len(SS['df_preview'])
-    n_cols = (SS['df'] if SS['df'] is not None else SS['df_preview']).shape[1]
-    n_view = len(df) if 'df' in locals() else n_full
-    info = f"Rows (full/view): {n_full:,}/{n_view:,} • Cols: {n_cols} • SHA12={SS.get('sha12','—')}"
-    if 'downsample' in locals() and downsample and n_full > 50_000:
-        info += " • View=sampled 50k"
-    st.info(info)
-    
+st.title('📊 Audit Statistics')  
     st.info(info)
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
