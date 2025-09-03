@@ -866,8 +866,8 @@ def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
     if len(keep) < 2:
         return pd.DataFrame()
     return sub[keep].corr(numeric_only=True, method=method)
-            if len(pick_cols) >= 2:
-                corr = corr_cached(DF_VIEW, pick_cols, mth)
+        if len(pick_cols) >= 2:
+            corr = corr_cached(DF_VIEW, pick_cols, mth)
                 if corr.empty:
                     st.warning("Không thể tính ma trận tương quan (có thể do các cột hằng hoặc NA).")
                 else:
