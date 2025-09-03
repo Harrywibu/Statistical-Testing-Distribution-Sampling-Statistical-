@@ -1625,11 +1625,14 @@ with TAB5:
                             "removed_const": (", ".join(removed[:5]) + ("..." if len(removed) > 5 else "")) if removed else None
                         })
 
-# Confusion matrix
+from sklearn.metrics import confusion_matrix
+
+# ---- Confusion Matrix (safe block) ----
 cm = confusion_matrix(yte, pred)
+
 if HAS_PLOTLY:
     try:
-        # Plotly mới hỗ trợ text_auto
+        # Plotly mới: có text_auto
         fcm = px.imshow(
             cm,
             text_auto=True,
@@ -1640,7 +1643,7 @@ if HAS_PLOTLY:
             title="Confusion Matrix",
         )
     except TypeError:
-        # Fallback cho phiên bản Plotly cũ (không có text_auto)
+        # Fallback cho Plotly cũ (không hỗ trợ text_auto)
         fcm = px.imshow(
             cm,
             color_continuous_scale="Blues",
@@ -1649,6 +1652,7 @@ if HAS_PLOTLY:
             y=["0", "1"],
             title="Confusion Matrix",
         )
+
     st_plotly(fcm)
     register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")
                         # ROC curve
