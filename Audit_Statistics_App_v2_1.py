@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy import stats
+from watchdog.observers.polling import PollingObserver
+observer = PollingObserver()
+
 warnings.filterwarnings('ignore')
 
 # Optional deps
@@ -296,7 +299,6 @@ with st.sidebar.expander('3) Cache', expanded=False):
 st.title('📊 Audit Statistics')  
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
-
 fname = SS['uploaded_name']; fb = SS['file_bytes']; sha = SS['sha12']
 colL, colR = st.columns([3,2])
 with colL: st.text_input('File', value=fname or '', disabled=True)
