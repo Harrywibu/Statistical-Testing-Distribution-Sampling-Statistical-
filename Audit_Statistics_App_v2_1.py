@@ -294,7 +294,6 @@ with st.sidebar.expander('3) Cache', expanded=False):
         st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
 st.title('📊 Audit Statistics')  
-    st.info(info)
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
 
