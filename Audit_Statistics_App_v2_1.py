@@ -829,22 +829,43 @@ def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, ag
             key="t2_corr_m"
         )
         mth = "pearson" if method.startswith("Pearson") else "spearman"
-        
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-        def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
-            # loại bỏ cột hằng (variance=0) để tránh NaN/ cảnh báo
-            sub = df[cols].copy()
-            # force numeric conversion
-            for c in cols:
-                if not pd.api.types.is_numeric_dtype(sub[c]):
-                    sub[c] = pd.to_numeric(sub[c], errors="coerce")
-            sub = sub.dropna(how="all")
-            nunique = sub.nunique(dropna=True)
-            keep = [c for c in cols if nunique.get(c, 0) > 1]
-            if len(keep) < 2:
-                return pd.DataFrame()
-            return sub[keep].corr(numeric_only=True, method=method)
+def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int) -> pd.DataFrame:
+    # Chuẩn hoá kiểu dữ liệu
+    t = pd.to_datetime(df[dt_col], errors="coerce")
+    y = pd.to_numeric(df[y_col], errors="coerce")
+    # Lọc NA và sắp xếp theo thời gian
+    sub = pd.DataFrame({"t": t, "y": y}).dropna().sort_values("t")
+    if sub.empty:
+        return pd.DataFrame()
+    ts = sub.set_index("t")["y"]
+    if agg == "count":
+        ser = ts.resample(freq).count()
+    elif agg == "mean":
+        ser = ts.resample(freq).mean()
+    else:
+        ser = ts.resample(freq).sum()
+    out = ser.to_frame("y")
+    out["roll"] = out["y"].rolling(win, min_periods=1).mean()
+    # Fallback cho pandas cũ (reset_index không hỗ trợ names=)
+    try:
+        return out.reset_index(names="t")
+    except TypeError:
+        return out.reset_index().rename(columns={"index": "t"})
 
+@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
+    # Ép numeric & loại cột hằng trước khi corr()
+    sub = df[cols].copy()
+    for c in cols:
+        if not pd.api.types.is_numeric_dtype(sub[c]):
+            sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    sub = sub.dropna(how="all")
+    nunique = sub.nunique(dropna=True)
+    keep = [c for c in cols if nunique.get(c, 0) > 1]
+    if len(keep) < 2:
+        return pd.DataFrame()
+    return sub[keep].corr(numeric_only=True, method=method)
             if len(pick_cols) >= 2:
                 corr = corr_cached(DF_VIEW, pick_cols, mth)
                 if corr.empty:
