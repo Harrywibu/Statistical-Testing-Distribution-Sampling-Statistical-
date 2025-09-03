@@ -233,7 +233,6 @@ with st.sidebar.expander("1) Display & Performance", expanded=True):
         help="Nếu số điểm > ngưỡng này thì bỏ KDE để tăng tốc."
     )
 
-    # GIỮ nguyên biến 'downsample' vì phía dưới đang dùng
     downsample = st.checkbox(
         "Downsample view 50k",
         value=True,
