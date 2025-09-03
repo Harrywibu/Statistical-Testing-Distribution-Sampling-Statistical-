@@ -802,129 +802,100 @@ def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, ag
     st.divider()
 
     # ==================== CORRELATION ====================
-    st.markdown("### 🔗 Correlation heatmap")
+# ==================== CORRELATION ====================
+st.markdown("### 🔗 Correlation heatmap")
 
-    if len(num_cols) < 2:
-        st.info("Cần ≥2 cột numeric để tính tương quan.")
-    else:
-        # chọn subset cột (tránh heatmap quá lớn)
-        with st.expander("🧰 Tuỳ chọn cột (mặc định: tất cả numeric)"):
-            default_cols = num_cols[:30]  # bảo vệ UI nếu quá nhiều biến
-            pick_cols = st.multiselect(
-                "Chọn cột để tính tương quan",
-                options=num_cols,
-                default=default_cols,
-                key="t2_corr_cols"
-            )
-            if len(pick_cols) < 2:
-                st.warning("Chọn ít nhất 2 cột để tính tương quan.")
+num_cols = SS["num_cols"]
 
-        # method auto recommendation
-        method_label = "Spearman (recommended)" if SS.get("spearman_recommended") else "Spearman"
-        method = st.radio(
-            "Correlation method",
-            ["Pearson", method_label],
-            index=(1 if SS.get("spearman_recommended") else 0),
-            horizontal=True,
-            key="t2_corr_m"
+if len(num_cols) < 2:
+    st.info("Cần ≥2 cột numeric để tính tương quan.")
+else:
+    # 1) Chọn subset cột (tránh heatmap quá lớn)
+    with st.expander("🧰 Tuỳ chọn cột (mặc định: tất cả numeric)"):
+        default_cols = num_cols[:30]  # bảo vệ UI nếu quá nhiều biến
+        pick_cols = st.multiselect(
+            "Chọn cột để tính tương quan",
+            options=num_cols,
+            default=default_cols,
+            key="t2_corr_cols"
         )
-        mth = "pearson" if method.startswith("Pearson") else "spearman"
-@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int) -> pd.DataFrame:
-    # Chuẩn hoá kiểu dữ liệu
-    t = pd.to_datetime(df[dt_col], errors="coerce")
-    y = pd.to_numeric(df[y_col], errors="coerce")
-    # Lọc NA và sắp xếp theo thời gian
-    sub = pd.DataFrame({"t": t, "y": y}).dropna().sort_values("t")
-    if sub.empty:
-        return pd.DataFrame()
-    ts = sub.set_index("t")["y"]
-    if agg == "count":
-        ser = ts.resample(freq).count()
-    elif agg == "mean":
-        ser = ts.resample(freq).mean()
-    else:
-        ser = ts.resample(freq).sum()
-    out = ser.to_frame("y")
-    out["roll"] = out["y"].rolling(win, min_periods=1).mean()
-    # Fallback cho pandas cũ (reset_index không hỗ trợ names=)
-    try:
-        return out.reset_index(names="t")
-    except TypeError:
-        return out.reset_index().rename(columns={"index": "t"})
+        if len(pick_cols) < 2:
+            st.warning("Chọn ít nhất 2 cột để tính tương quan.")
 
-@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
-    # Ép numeric & loại cột hằng trước khi corr()
-    sub = df[cols].copy()
-    for c in cols:
-        if not pd.api.types.is_numeric_dtype(sub[c]):
-            sub[c] = pd.to_numeric(sub[c], errors="coerce")
-    sub = sub.dropna(how="all")
-    nunique = sub.nunique(dropna=True)
-    keep = [c for c in cols if nunique.get(c, 0) > 1]
-    if len(keep) < 2:
-        return pd.DataFrame()
-    return sub[keep].corr(numeric_only=True, method=method)
-        if len(pick_cols) >= 2:
-            corr = corr_cached(DF_VIEW, pick_cols, mth)
-                if corr.empty:
-                    st.warning("Không thể tính ma trận tương quan (có thể do các cột hằng hoặc NA).")
+    # 2) Chọn phương pháp (tự đề xuất Spearman)
+    method_label = "Spearman (recommended)" if SS.get("spearman_recommended") else "Spearman"
+    method = st.radio(
+        "Correlation method",
+        ["Pearson", method_label],
+        index=(1 if SS.get("spearman_recommended") else 0),
+        horizontal=True,
+        key="t2_corr_m"
+    )
+    mth = "pearson" if method.startswith("Pearson") else "spearman"
+
+    # 3) Tính và vẽ heatmap
+    if len(pick_cols) >= 2:
+        corr = corr_cached(DF_VIEW, pick_cols, mth)  # <-- chỉ GỌI, không định nghĩa ở đây
+        if corr.empty:
+            st.warning("Không thể tính ma trận tương quan (có thể do các cột hằng hoặc NA).")
+        else:
+            if HAS_PLOTLY:
+                figH = px.imshow(
+                    corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                    title=f"Correlation heatmap ({mth.capitalize()})", aspect="auto"
+                )
+                figH.update_xaxes(tickangle=45)
+                st_plotly(figH)
+                register_fig("Correlation", f"Correlation heatmap ({mth.capitalize()})", figH,
+                             "Liên hệ tuyến tính/hạng giữa các biến.")
+            # Top pairs (|r| cao)
+            with st.expander("📌 Top tương quan theo |r| (bỏ đường chéo)"):
+                tri = corr.where(~np.eye(len(corr), dtype=bool))  # mask diagonal
+                pairs = []
+                cols = list(tri.columns)
+                for i in range(len(cols)):
+                    for j in range(i + 1, len(cols)):
+                        r = tri.iloc[i, j]
+                        if pd.notna(r):
+                            pairs.append((cols[i], cols[j], float(r), abs(float(r))))
+                pairs = sorted(pairs, key=lambda x: x[3], reverse=True)[:30]
+                if pairs:
+                    df_pairs = pd.DataFrame(pairs, columns=["var1", "var2", "r", "|r|"])
+                    st.dataframe(df_pairs, use_container_width=True, height=260)
                 else:
-                    if HAS_PLOTLY:
-                        figH = px.imshow(
-                            corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                            title=f"Correlation heatmap ({mth.capitalize()})", aspect="auto"
-                        )
-                    # Đặt tickangle để đỡ chồng chữ
-                        figH.update_xaxes(tickangle=45)
-                        st_plotly(figH)
-                        register_fig("Correlation", f"Correlation heatmap ({mth.capitalize()})", figH,
-                                     "Liên hệ tuyến tính/hạng giữa các biến.")
-                # Top pairs (|r| cao)
-                with st.expander("📌 Top tương quan theo |r| (bỏ đường chéo)"):
-                    tri = corr.where(~np.eye(len(corr), dtype=bool))  # mask diagonal
-                    pairs = []
-                    cols = list(tri.columns)
-                    for i in range(len(cols)):
-                        for j in range(i+1, len(cols)):
-                            r = tri.iloc[i, j]
-                            if pd.notna(r):
-                                pairs.append((cols[i], cols[j], float(r), abs(float(r))))
-                    pairs = sorted(pairs, key=lambda x: x[3], reverse=True)[:30]
-                    if pairs:
-                        df_pairs = pd.DataFrame(pairs, columns=["var1", "var2", "r", "|r|"])
-                        st.dataframe(df_pairs, use_container_width=True, height=260)
+                    st.write("Không có cặp đáng kể.")
+
+# (tùy chọn) Scatter nhanh hai biến — có thể để sau correlation
+with st.expander("🔎 Scatter nhanh hai biến (tuỳ chọn)"):
+    others = [c for c in SS["num_cols"]]
+    if others:
+        xvar = st.selectbox("X", options=others, index=0, key="t2_sc_x")
+        y_candidates = [c for c in others if c != xvar] or others[:1]
+        yvar = st.selectbox("Y", options=y_candidates, index=0, key="t2_sc_y")
+        run_sc = st.button("Vẽ scatter", key="t2_sc_btn")
+        if run_sc:
+            sub = DF_VIEW[[xvar, yvar]].apply(pd.to_numeric, errors="coerce").dropna()
+            if len(sub) < 10:
+                st.warning("Không đủ dữ liệu sau khi loại NA (cần ≥10).")
+            else:
+                try:
+                    if mth == "pearson":
+                        r, pv = stats.pearsonr(sub[xvar], sub[yvar])
+                        trendline = "ols"
                     else:
-                        st.write("Không có cặp đáng kể.")
-
-        # Optional: pairwise scatter (gọn, không trùng Quick Runner Tab1)
-        with st.expander("🔎 Scatter nhanh hai biến (tuỳ chọn)"):
-            others = [c for c in num_cols]
-            xvar = st.selectbox("X", options=others, index=0, key="t2_sc_x")
-            yvar = st.selectbox("Y", options=[c for c in others if c != xvar], index=0 if len(others) > 1 else 0, key="t2_sc_y")
-            run_sc = st.button("Vẽ scatter", key="t2_sc_btn")
-            if run_sc:
-                sub = DF_VIEW[[xvar, yvar]].apply(pd.to_numeric, errors="coerce").dropna()
-                if len(sub) < 10:
-                    st.warning("Không đủ dữ liệu sau khi loại NA (cần ≥10).")
-                else:
-                    try:
-                        if mth == "pearson":
-                            r, pv = stats.pearsonr(sub[xvar], sub[yvar])
-                            trendline = "ols"
-                        else:
-                            r, pv = stats.spearmanr(sub[xvar], sub[yvar])
-                            trendline = None
-                        if HAS_PLOTLY:
-                            fig = px.scatter(sub, x=xvar, y=yvar, trendline=trendline,
-                                             title=f"{xvar} vs {yvar} ({mth.capitalize()})")
-                            st_plotly(fig)
-                            register_fig("Correlation", f"{xvar} vs {yvar} ({mth.capitalize()})", fig,
-                                         "Minh hoạ quan hệ hai biến.")
-                        st.json({"method": mth, "r": round(float(r), 4), "p": round(float(pv), 5)})
-                    except Exception as e:
-                        st.error(f"Scatter error: {e}")
+                        r, pv = stats.spearmanr(sub[xvar], sub[yvar])
+                        trendline = None
+                    if HAS_PLOTLY:
+                        fig = px.scatter(sub, x=xvar, y=yvar, trendline=trendline,
+                                         title=f"{xvar} vs {yvar} ({mth.capitalize()})")
+                        st_plotly(fig)
+                        register_fig("Correlation", f"{xvar} vs {yvar} ({mth.capitalize()})", fig,
+                                     "Minh hoạ quan hệ hai biến.")
+                    st.json({"method": mth, "r": round(float(r), 4), "p": round(float(pv), 5)})
+                except Exception as e:
+                    st.error(f"Scatter error: {e}")
+    else:
+        st.info("Không có cột numeric để vẽ scatter.")
 
 # ==== TAB 3: BENFORD (1D / 2D) ====
 # -- Benford helpers (module-level) --
