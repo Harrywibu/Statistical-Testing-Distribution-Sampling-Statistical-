@@ -4,15 +4,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy import stats
-from pandas.api.types import is_numeric_dtype
-import plotly.graph_objects as go
-cm = confusion_matrix(yte, pred)
-fig_cm = go.Figure(data=go.Heatmap(
-    z=cm, x=['Pred 0','Pred 1'], y=['True 0','True 1'],
-    colorscale='Greens', showscale=False, text=cm, texttemplate="%{text}"
-))
-fig_cm.update_layout(title='Confusion Matrix', height=320)
-st_plotly(fig_cm); register_fig('Regression', 'Confusion Matrix', fig_cm, 'Prediction vs Actual')
 warnings.filterwarnings('ignore')
 
 # Optional deps
@@ -67,10 +58,11 @@ def st_plotly(fig, **kwargs):
     if '_plt_seq' not in SS:
         SS['_plt_seq'] = 0
     SS['_plt_seq'] += 1
-    kwargs.setdefault('use_container_width', True)
+    kwargs.setdefault('width', 'stretch')
     kwargs.setdefault('config', {'displaylogo': False})
     kwargs.setdefault('key', f"plt_{SS['_plt_seq']}")
     return st.plotly_chart(fig, **kwargs)
+
 def file_sha12(b: bytes) -> str:
     import hashlib
     return hashlib.sha256(b).hexdigest()[:12]
@@ -152,12 +144,11 @@ def numeric_profile_stats(series: pd.Series):
     zero_ratio = float((s==0).mean()) if len(s)>0 else np.nan
     return desc.to_dict(), skew, kurt, p_norm, float(p95), float(p99), zero_ratio
 
-st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cat_freq(series: pd.Series):
-    s = series.dropna().astype(str)
-    vc = s.value_counts(dropna=True)
+    vc = series.astype(str).value_counts(dropna=True)
     df_freq = pd.DataFrame({'category': vc.index, 'count': vc.values})
-    df_freq['share'] = df_freq['count'] / df_freq['count'].sum()
+    df_freq['share'] = df_freq['count']/df_freq['count'].sum()
     return df_freq
 
 # ---- GoF models ----
@@ -285,16 +276,7 @@ with st.sidebar.expander('Plot & Performance', expanded=True):
     use_parquet_cache = st.checkbox('Disk cache (Parquet) for faster reloads', value=True and HAS_PYARROW)
     if st.button('🧹 Clear cache'): st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
-st.title('📊 Audit Statistics')
-# --- Sticky dataset summary ---
-with st.container():
-    n_full = len(SS['df']) if SS['df'] is not None else len(SS['df_preview'])
-    n_cols = (SS['df'] if SS['df'] is not None else SS['df_preview']).shape[1]
-    n_view = len(df) if 'df' in locals() else n_full
-    info = f"Rows (full/view): {n_full:,}/{n_view:,} • Cols: {n_cols} • SHA12={SS.get('sha12','—')}"
-    if 'downsample' in locals() and downsample and n_full > 50_000:
-        info += " • View=sampled 50k"
-    st.info(info)
+st.title('📊 Audit Statistics)')
 
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
@@ -309,7 +291,7 @@ with colR:
 if fname.lower().endswith('.csv'):
     if preview_click or SS['df_preview'] is None:
         SS['df_preview'] = read_csv_fast(fb).head(SS['pv_n'])
-    st.dataframe(SS['df_preview'], use_container_width=True, height=260)
+    st.dataframe(SS['df_preview'], width='stretch', height=260)
     headers = list(SS['df_preview'].columns)
     selected = st.multiselect('Columns to load', headers, headers)
     if st.button('📥 Load full CSV with selected columns'):
@@ -492,7 +474,7 @@ with TAB1:
                     'tail>p99': float((s>p99).mean()) if not np.isnan(p99) else None,
                     'normality_p': (round(p_norm,4) if not np.isnan(p_norm) else None)
                 }])
-                st.dataframe(stat_df, use_container_width=True, height=230)
+                st.dataframe(stat_df, width='stretch', height=230)
                 if HAS_PLOTLY:
                     gA,gB = st.columns(2)
                     with gA:
@@ -504,11 +486,7 @@ with TAB1:
                                 ys_scaled = ys * len(s) * (xs[1]-xs[0])
                                 fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE', line=dict(color='#E4572E')))
                             except Exception: pass
-                        if SS['log_scale']:
-                            if s.min() <= 0:
-                                st.warning('Log-X chỉ áp dụng khi giá trị > 0. Đã bỏ qua.')
-                            else:
-                                fig1.update_xaxes(type='log')
+                        if SS['log_scale']: fig1.update_xaxes(type='log')
                         fig1.update_layout(title=f'{num_col} — Histogram+KDE', height=320)
                         st_plotly(fig1); register_fig('Profiling', f'{num_col} — Histogram+KDE', fig1, 'Hình dạng phân phối & đuôi; KDE làm mượt mật độ.')
                         st.caption('**Ý nghĩa**: Nhìn shape, lệch, đa đỉnh; KDE giúp phát hiện modal/đuôi nặng.')
@@ -551,7 +529,7 @@ with TAB1:
                         st.caption('**Ý nghĩa**: Cong lớn → giá trị tập trung vào ít quan sát.')
                 st.markdown('### 📐 GoF (Normal / Lognormal / Gamma) — AIC & Transform')
                 gof, best, suggest = gof_models(s)
-                st.dataframe(gof, use_container_width=True, height=160)
+                st.dataframe(gof, width='stretch', height=160)
                 st.info(f'**Best fit:** {best}. **Suggested transform:** {suggest}')
                 st.markdown('### 🧭 Recommended tests (Numeric)')
                 recs = []
@@ -575,7 +553,7 @@ with TAB1:
                                         fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                     fig.update_layout(title=qtype + ' — Obs vs Exp', height=340)
                                     st_plotly(fig); register_fig('Benford Quick', qtype + ' — Obs vs Exp', fig, 'Benford quick run.')
-                                st.dataframe(var, use_container_width=True, height=220)
+                                st.dataframe(var, width='stretch', height=220)
                     elif qtype.startswith('ANOVA'):
                         grp = None if grp_for_quick=='(None)' else grp_for_quick
                         if not grp:
@@ -617,7 +595,7 @@ with TAB1:
             cat_col = st.selectbox('Categorical column', cat_cols, key='pr_cat')
             df_freq = cat_freq(df[cat_col])
             topn = st.number_input('Top‑N (Pareto)', 3, 50, 15)
-            st.dataframe(df_freq.head(int(topn)), use_container_width=True, height=240)
+            st.dataframe(df_freq.head(int(topn)), width='stretch', height=240)
             if HAS_PLOTLY:
                 d = df_freq.head(int(topn)).copy(); d['cum_share'] = d['count'].cumsum()/d['count'].sum()
                 figp = make_subplots(specs=[[{"secondary_y": True}]])
@@ -637,7 +615,7 @@ with TAB1:
                     std_resid = (obs-exp)/np.sqrt(exp)
                     res_tbl = pd.DataFrame({'count': obs, 'expected': exp, 'std_resid': std_resid}).sort_values('std_resid', key=lambda s: s.abs(), ascending=False)
                     st.write({'Chi2': round(chi2,3), 'dof': dof, 'p': round(p,4)})
-                    st.dataframe(res_tbl, use_container_width=True, height=260)
+                    st.dataframe(res_tbl, width='stretch', height=260)
                     if HAS_PLOTLY:
                         figr = px.bar(res_tbl.reset_index().head(20), x='category', y='std_resid', title='Standardized residuals (Top |resid|)', color='std_resid', color_continuous_scale='RdBu')
                         st_plotly(figr); register_fig('Profiling', f'{cat_col} — χ² GoF residuals', figr, 'Nhóm lệch mạnh vs uniform.')
@@ -666,7 +644,7 @@ with TAB1:
                                    'max': (t_clean.max() if not t_clean.empty else None),
                                    'span_days': (int((t_clean.max()-t_clean.min()).days) if len(t_clean)>1 else None),
                                    'n_unique_dates': int(t_clean.dt.date.nunique()) if not t_clean.empty else 0 }])
-            st.dataframe(meta, use_container_width=True, height=120)
+            st.dataframe(meta, width='stretch', height=120)
             if HAS_PLOTLY and not t_clean.empty:
                 c1,c2 = st.columns(2)
                 with c1:
@@ -782,7 +760,7 @@ with TAB3:
                     fig1.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                     fig1.update_layout(title=f"Benford 1D — Obs vs Exp ({SS.get('bf1_col')})", height=340)
                     st_plotly(fig1); register_fig('Benford 1D', 'Benford 1D — Obs vs Exp', fig1, 'Benford 1D check.')
-                st.dataframe(var, use_container_width=True, height=220)
+                st.dataframe(var, width='stretch', height=220)
                 thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
                 msg = '🟢 Green'
                 if maxdiff >= 2*thr: msg='🚨 Red'
@@ -801,7 +779,7 @@ with TAB3:
                     fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                     fig2.update_layout(title=f"Benford 2D — Obs vs Exp ({SS.get('bf2_col')})", height=340)
                     st_plotly(fig2); register_fig('Benford 2D','Benford 2D — Obs vs Exp', fig2, 'Benford 2D check.')
-                st.dataframe(var2, use_container_width=True, height=220)
+                st.dataframe(var2, width='stretch', height=220)
                 thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
                 msg2 = '🟢 Green'
                 if maxdiff2 >= 2*thr: msg2='🚨 Red'
@@ -810,7 +788,6 @@ with TAB3:
                 if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
                 elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
-                
 
 # ---------- TAB 4: Tests (guidance) ----------
 with TAB4:
@@ -930,7 +907,7 @@ with TAB4:
                         fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                         fig.update_layout(title='Benford 1D — Obs vs Exp', height=320)
                         st_plotly(fig); register_fig('Tests', 'Benford 1D — Obs vs Exp', fig, 'Benford 1D (Tab4).')
-                    st.dataframe(var, use_container_width=True, height=200)
+                    st.dataframe(var, width='stretch', height=200)
                     st.markdown('''
 - **Ý nghĩa**: Lệch mạnh ở chữ số đầu → khả năng thresholding/làm tròn/chia nhỏ hóa đơn.
 - **Tác động**: Rà soát policy phê duyệt theo ngưỡng; drill-down theo vendor/kỳ.
@@ -945,7 +922,7 @@ with TAB4:
                         fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                         fig2.update_layout(title='Benford 2D — Obs vs Exp', height=320)
                         st_plotly(fig2); register_fig('Tests', 'Benford 2D — Obs vs Exp', fig2, 'Benford 2D (Tab4).')
-                    st.dataframe(var2, use_container_width=True, height=200)
+                    st.dataframe(var2, width='stretch', height=200)
                     st.markdown('''
 - **Ý nghĩa**: Hotspot ở cặp 19/29/... phản ánh định giá “.99” hoặc cấu trúc giá.
 - **Tác động**: Đối chiếu chính sách giá/nhà cung cấp; không mặc định là gian lận.
@@ -956,7 +933,7 @@ with TAB4:
                 st.markdown('#### Chi-square GoF vs Uniform (Categorical)')
                 cg = out['cgof']
                 st.write({'Chi2': round(cg['chi2'],3), 'dof': cg['dof'], 'p': round(cg['p'],4)})
-                st.dataframe(cg['tbl'], use_container_width=True, height=220)
+                st.dataframe(cg['tbl'], width='stretch', height=220)
                 if HAS_PLOTLY:
                     figr = px.bar(cg['tbl'].reset_index().head(20), x='category', y='std_resid',
                                   title='Standardized residuals (Top |resid|)',
@@ -970,7 +947,7 @@ with TAB4:
             if 'hhi' in out:
                 st.markdown('#### Concentration HHI (Categorical)')
                 st.write({'HHI': round(out['hhi']['hhi'], 3)})
-                st.dataframe(out['hhi']['freq'].head(20), use_container_width=True, height=200)
+                st.dataframe(out['hhi']['freq'].head(20), width='stretch', height=200)
                 st.markdown('''
 - **Ý nghĩa**: HHI cao → tập trung vài nhóm (vendor/GL).
 - **Tác động**: Rà soát rủi ro phụ thuộc nhà cung cấp, kiểm soát phê duyệt/định giá.
@@ -979,10 +956,11 @@ with TAB4:
             if 'gap' in out:
                 st.markdown('#### Gap/Sequence test (Datetime)')
                 ddesc = out['gap']['gaps'].describe()
-            if isinstance(ddesc, pd.Series):
-                st.dataframe(ddesc.to_frame(name='gap_hours'), use_container_width=True, height=200)
+            if isinstance(desc, pd.Series):
+                st.dataframe(desc.to_frame(name='gap_hours'), width='stretch', height=200)
             else:
-                st.dataframe(ddesc, use_container_width=True, height=200)
+                st.dataframe(desc, width='stretch', height=200)
+
                 st.markdown('''
 - **Ý nghĩa**: Khoảng trống dài hoặc cụm dày bất thường → khả năng bỏ sót/chèn nghiệp vụ.
 - **Tác động**: Soát log hệ thống, lịch làm việc/ca trực, đối soát theo kỳ chốt.
@@ -1038,9 +1016,8 @@ with TAB5:
                     else:
                         X = sub[Xb]
                         y = sub[yb]
-                            if not is_numeric_dtype(y):
-                                classes = sorted(y.unique())
-                                y = (y == classes[-1]).astype(int)  # Giữ logic cũ: lớp “lớn nhất” là 1
+                        if y.dtype != np.number:
+                            classes = sorted(y.unique()); y = (y == classes[-1]).astype(int)
                         Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=0.25,random_state=42)
                         try:
                             model = LogisticRegression(max_iter=1000).fit(Xtr,ytr)
@@ -1115,7 +1092,7 @@ with TAB6:
             st.success('🟢 No notable flags based on current rules.')
         for title, obj in visuals:
             if isinstance(obj, pd.DataFrame):
-                st.markdown(f'**{title}**'); st.dataframe(obj, use_container_width=True, height=240)
+                st.markdown(f'**{title}**'); st.dataframe(obj, width='stretch', height=240)
 
 # ---------- TAB 7: Risk Assessment & Export (RESTORED) ----------
 with TAB7:
@@ -1149,7 +1126,7 @@ with TAB7:
                 signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds','why':'Thresholding/non‑usage','followup':'Nếu gom theo đơn vị thấy tập trung → nghi sai cấu hình.'})
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off near period end; outlier review','why':'Outliers/fabrication','followup':'Nếu Benford lệch + spike cuối kỳ → nghi smoothing rủi ro.'})
-        st.dataframe(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
+        st.dataframe(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), width='stretch', height=320)
         with st.expander('📋 Hướng dẫn nhanh (logic)'):
             st.markdown('''
 - **Distribution & Shape**: đọc mean/std/quantiles/SE/CI, shape/tails/normality; xác nhận Histogram+KDE/Box/ECDF/QQ.
