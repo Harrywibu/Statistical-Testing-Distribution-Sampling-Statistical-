@@ -62,17 +62,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
+CSS = r'''
 <style>
 /* Compact layout to reduce empty spaces */
 .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
 [data-testid="stSidebar"] .block-container {padding-top: .8rem;}
 h2, h3 { margin-bottom: .25rem; }
 div.stButton > button, .stDownloadButton > button { border-radius: 8px }
-/* Tidy dataframe default iframe height */
-iframe[title^="dataframe"] { height: 320px; }
+
+/* Tidy dataframe default height (nếu lỗi tokenizer, để comment dòng dưới) */
+/* iframe[title^="dataframe"] { height: 320px; } */
 </style>
-""", unsafe_allow_html=True)
+'''
+[data-testid="stDataFrame"] div[role="grid"] { min-height: 320px; }
+st.markdown(CSS, unsafe_allow_html=True)
 
 # ---- Small utils ----
 def file_sha12(b: bytes) -> str:
@@ -753,21 +756,22 @@ with TAB2:
 
     @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
     def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int):
-        t = pd.to_datetime(df[dt_col], errors="coerce")
+         t = pd.to_datetime(df[dt_col], errors="coerce")
         y = pd.to_numeric(df[y_col], errors="coerce")
         sub = pd.DataFrame({"t": t, "y": y}).dropna().sort_values("t")
         if sub.empty:
             return pd.DataFrame()
         ts = sub.set_index("t")["y"]
-        if agg == "count":
-            ser = ts.resample(freq).count()
-        elif agg == "mean":
-            ser = ts.resample(freq).mean()
-        else:
-            ser = ts.resample(freq).sum()
+        if agg == "count": ser = ts.resample(freq).count()
+        elif agg == "mean": ser = ts.resample(freq).mean()
+        else: ser = ts.resample(freq).sum()
         out = ser.to_frame("y")
         out["roll"] = out["y"].rolling(win, min_periods=1).mean()
-        return out.reset_index(names="t")
+    # Fallback reset_index (xem mục 2)
+        try:
+            return out.reset_index(names="t")
+        except TypeError:
+            return out.reset_index().rename(columns={"index":"t"})
 
     with trendR:
         if (dt_for_trend in DF_VIEW.columns) and (num_for_trend in DF_VIEW.columns):
@@ -978,7 +982,8 @@ for k in ["bf1_res", "bf2_res", "bf1_col", "bf2_col"]:
 
 with TAB3:
     st.subheader("🔢 Benford Law — 1D & 2D")
-
+    if "bf_use_full" not in SS:
+    SS["bf_use_full"] = True
     if not SS["num_cols"]:
         st.info("Không có cột numeric để chạy Benford.")
     else:
@@ -1528,7 +1533,6 @@ with TAB5:
                             max_iter=1000,
                             class_weight=("balanced" if class_bal else None),
                         ).fit(Xtr, ytr)
-
                         proba = model.predict_proba(Xte)[:, 1]
                         pred = (proba >= thr).astype(int)
 
@@ -1560,17 +1564,21 @@ with TAB5:
                         })
 
                         # Confusion matrix
-                        cm = confusion_matrix(yte, pred, labels=[0, 1])
-                        cm_df = pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Pred 0", "Pred 1"])
-                        st.dataframe(cm_df, use_container_width=True, height=150)
-                        if HAS_PLOTLY:
+ # Confusion matrix (MẢNG 8)
+                    if HAS_PLOTLY:
+                        try:
                             fcm = px.imshow(cm, text_auto=True, color_continuous_scale="Blues",
                                             labels=dict(x="Pred", y="Actual", color="Count"),
                                             x=["0", "1"], y=["0", "1"],
                                             title="Confusion Matrix")
-                            st_plotly(fcm)
-                            register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")
-
+                        except TypeError:
+                            fcm = px.imshow(cm, color_continuous_scale="Blues",
+                                            labels=dict(x="Pred", y="Actual", color="Count"),
+                                            x=["0", "1"], y=["0", "1"],
+                                            title="Confusion Matrix")
+                        st_plotly(fcm)
+                        register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")
+                    
                         # ROC curve
                         if HAS_PLOTLY and (len(np.unique(yte)) == 2):
                             try:
