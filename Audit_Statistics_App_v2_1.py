@@ -210,9 +210,13 @@ with st.sidebar.expander("0) Ingest", expanded=True):
 
 with st.sidebar.expander("1) Display & Performance", expanded=True):
     SS["bins"] = st.slider(
-        "Histogram bins", 10, 200, SS["bins"], 5,
-        help="Số bins cho histogram; ảnh hưởng độ mịn phân phối."
-    )
+    "Histogram bins",
+    min_value=10,
+    max_value=200,
+    value=SS["bins"],
+    step=5,
+    help="Số bins cho histogram; ảnh hưởng độ mịn phân phối."
+)
     SS["log_scale"] = st.checkbox(
         "Log scale (X)", SS["log_scale"], help="Chỉ áp dụng khi mọi giá trị > 0."
     )
