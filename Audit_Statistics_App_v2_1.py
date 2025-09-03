@@ -1,3 +1,4 @@
+# === Audit Statistics — v2.2 (refactor by Copilot) ===
 from __future__ import annotations
 
 # ---- Core & typing ----
@@ -100,6 +101,34 @@ div.stButton > button, .stDownloadButton > button { border-radius: 8px }
 '''
 st.markdown(CSS, unsafe_allow_html=True)
 
+# ---- DataFrame wrapper: Arrow-compat + width migration ----
+def _ensure_arrow_compat(df: pd.DataFrame) -> pd.DataFrame:
+    df2 = df.copy()
+    for c in df2.columns:
+        s = df2[c]
+        if s.dtype == 'object':
+            try:
+                sample = s.dropna().head(100)
+            except Exception:
+                sample = s
+            has_bytes = any(isinstance(x, (bytes, bytearray)) for x in sample)
+            if has_bytes:
+                df2[c] = s.apply(lambda x: x.decode('utf-8', 'replace') if isinstance(x, (bytes, bytearray)) else (x if isinstance(x, str) else ('' if x is None else str(x))))
+            else:
+                try:
+                    df2[c] = s.astype('string')
+                except Exception:
+                    df2[c] = s.astype(str)
+    return df2
+
+def st_df(df: pd.DataFrame, **kwargs):
+    if 'use_container_width' in kwargs:
+        ucw = kwargs.pop('use_container_width')
+        kwargs['width'] = 'stretch' if ucw else 'content'
+    kwargs.setdefault('width', 'stretch')
+    return st_df(_ensure_arrow_compat(df), **kwargs)
+
+
 # ---- Small utils ----
 def file_sha12(b: bytes) -> str:
     """12-char sha256 for file identity."""
@@ -111,7 +140,7 @@ def st_plotly(fig, **kwargs):
     if "_plt_seq" not in SS:
         SS["_plt_seq"] = 0
     SS["_plt_seq"] += 1
-    kwargs.setdefault("use_container_width", True)
+    kwargs.setdefault('width', 'stretch')
     kwargs.setdefault("config", {"displaylogo": False})
     kwargs.setdefault("key", f"plt_{SS['_plt_seq']}")
     return st.plotly_chart(fig, **kwargs)
@@ -191,7 +220,7 @@ def _parquet_cache_path(sha: str, key: str) -> str:
 def write_parquet_cache(df: pd.DataFrame, sha: str, key: str) -> str:
     if not HAS_PYARROW: return ""
     try:
-        table = pa.Table.from_pandas(df)
+        table = pa.Table.from_pandas(_ensure_arrow_compat(df))
         path = _parquet_cache_path(sha, key)
         pq.write_table(table, path)
         return path
@@ -267,28 +296,7 @@ def cat_freq(series: pd.Series) -> pd.DataFrame:
 
 # -- Sidebar: Workflow & Controls --
 st.sidebar.title("Workflow")
-# --- Ingest UI (Uploader & state init) ---
-with st.sidebar.expander("0) Ingest data", expanded=True):
-    up = st.file_uploader(
-        "Upload file (.csv, .xlsx)",
-        type=["csv", "xlsx"],
-        key="ingest_file",
-        help="Hỗ trợ CSV hoặc Excel (.xlsx)."
-    )
-    if up is not None:
-        fb = up.read()
-        SS["file_bytes"] = fb
-        SS["uploaded_name"] = up.name
-        SS["sha12"] = file_sha12(fb)
-        # reset state khi đổi file
-        SS["df"] = None
-        SS["df_preview"] = None
-        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
-    if st.button("Clear file", key="btn_clear_file"):
-        for k in ["file_bytes", "uploaded_name", "sha12", "df", "df_preview"]:
-            SS[k] = DEFAULTS.get(k, None)
-        st.rerun()
-        
+
 with st.sidebar.expander("1) Display & Performance", expanded=True):
     SS["bins"] = st.slider(
         "Histogram bins", min_value=10, max_value=200,
@@ -331,11 +339,36 @@ with st.sidebar.expander("3) Cache", expanded=False):
         help="Lưu bảng đã load xuống đĩa (Parquet) để mở lại nhanh."
     )
 
+
 # -- Main: Title + File Gate --
 st.title("📊 Audit Statistics")
+
+# --- Ingest UI (Uploader & state init) ---
+with st.sidebar.expander("0) Ingest data", expanded=True):
+    up = st.file_uploader(
+        "Upload file (.csv, .xlsx)",
+        type=["csv", "xlsx"],
+        key="ingest_file",
+        help="Hỗ trợ CSV hoặc Excel (.xlsx)."
+    )
+    if up is not None:
+        fb = up.read()
+        SS["file_bytes"] = fb
+        SS["uploaded_name"] = up.name
+        SS["sha12"] = file_sha12(fb)
+        # reset state khi đổi file
+        SS["df"] = None
+        SS["df_preview"] = None
+        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+    if st.button("Clear file", key="btn_clear_file"):
+        for k in ["file_bytes", "uploaded_name", "sha12", "df", "df_preview"]:
+            SS[k] = DEFAULTS.get(k, None)
+        st.rerun()
+
 if SS["file_bytes"] is None:
     st.info("Upload a file để bắt đầu.")
     st.stop()
+
 
 fname = SS["uploaded_name"]; fb = SS["file_bytes"]; sha = SS["sha12"]
 
@@ -356,7 +389,7 @@ if fname.lower().endswith(".csv"):
             st.error(f"Lỗi đọc CSV: {e}")
             SS["df_preview"] = None
     if SS["df_preview"] is not None:
-        st.dataframe(SS["df_preview"], use_container_width=True, height=260)
+        st_df(SS["df_preview"], use_container_width=True, height=260)
         headers = list(SS["df_preview"].columns)
         selected = st.multiselect(
             "Columns to load", headers, default=headers, key="csv_cols"
@@ -403,7 +436,7 @@ else:
             st.error(f"Lỗi đọc XLSX: {e}")
             prev = pd.DataFrame()
 
-        st.dataframe(prev, use_container_width=True, height=260)
+        st_df(prev, use_container_width=True, height=260)
         headers = list(prev.columns)
         st.caption(f"Columns: {len(headers)} • SHA12={sha}")
 
@@ -570,7 +603,7 @@ with TAB1:
                     "tail>p99": float((s > p99).mean()) if not np.isnan(p99) else None,
                     "normality_p": (round(p_norm, 4) if not np.isnan(p_norm) else None),
                 }])
-                st.dataframe(stat_df, use_container_width=True, height=220)
+                st_df(stat_df, use_container_width=True, height=220)
 
                 # ---- Visuals ----
                 if HAS_PLOTLY:
@@ -658,7 +691,7 @@ with TAB1:
                     try:
                         gof, best, suggest = gof_models(s)
                         st.markdown("### 📘 GoF (Normal / Lognormal / Gamma) — AIC & Transform")
-                        st.dataframe(gof, use_container_width=True, height=150)
+                        st_df(gof, use_container_width=True, height=150)
                         st.info(f"**Best fit:** {best}. **Suggested transform:** {suggest}")
                     except Exception:
                         pass
@@ -683,7 +716,7 @@ with TAB1:
             cat_col = st.selectbox("Categorical column", SS["cat_cols"], key="t1_cat")
             df_freq = cat_freq(DF_VIEW[cat_col])
             topn = st.number_input("Top‑N (Pareto)", 3, 50, 15, step=1)
-            st.dataframe(df_freq.head(int(topn)), use_container_width=True, height=240)
+            st_df(df_freq.head(int(topn)), use_container_width=True, height=240)
 
             if HAS_PLOTLY and not df_freq.empty:
                 d = df_freq.head(int(topn)).copy()
@@ -710,7 +743,7 @@ with TAB1:
                         res_tbl = pd.DataFrame({"count": obs, "expected": exp, "std_resid": std_resid}) \
                             .sort_values("std_resid", key=lambda s: s.abs(), ascending=False)
                         st.write({"Chi2": round(chi2, 3), "dof": dof, "p": round(p, 4)})
-                        st.dataframe(res_tbl, use_container_width=True, height=240)
+                        st_df(res_tbl, use_container_width=True, height=240)
                         if HAS_PLOTLY:
                             figr = px.bar(res_tbl.reset_index().head(20), x="category", y="std_resid",
                                           title="Standardized residuals (Top |resid|)",
@@ -752,7 +785,7 @@ with TAB1:
                 "span_days": (int((t_clean.max() - t_clean.min()).days) if len(t_clean) > 1 else None),
                 "n_unique_dates": int(t_clean.dt.date.nunique()) if not t_clean.empty else 0
             }])
-            st.dataframe(meta, use_container_width=True, height=120)
+            st_df(meta, use_container_width=True, height=120)
 
             if HAS_PLOTLY and not t_clean.empty:
                 d1, d2 = st.columns(2)
@@ -942,7 +975,7 @@ else:
                 pairs = sorted(pairs, key=lambda x: x[3], reverse=True)[:30]
                 if pairs:
                     df_pairs = pd.DataFrame(pairs, columns=["var1", "var2", "r", "|r|"])
-                    st.dataframe(df_pairs, use_container_width=True, height=260)
+                    st_df(df_pairs, use_container_width=True, height=260)
                 else:
                     st.write("Không có cặp đáng kể.")
 
@@ -1120,7 +1153,7 @@ with TAB3:
                 st_plotly(fig1)
                 register_fig("Benford 1D", "Benford 1D — Obs vs Exp", fig1, "Benford 1D check.")
 
-            st.dataframe(var, use_container_width=True, height=220)
+            st_df(var, use_container_width=True, height=220)
 
             thr = SS["risk_diff_threshold"]
             maxdiff = float(var["diff_pct"].abs().max()) if len(var) > 0 else 0.0
@@ -1153,7 +1186,7 @@ with TAB3:
                 st_plotly(fig2)
                 register_fig("Benford 2D", "Benford 2D — Obs vs Exp", fig2, "Benford 2D check.")
 
-            st.dataframe(var2, use_container_width=True, height=220)
+            st_df(var2, use_container_width=True, height=220)
 
             thr = SS["risk_diff_threshold"]
             maxdiff2 = float(var2["diff_pct"].abs().max()) if len(var2) > 0 else 0.0
@@ -1309,7 +1342,7 @@ def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
                                       height=320)
                     st_plotly(fig)
                     register_fig("Tests", "Benford 1D — Obs vs Exp", fig, "Benford 1D (Tab 4).")
-                st.dataframe(var, use_container_width=True, height=200)
+                st_df(var, use_container_width=True, height=200)
 
                 thr = SS["risk_diff_threshold"]
                 maxdiff = float(var["diff_pct"].abs().max()) if len(var) > 0 else 0.0
@@ -1339,7 +1372,7 @@ def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
                                        height=320)
                     st_plotly(fig2)
                     register_fig("Tests", "Benford 2D — Obs vs Exp", fig2, "Benford 2D (Tab 4).")
-                st.dataframe(var2, use_container_width=True, height=200)
+                st_df(var2, use_container_width=True, height=200)
 
                 thr = SS["risk_diff_threshold"]
                 maxdiff2 = float(var2["diff_pct"].abs().max()) if len(var2) > 0 else 0.0
@@ -1362,7 +1395,7 @@ def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
             st.markdown("#### Chi‑square GoF vs Uniform (Categorical)")
             cg = out["cgof"]
             st.write({"Chi2": round(cg["chi2"], 3), "dof": cg["dof"], "p": round(cg["p"], 4)})
-            st.dataframe(cg["tbl"], use_container_width=True, height=220)
+            st_df(cg["tbl"], use_container_width=True, height=220)
             if HAS_PLOTLY:
                 figr = px.bar(cg["tbl"].reset_index().head(20), x="category", y="std_resid",
                               title="Standardized residuals (Top |resid|)",
@@ -1378,7 +1411,7 @@ def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
         if "hhi" in out and isinstance(out["hhi"], dict):
             st.markdown("#### Concentration HHI (Categorical)")
             st.write({"HHI": round(out["hhi"]["hhi"], 3)})
-            st.dataframe(out["hhi"]["freq"].head(20), use_container_width=True, height=200)
+            st_df(out["hhi"]["freq"].head(20), use_container_width=True, height=200)
             st.markdown("""
 - **Ý nghĩa**: HHI cao → tập trung vài nhóm (vendor/GL).  
 - **Tác động**: Rà soát rủi ro phụ thuộc nhà cung cấp, kiểm soát phê duyệt/định giá.
@@ -1390,9 +1423,9 @@ def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
             gdf = out["gap"]["gaps"]
             ddesc = gdf.describe()
             if isinstance(ddesc, pd.Series):
-                st.dataframe(ddesc.to_frame(name="gap_hours"), use_container_width=True, height=200)
+                st_df(ddesc.to_frame(name="gap_hours"), use_container_width=True, height=200)
             else:
-                st.dataframe(ddesc, use_container_width=True, height=200)
+                st_df(ddesc, use_container_width=True, height=200)
             st.markdown("""
 - **Ý nghĩa**: Khoảng trống dài hoặc cụm dày bất thường → khả năng bỏ sót/chèn nghiệp vụ.  
 - **Tác động**: Soát log hệ thống, lịch làm việc/ca trực, đối soát theo kỳ chốt.
@@ -1502,7 +1535,7 @@ with TAB5:
                             "feature": X_lin,
                             "coef": mdl.coef_
                         }).sort_values("coef", key=lambda s: s.abs(), ascending=False)
-                        st.dataframe(coef_df, use_container_width=True, height=240)
+                        st_df(coef_df, use_container_width=True, height=240)
                         if HAS_PLOTLY and not coef_df.empty:
                             figc = px.bar(coef_df, x="feature", y="coef", title="Linear coefficients", color="coef",
                                           color_continuous_scale="RdBu")
@@ -1910,7 +1943,7 @@ with TAB6:
         for title, obj in visuals:
             st.markdown(f"**{title}**")
             if isinstance(obj, pd.DataFrame):
-                st.dataframe(obj, use_container_width=True, height=min(320, 40 + 24 * min(len(obj), 10)))
+                st_df(obj, use_container_width=True, height=min(320, 40 + 24 * min(len(obj), 10)))
 
 # ---------- TAB 7: Risk Assessment & Export (RESTORED) ----------
 # ==== TAB 7: RISK ASSESSMENT & EXPORT ====
@@ -1984,7 +2017,7 @@ with TAB7:
         rep_df, _ = _quality_report(DF_VIEW)
         signals = _quick_signals(DF_FULL if SS["df"] is not None else DF_VIEW, SS["num_cols"])
 
-        st.dataframe(
+        st_df(
             pd.DataFrame(signals) if signals else pd.DataFrame([{"status": "No strong risk signals"}]),
             use_container_width=True, height=320
         )
