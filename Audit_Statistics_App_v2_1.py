@@ -1625,36 +1625,33 @@ with TAB5:
                             "removed_const": (", ".join(removed[:5]) + ("..." if len(removed) > 5 else "")) if removed else None
                         })
 
-from sklearn.metrics import confusion_matrix
-
 # ---- Confusion Matrix (safe block) ----
-cm = confusion_matrix(yte, pred)
+    cm = confusion_matrix(yte, pred)
 
-if HAS_PLOTLY:
-    try:
+    if HAS_PLOTLY:
+        try:
         # Plotly mới: có text_auto
-        fcm = px.imshow(
-            cm,
-            text_auto=True,
-            color_continuous_scale="Blues",
-            labels={"x": "Pred", "y": "Actual", "color": "Count"},
-            x=["0", "1"],
-            y=["0", "1"],
-            title="Confusion Matrix",
-        )
-    except TypeError:
+            fcm = px.imshow(
+                cm,
+                text_auto=True,
+                color_continuous_scale="Blues",
+                labels={"x": "Pred", "y": "Actual", "color": "Count"},
+                x=["0", "1"],
+                y=["0", "1"],
+                title="Confusion Matrix",
+            )
+        except TypeError:
         # Fallback cho Plotly cũ (không hỗ trợ text_auto)
-        fcm = px.imshow(
-            cm,
+            fcm = px.imshow(
+                cm,
             color_continuous_scale="Blues",
-            labels={"x": "Pred", "y": "Actual", "color": "Count"},
-            x=["0", "1"],
-            y=["0", "1"],
-            title="Confusion Matrix",
-        )
-
-    st_plotly(fcm)
-    register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")
+                labels={"x": "Pred", "y": "Actual", "color": "Count"},
+                x=["0", "1"],
+                y=["0", "1"],
+                title="Confusion Matrix",
+            )
+        st_plotly(fcm)
+        register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")
                         # ROC curve
                         if HAS_PLOTLY and (len(np.unique(yte)) == 2):
                             try:
