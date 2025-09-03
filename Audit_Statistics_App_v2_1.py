@@ -299,12 +299,13 @@ st.title('📊 Audit Statistics')
 with st.container():
     n_full = len(SS['df']) if SS['df'] is not None else len(SS['df_preview'])
     n_cols = (SS['df'] if SS['df'] is not None else SS['df_preview']).shape[1]
-    n_view = len(df) if 'df' in locals() else n_full
-    info = f"Rows (full/view): {n_full:,}/{n_view:,} • Cols: {n_cols} • SHA12={SS.get('sha12','—')}"
-    if 'downsample' in locals() and downsample and n_full > 50_000:
-        info += " • View=sampled 50k"
+    n_view = len(df)
+    ds = f"Rows(full/view): {n_full:,}/{n_view:,} • Cols: {n_cols} • SHA12={SS['sha12']}"
+    if downsample and n_full > 50_000:
+        ds += " • View=sampled 50k"
+    st.info(ds)
+    
     st.info(info)
-
 if SS['file_bytes'] is None:
     st.info('Upload a file to start.'); st.stop()
 
