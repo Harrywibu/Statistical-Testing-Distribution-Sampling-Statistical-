@@ -74,7 +74,6 @@ div.stButton > button, .stDownloadButton > button { border-radius: 8px }
 /* iframe[title^="dataframe"] { height: 320px; } */
 </style>
 '''
-[data-testid="stDataFrame"] div[role="grid"] { min-height: 320px; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ---- Small utils ----
