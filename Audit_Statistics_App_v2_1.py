@@ -752,8 +752,7 @@ with TAB2:
         freq = st.selectbox("Aggregate frequency", ["D", "W", "M", "Q"], index=2)
         agg_opt = st.radio("Aggregate by", ["sum", "mean", "count"], index=0, horizontal=True)
         win = st.slider("Rolling window (periods)", 2, 24, 3)
-
-    @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
     def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int):
          t = pd.to_datetime(df[dt_col], errors="coerce")
         y = pd.to_numeric(df[y_col], errors="coerce")
@@ -821,8 +820,7 @@ with TAB2:
             key="t2_corr_m"
         )
         mth = "pearson" if method.startswith("Pearson") else "spearman"
-
-        @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+ @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
         def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
             # loại bỏ cột hằng (variance=0) để tránh NaN/ cảnh báo
             sub = df[cols].copy()
@@ -1121,8 +1119,8 @@ with TAB4:
     def concentration_hhi(freq_df: pd.DataFrame) -> float:
         share = freq_df["share"].values
         return float(np.sum(share ** 2)) if len(share) > 0 else np.nan
-
-    @st.cache_data(ttl=1200, show_spinner=False, max_entries=64)
+        
+@st.cache_data(ttl=1200, show_spinner=False, max_entries=64)
     def time_gaps_hours(series: pd.Series) -> Optional[pd.DataFrame]:
         t = pd.to_datetime(series, errors="coerce").dropna().sort_values()
         if len(t) < 3:
