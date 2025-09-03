@@ -292,7 +292,7 @@ with st.sidebar.expander('3) Cache', expanded=False):
                                     value=True and HAS_PYARROW,
                                     help='Lưu bảng đã load xuống đĩa (Parquet) để mở lại nhanh.')
     if st.button('🧹 Clear cache'):
-        st.cache_data.clear(); st.toast('Cache cleared', icon='🧹'
+        st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
 st.title('📊 Audit Statistics')
 
