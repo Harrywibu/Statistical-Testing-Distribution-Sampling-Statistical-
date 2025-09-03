@@ -1629,7 +1629,6 @@ with TAB5:
                         # ==== TAB 5: REGRESSION (Linear / Logistic) ====
 with TAB5:
     st.subheader("📘 Regression (Linear / Logistic)")
-
     if not HAS_SK:
         st.info("Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.")
         st.stop()
@@ -1871,31 +1870,37 @@ with TAB5:
                             "removed_const": (", ".join(removed[:5]) + ("..." if len(removed) > 5 else "")) if removed else None
                         })
 
-                        # Confusion matrix
-                        cm = confusion_matrix(yte, pred)             
+                        from sklearn.metrics import confusion_matrix
+                        
+                        # ---- Confusion Matrix (safe block) ----
+                        cm = confusion_matrix(yte, pred)
+                        
                         if HAS_PLOTLY:
                             try:
-                              fcm = px.imshow(                   
-                                cm,
-                                text_auto=True,
-                                color_continuous_scale="Blues",
-                                labels={"x": "Pred", "y": "Actual", "color": "Count"},
-                                x=["0", "1"],
-                                y=["0", "1"],
-                                title="Confusion Matrix",
-                              )
+                                # Plotly mới: hỗ trợ text_auto
+                                fcm = px.imshow(
+                                    cm,
+                                    text_auto=True,
+                                    color_continuous_scale="Blues",
+                                    labels={"x": "Pred", "y": "Actual", "color": "Count"},
+                                    x=["0", "1"],
+                                    y=["0", "1"],
+                                    title="Confusion Matrix",
+                                )
                             except TypeError:
+                                # Fallback cho Plotly cũ (không có text_auto)
                                 fcm = px.imshow(
                                     cm,
                                     color_continuous_scale="Blues",
                                     labels={"x": "Pred", "y": "Actual", "color": "Count"},
                                     x=["0", "1"],
                                     y=["0", "1"],
-                                    title="Confusion Matrix",                                
+                                    title="Confusion Matrix",
                                 )
+                        
                             st_plotly(fcm)
-                            register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")                            
-                        # ROC curve
+                            register_fig("Regression", "Confusion Matrix", fcm, "Hiệu quả phân loại tại ngưỡng đã chọn.")                      
+
                         if HAS_PLOTLY and (len(np.unique(yte)) == 2):
                             try:
                                 fpr, tpr, thr_arr = roc_curve(yte, proba)
