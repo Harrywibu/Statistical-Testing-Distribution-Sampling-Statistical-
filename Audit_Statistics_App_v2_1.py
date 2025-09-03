@@ -61,6 +61,30 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+# ==== Session defaults (đặt sau set_page_config, trước khi dùng bất kỳ SS["..."]) ====
+SS = st.session_state
+
+DEFAULTS = {
+    "bins": 50,
+    "log_scale": False,
+    "kde_threshold": 150_000,
+    "risk_diff_threshold": 0.05,
+    "advanced_visuals": False,
+    "use_parquet_cache": False,
+    "pv_n": 100,              # bạn từng muốn preview 100 dòng mặc định
+    "df": None,
+    "df_preview": None,
+    "file_bytes": None,
+    "sha12": "",
+    "uploaded_name": "",
+    "downsample_view": True,
+    "xlsx_sheet": "",
+    "header_row": 1,
+    "skip_top": 0
+}
+
+for k, v in DEFAULTS.items():
+    SS.setdefault(k, v)
 
 CSS = r'''
 <style>
@@ -91,7 +115,24 @@ def st_plotly(fig, **kwargs):
     kwargs.setdefault("config", {"displaylogo": False})
     kwargs.setdefault("key", f"plt_{SS['_plt_seq']}")
     return st.plotly_chart(fig, **kwargs)
-
+# ==== Figure registry & helper (Export) ====
+SS = st.session_state
+if "fig_registry" not in SS:
+    SS["fig_registry"] = []
+def register_fig(section: str, title: str, fig, caption: str = "") -> None:
+    """
+    Lưu figure (Plotly) để phục vụ Export (DOCX/PDF) ở Tab 7.
+    - section: tên nhóm (Profiling / Trend / Benford / Tests / Regression / Fraud Flags / ...)
+    - title: tiêu đề biểu đồ
+    - fig: đối tượng Plotly Figure
+    - caption: chú thích ngắn (tùy chọn)
+    """
+    SS["fig_registry"].append({
+        "section": section,
+        "title": title,
+        "fig": fig,
+        "caption": caption
+    })
 def _downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
     """Memory-friendly numeric downcast."""
     for c in df.select_dtypes(include=["float64"]).columns:
@@ -113,6 +154,34 @@ def to_float(x) -> Optional[float]:
 def is_datetime_like(colname: str, s: pd.Series) -> bool:
     """Detect datetime either by dtype or name hint."""
     return pd.api.types.is_datetime64_any_dtype(s) or bool(re.search(r"(date|time)", str(colname), re.I))
+
+# ==== Cached correlation (Pearson/Spearman) ====
+@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+def corr_cached(df: pd.DataFrame, cols: List[str], method: str = "pearson") -> pd.DataFrame:
+    """
+    Tính ma trận tương quan trên subset cột:
+    - Ép kiểu numeric an toàn (coerce).
+    - Loại cột toàn NA sau khi ép.
+    - Loại cột hằng (variance = 0) để tránh NaN correlation.
+    - Trả về DataFrame rỗng nếu còn < 2 cột hợp lệ.
+    """
+    if not cols:
+        return pd.DataFrame()
+
+    sub = df[cols].apply(pd.to_numeric, errors="coerce")
+    # drop columns that are all NA
+    sub = sub.dropna(axis=1, how="all")
+
+    # drop constant columns (nunique <= 1)
+    nunique = sub.nunique(dropna=True)
+    keep = [c for c in sub.columns if nunique.get(c, 0) > 1]
+    sub = sub[keep]
+
+    if sub.shape[1] < 2:
+        return pd.DataFrame()
+
+    # method: 'pearson' hoặc 'spearman'
+    return sub.corr(method=method)
 
 # ---- Disk cache helpers (Parquet) ----
 def _parquet_cache_path(sha: str, key: str) -> str:
@@ -199,68 +268,48 @@ def cat_freq(series: pd.Series) -> pd.DataFrame:
 # -- Sidebar: Workflow & Controls --
 st.sidebar.title("Workflow")
 
-with st.sidebar.expander("0) Ingest", expanded=True):
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx"], key="uploader")
-    if uploaded is not None:
-        fb = uploaded.read()
-        SS["file_bytes"] = fb
-        SS["sha12"] = file_sha12(fb)
-        SS["uploaded_name"] = uploaded.name
-        st.caption(f"SHA12: {SS['sha12']}")
-        
 with st.sidebar.expander("1) Display & Performance", expanded=True):
     SS["bins"] = st.slider(
-        "Histogram bins",
-        min_value=10,
-        max_value=200,
-        value=SS["bins"],
-        step=5,
+        "Histogram bins", min_value=10, max_value=200,
+        value=SS.get("bins", 50), step=5,
         help="Số bins cho histogram; ảnh hưởng độ mịn phân phối."
     )
-
     SS["log_scale"] = st.checkbox(
-        "Log scale (X)",
-        value=SS["log_scale"],
+        "Log scale (X)", value=SS.get("log_scale", False),
         help="Chỉ áp dụng khi mọi giá trị > 0."
     )
-
     SS["kde_threshold"] = st.number_input(
-        "KDE max n",
-        min_value=1_000,
-        max_value=300_000,
-        value=SS["kde_threshold"],
-        step=1_000,
+        "KDE max n", min_value=1_000, max_value=300_000,
+        value=SS.get("kde_threshold", 150_000), step=1_000,
         help="Nếu số điểm > ngưỡng này thì bỏ KDE để tăng tốc."
     )
-
-    downsample = st.checkbox(
-        "Downsample view 50k",
-        value=True,
+    SS["downsample_view"] = st.checkbox(
+        "Downsample view 50k", value=SS.get("downsample_view", True),
         help="Chỉ hiển thị & vẽ trên sample 50k để nhanh hơn (tính toán nặng vẫn có thể chạy trên full)."
     )
+
 with st.sidebar.expander("2) Risk & Advanced", expanded=False):
     SS["risk_diff_threshold"] = st.slider(
-        "Benford diff% threshold", 0.01, 0.10, SS["risk_diff_threshold"], 0.01,
+        "Benford diff% threshold", 0.01, 0.10,
+        SS.get("risk_diff_threshold", 0.05), 0.01,
         help="Ngưỡng cảnh báo chênh lệch quan sát so với kỳ vọng (Benford)."
     )
     SS["advanced_visuals"] = st.checkbox(
-        "Advanced visuals (Violin, Lorenz/Gini)", SS["advanced_visuals"],
+        "Advanced visuals (Violin, Lorenz/Gini)",
+        value=SS.get("advanced_visuals", False),
         help="Tắt mặc định để gọn giao diện; bật khi cần phân tích sâu."
     )
 
 with st.sidebar.expander("3) Cache", expanded=False):
-    # nếu không có pyarrow thì vô hiệu hoá cache xuống đĩa
     if not HAS_PYARROW:
         st.caption("⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.")
         SS["use_parquet_cache"] = False
     SS["use_parquet_cache"] = st.checkbox(
         "Disk cache (Parquet) for faster reloads",
-        value=SS["use_parquet_cache"] and HAS_PYARROW,
+        value=SS.get("use_parquet_cache", False) and HAS_PYARROW,
         help="Lưu bảng đã load xuống đĩa (Parquet) để mở lại nhanh."
     )
-    if st.button("🧹 Clear cache", use_container_width=True):
-        st.cache_data.clear()
-        st.toast("Cache cleared", icon="🧹")
+
 
 # -- Main: Title + File Gate --
 st.title("📊 Audit Statistics")
@@ -274,7 +323,7 @@ topL, topR = st.columns([3, 2])
 with topL:
     st.text_input("File", value=fname or "", disabled=True)
 with topR:
-    SS["pv_n"] = st.slider("Preview rows", 50, 500, SS["pv_n"], 50)
+    SS["pv_n"] = st.slider("Preview rows", 50, 500, SS.get("pv_n", 100), 50)
     do_preview = st.button("🔎 Quick preview", key="btn_preview")
 
 # -- Ingest: CSV vs XLSX --
@@ -1579,12 +1628,14 @@ with TAB5:
  # Confusion matrix (MẢNG 8)
                     if HAS_PLOTLY:
                         try:
+                            cm = confusion_matrix(yte, pred)
                             fcm = px.imshow(cm, text_auto=True, color_continuous_scale="Blues",
                                             labels=dict(x="Pred", y="Actual", color="Count"),
                                             x=["0", "1"], y=["0", "1"],
                                             title="Confusion Matrix")
                         except TypeError:
-                            fcm = px.imshow(cm, color_continuous_scale="Blues",
+                            cm = confusion_matrix(yte, pred)
+                            fcm = px.imshow(cm, color_continuous_s    cale="Blues",
                                             labels=dict(x="Pred", y="Actual", color="Count"),
                                             x=["0", "1"], y=["0", "1"],
                                             title="Confusion Matrix")
