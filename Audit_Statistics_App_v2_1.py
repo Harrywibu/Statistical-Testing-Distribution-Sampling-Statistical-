@@ -1043,7 +1043,7 @@ with TAB5:
                     else:
                         X = sub[Xb]
                         y = sub[yb]
-                            if y.dtype != np.number:
+                        if y.dtype != np.number:
                             classes = sorted(y.unique()); y = (y == classes[-1]).astype(int)
                         Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=0.25,random_state=42)
                         try:
