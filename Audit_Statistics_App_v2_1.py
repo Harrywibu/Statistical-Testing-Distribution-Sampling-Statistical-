@@ -753,23 +753,32 @@ with TAB2:
         agg_opt = st.radio("Aggregate by", ["sum", "mean", "count"], index=0, horizontal=True)
         win = st.slider("Rolling window (periods)", 2, 24, 3)
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-    def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int):
-         t = pd.to_datetime(df[dt_col], errors="coerce")
-        y = pd.to_numeric(df[y_col], errors="coerce")
-        sub = pd.DataFrame({"t": t, "y": y}).dropna().sort_values("t")
-        if sub.empty:
-            return pd.DataFrame()
-        ts = sub.set_index("t")["y"]
-        if agg == "count": ser = ts.resample(freq).count()
-        elif agg == "mean": ser = ts.resample(freq).mean()
-        else: ser = ts.resample(freq).sum()
-        out = ser.to_frame("y")
-        out["roll"] = out["y"].rolling(win, min_periods=1).mean()
-    # Fallback reset_index (xem mục 2)
-        try:
-            return out.reset_index(names="t")
-        except TypeError:
-            return out.reset_index().rename(columns={"index":"t"})
+def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int) -> pd.DataFrame:
+    # Chuẩn hoá kiểu
+    t = pd.to_datetime(df[dt_col], errors="coerce")
+    y = pd.to_numeric(df[y_col], errors="coerce")
+
+    # Lọc NA và sắp xếp theo thời gian
+    sub = pd.DataFrame({"t": t, "y": y}).dropna().sort_values("t")
+    if sub.empty:
+        return pd.DataFrame()
+
+    ts = sub.set_index("t")["y"]
+    if agg == "count":
+        ser = ts.resample(freq).count()
+    elif agg == "mean":
+        ser = ts.resample(freq).mean()
+    else:
+        ser = ts.resample(freq).sum()
+
+    out = ser.to_frame("y")
+    out["roll"] = out["y"].rolling(win, min_periods=1).mean()
+
+    # Fallback cho pandas cũ (reset_index không hỗ trợ names=)
+    try:
+        return out.reset_index(names="t")
+    except TypeError:
+        return out.reset_index().rename(columns={"index": "t"})
 
     with trendR:
         if (dt_for_trend in DF_VIEW.columns) and (num_for_trend in DF_VIEW.columns):
