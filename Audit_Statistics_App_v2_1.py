@@ -829,7 +829,8 @@ def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, ag
             key="t2_corr_m"
         )
         mth = "pearson" if method.startswith("Pearson") else "spearman"
- @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+        
+@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
         def corr_cached(df: pd.DataFrame, cols: list[str], method: str) -> pd.DataFrame:
             # loại bỏ cột hằng (variance=0) để tránh NaN/ cảnh báo
             sub = df[cols].copy()
