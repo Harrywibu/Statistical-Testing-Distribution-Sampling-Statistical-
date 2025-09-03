@@ -1627,7 +1627,6 @@ with TAB5:
 
 # ---- Confusion Matrix (safe block) ----
                         # ==== TAB 5: REGRESSION (Linear / Logistic) ====
-
 with TAB5:
     st.subheader("📘 Regression (Linear / Logistic)")
 
