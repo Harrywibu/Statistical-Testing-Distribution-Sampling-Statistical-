@@ -352,6 +352,7 @@ else:
                 df_full = df_cached
             SS["df"] = df_full
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
+
 # Gate after ingest (để các mảng sau sử dụng df/preview)
 if SS["df"] is None and SS["df_preview"] is None:
     st.stop()
