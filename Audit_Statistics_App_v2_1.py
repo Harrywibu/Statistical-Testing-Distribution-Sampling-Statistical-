@@ -1627,9 +1627,9 @@ with TAB5:
 # ---- Confusion Matrix (safe block) ----
 # ==== TAB 6: FRAUD FLAGS ====
 
-try:
-    with TAB6:
-    finally: pass
+                except Exception as e:
+                    st.error(f"Logistic Regression error: {e}")
+with TAB6:
     st.subheader("🚩 Fraud Flags")
 
     # --- Controls ---
