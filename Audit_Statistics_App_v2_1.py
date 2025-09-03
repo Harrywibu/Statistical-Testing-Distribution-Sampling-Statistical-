@@ -267,7 +267,28 @@ def cat_freq(series: pd.Series) -> pd.DataFrame:
 
 # -- Sidebar: Workflow & Controls --
 st.sidebar.title("Workflow")
-
+# --- Ingest UI (Uploader & state init) ---
+with st.sidebar.expander("0) Ingest data", expanded=True):
+    up = st.file_uploader(
+        "Upload file (.csv, .xlsx)",
+        type=["csv", "xlsx"],
+        key="ingest_file",
+        help="Hỗ trợ CSV hoặc Excel (.xlsx)."
+    )
+    if up is not None:
+        fb = up.read()
+        SS["file_bytes"] = fb
+        SS["uploaded_name"] = up.name
+        SS["sha12"] = file_sha12(fb)
+        # reset state khi đổi file
+        SS["df"] = None
+        SS["df_preview"] = None
+        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+    if st.button("Clear file", key="btn_clear_file"):
+        for k in ["file_bytes", "uploaded_name", "sha12", "df", "df_preview"]:
+            SS[k] = DEFAULTS.get(k, None)
+        st.rerun()
+        
 with st.sidebar.expander("1) Display & Performance", expanded=True):
     SS["bins"] = st.slider(
         "Histogram bins", min_value=10, max_value=200,
@@ -309,7 +330,6 @@ with st.sidebar.expander("3) Cache", expanded=False):
         value=SS.get("use_parquet_cache", False) and HAS_PYARROW,
         help="Lưu bảng đã load xuống đĩa (Parquet) để mở lại nhanh."
     )
-
 
 # -- Main: Title + File Gate --
 st.title("📊 Audit Statistics")
