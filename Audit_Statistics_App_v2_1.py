@@ -53,13 +53,7 @@ try:
 except Exception:
     _df_supports_width = False
 
-from inspect import signature
 
-try:
-    _df_params = signature(st.dataframe).parameters
-    _df_supports_width = 'width' in _df_params
-except Exception:
-    _df_supports_width = False
 
 def st_df(data=None, **kwargs):
     if _df_supports_width:
@@ -71,21 +65,6 @@ def st_df(data=None, **kwargs):
         kwargs.setdefault('use_container_width', True)
     return st.dataframe(data, **kwargs)  # Không gọi lại st_df
 
-# Upgrade st_plotly to prefer width
-if 'st_plotly' in globals():
-    __old_st_plotly = st_plotly
-    def st_plotly(fig, **kwargs):
-        ucw = kwargs.pop('use_container_width', None)
-        if 'width' not in kwargs:
-            if ucw is True:
-                kwargs['width'] = 'stretch'
-            elif ucw is None:
-                kwargs['width'] = 'stretch'
-        kwargs.setdefault('config', {'displaylogo': False})
-        if '_plt_seq' not in SS: SS['_plt_seq']=0
-        SS['_plt_seq']+=1
-        kwargs.setdefault('key', f"plt_{SS['_plt_seq']}")
-        return __old_st_plotly(fig, **kwargs)
 from scipy import stats
 
 warnings.filterwarnings('ignore')
@@ -383,8 +362,8 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         SS['df']=None; SS['df_preview']=None
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
-        base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
-        result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
+    base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
+    result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
     for k in base_keys:
         SS[k] = DEFAULTS.get(k, None)
     for k in result_keys:
@@ -1511,7 +1490,7 @@ with TAB6:
             res.append({'threshold': t, 'share': share})
         return pd.DataFrame(res)
 
-    def compute_fraud_flags(df: pd.DataFrame, amount_col: str|None, datetime_col: str|None, group_id_cols: list[str], params: dict):
+    def compute_fraud_flags(df: pd.DataFrame, amount_col: Optional[str], datetime_col: Optional[str], group_id_cols: list[str], params: dict):
         flags=[]; visuals=[]
         num_cols2 = df.select_dtypes(include=[np.number]).columns.tolist()
         if num_cols2:
