@@ -383,8 +383,8 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         SS['df']=None; SS['df_preview']=None
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
-    base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
-    result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
+        base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
+        result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
     for k in base_keys:
         SS[k] = DEFAULTS.get(k, None)
     for k in result_keys:
