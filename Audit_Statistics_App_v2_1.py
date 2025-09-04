@@ -740,143 +740,70 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
 
-# ---------------- Data Quality (FULL) ----------------
-if SS.get('df') is not None:
-    TAB0, = st.tabs(['0) Data Quality (FULL)'])
-    with TAB0:
-        st.subheader('🧪 Data Quality — FULL dataset')
-        DQ_DF = DF_FULL  # always use FULL if available
-
-        @st.cache_data(ttl=900, show_spinner=False, max_entries=32)
-        def data_quality_report(df: pd.DataFrame) -> pd.DataFrame:
+# ----------------------------------- TABS -------------------------------------
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
+ '0) Data Quality (FULL)', '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
+])
+# ---- TAB 0: Data Quality (FULL) ----
+with TAB0:
+    st.subheader('🧪 Data Quality — FULL dataset')
+    # Chỉ hiển thị khi đã Load full data, tránh nhảy về ingest
+    if SS.get('df') is None:
+        st.info('Hãy **Load full data** để xem Data Quality (FULL).')
+    else:
+        @st.cache_data(ttl=900, show_spinner=False, max_entries=16)
+        def data_quality_table(df_in):
+            import pandas as pd
             rows = []
-            n = len(df)
-            for c in df.columns:
-                s = df[c]
+            n = len(df_in)
+            for c in df_in.columns:
+                s = df_in[c]
                 is_num = pd.api.types.is_numeric_dtype(s)
-                is_dt = pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(c, s)
-                is_bool = pd.api.types.is_bool_dtype(s)
+                is_dt  = pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(c, s)
+                is_bool= pd.api.types.is_bool_dtype(s)
                 is_cat = pd.api.types.is_categorical_dtype(s)
                 base_type = 'Numeric' if is_num else ('Datetime' if is_dt else ('Boolean' if is_bool else ('Categorical' if is_cat else 'Text')))
                 n_nonnull = int(s.notna().sum())
                 n_nan = int(n - n_nonnull)
                 n_unique = int(s.nunique(dropna=True))
-                n_zero = int(pd.to_numeric(s, errors='coerce').eq(0).sum()) if is_num else None
-                n_blank = int(s[s.notna()].astype(str).str.strip().eq('').sum()) if (not is_num and not is_dt) else None
                 mem_mb = float(s.memory_usage(deep=True)) / 1048576.0
-                # valid: non-null & (not blank for text-like)
-                if base_type in ('Text', 'Categorical'):
-                    n_valid = n_nonnull - (n_blank or 0)
-                else:
-                    n_valid = n_nonnull
+                # blank/zero theo loại
+                blank = None; blank_pct = None
+                zero = None; zero_pct = None
+                if base_type in ('Text','Categorical'):
+                    s_txt = s[s.notna()].astype(str).str.strip()
+                    blank = int((s_txt == '').sum())
+                    blank_pct = round(blank / n, 4) if n else None
+                if base_type == 'Numeric':
+                    s_num = pd.to_numeric(s, errors='coerce')
+                    zero = int(s_num.eq(0).sum())
+                    zero_pct = round(zero / n, 4) if n else None
+                # valid = non-null trừ blank cho text-like
+                valid = n_nonnull - (blank or 0) if base_type in ('Text','Categorical') else n_nonnull
                 rows.append({
                     'column': c,
                     'type': base_type,
-                    'dtype': str(s.dtype),
                     'rows': n,
-                    'valid': int(n_valid),
+                    'valid': int(valid),
+                    'valid%': round(valid / n, 4) if n else None,
                     'nan': n_nan,
-                    'blank': (int(n_blank) if n_blank is not None else None),
-                    'zero': (int(n_zero) if n_zero is not None else None),
+                    'nan%': round(n_nan / n, 4) if n else None,
+                    'blank': blank,
+                    'blank%': blank_pct,
+                    'zero': zero,
+                    'zero%': zero_pct,
                     'unique': n_unique,
                     'memory_MB': round(mem_mb, 3),
                 })
+            cols_order = ['column','type','rows','valid','valid%','nan','nan%','blank','blank%','zero','zero%','unique','memory_MB']
             dq = pd.DataFrame(rows)
-            dq['valid%'] = (dq['valid'] / dq['rows']).round(4)
-            dq['nan%'] = (dq['nan'] / dq['rows']).round(4)
-            if 'blank' in dq.columns:
-                dq['blank%'] = (dq['blank'] / dq['rows']).round(4)
-            if 'zero' in dq.columns:
-                dq['zero%'] = (dq['zero'] / dq['rows']).round(4)
-            # order columns for tidy UI
-            cols_order = ['column','type','dtype','rows','valid','valid%','nan','nan%','blank','blank%','zero','zero%','unique','memory_MB']
-            dq = dq[[c for c in cols_order if c in dq.columns]]
+            dq = dq[cols_order]
             return dq.sort_values(['type','column']).reset_index(drop=True)
-
-        dq = data_quality_report(DQ_DF)
-
-        # Summary metrics
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric('Rows', f"{len(DQ_DF):,}")
-        with c2: st.metric('Columns', f"{DQ_DF.shape[1]:,}")
-        with c3: st.metric('Duplicate rows', f"{int(DQ_DF.duplicated().sum()):,}")
-        with c4: st.metric('Memory (MB)', f"{round(float(DQ_DF.memory_usage(deep=True).sum())/1048576, 2)}")
-
-        # Filters
-        f1, f2, f3, f4 = st.columns([2,2,2,2])
-        with f1:
-            type_sel = st.multiselect('Type', options=sorted(dq['type'].unique().tolist()), default=sorted(dq['type'].unique().tolist()))
-        with f2:
-            only_issue = st.checkbox('Chỉ hiển thị cột có vấn đề (NaN/Blank/Zero)', value=False)
-        with f3:
-            nan_thr = st.slider('Ngưỡng NaN% tối thiểu', 0.0, 1.0, 0.0, 0.05)
-        with f4:
-            sort_by = st.selectbox('Sắp xếp theo', options=['nan%','blank%','zero%','valid%','unique','column'], index=0)
-
-        view = dq[dq['type'].isin(type_sel)].copy()
-        if only_issue:
-            cond = (view['nan'] > 0)
-            if 'blank' in view.columns: cond = cond | (view['blank'] > 0)
-            if 'zero' in view.columns: cond = cond | (view['zero'] > 0)
-            view = view[cond]
-        if 'nan%' in view.columns:
-            view = view[view['nan%'] >= nan_thr]
-        if sort_by in view.columns:
-            view = view.sort_values(sort_by, ascending=(sort_by in ['valid%','column'])).reset_index(drop=True)
-        st_df(view, use_container_width=True, height=min(380, 60 + 24*min(len(view),12)))
-
-        st.markdown('---')
-        st.markdown('**🔎 Chi tiết theo cột**')
-        col_pick = st.selectbox('Chọn cột để xem chi tiết', DQ_DF.columns.tolist(), index=0, key='dq_pick')
-        s = DQ_DF[col_pick]
-        is_num = pd.api.types.is_numeric_dtype(s)
-        is_dt = pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(col_pick, s)
-        is_text = not (is_num or is_dt)
-        meta = {
-            'dtype': str(s.dtype),
-            'non-null': int(s.notna().sum()),
-            'NaN': int(s.isna().sum()),
-            'unique': int(s.nunique(dropna=True)),
-        }
-        if is_num:
-            s_num = pd.to_numeric(s, errors='coerce')
-            meta['zeros'] = int(s_num.eq(0).sum())
-            meta['min'] = float(s_num.min()) if s_num.notna().any() else None
-            meta['max'] = float(s_num.max()) if s_num.notna().any() else None
-        elif is_dt:
-            s_dt = pd.to_datetime(s, errors='coerce')
-            meta['min'] = str(s_dt.min()) if s_dt.notna().any() else None
-            meta['max'] = str(s_dt.max()) if s_dt.notna().any() else None
-        else:
-            s_txt = s[s.notna()].astype(str).str.strip()
-            meta['blank'] = int((s_txt=='').sum())
-        st.json(meta)
-
-        if 'HAS_PLOTLY' in globals() and HAS_PLOTLY:
-            import plotly.express as px
-            if is_num:
-                s_num = pd.to_numeric(s, errors='coerce').dropna()
-                if not s_num.empty:
-                    st_plotly(px.histogram(s_num, nbins=50, title=f'{col_pick} — Histogram'))
-            elif is_dt:
-                s_dt = pd.to_datetime(s, errors='coerce').dropna()
-                if not s_dt.empty:
-                    by = s_dt.dt.date.value_counts().sort_index()
-                    st_plotly(px.bar(x=by.index, y=by.values, labels={'x':'Date','y':'Count'}, title=f'{col_pick} — Daily counts'))
-            else:
-                vc = s.astype(str).value_counts(dropna=True).head(20)
-                if not vc.empty:
-                    st_plotly(px.bar(x=vc.index, y=vc.values, labels={'x':'Value','y':'Count'}, title=f'{col_pick} — Top 20 values'))
-
-        # Download quality table
-        csv_bytes = view.to_csv(index=False).encode('utf-8') if not view.empty else dq.head(0).to_csv(index=False).encode('utf-8')
-        st.download_button('⬇️ Tải bảng Data Quality (.csv)', data=csv_bytes, file_name='data_quality_full.csv')
-
-# ----------------------------------- TABS -------------------------------------
-TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
-    '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
-])
-
+        try:
+            dq = data_quality_table(DF_FULL)
+            st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
+        except Exception as e:
+            st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
