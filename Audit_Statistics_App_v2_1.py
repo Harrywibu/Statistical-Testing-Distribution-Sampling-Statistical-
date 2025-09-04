@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
 from datetime import datetime
 from typing import Optional, List, Callable, Dict, Any
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -385,7 +386,7 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
         for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
-            SS[k]=DEFAULTS.get(k, None)
+    SS[k]=DEFAULTS.get(k, None)
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
@@ -428,7 +429,7 @@ if fname.lower().endswith('.csv'):
         st_df(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
-        SS['col_whitelist'] = selected if selected else headers
+SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
@@ -535,131 +536,6 @@ def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
     return False
 
 SS['spearman_recommended'] = spearman_flag(DF_VIEW, NUM_COLS)
-
-
-# === Filter Badge: CSS + helpers ===
-_BADGE_CSS = """
-<style>
-.badge-row {display:flex; gap:6px; align-items:center; margin:4px 0 8px;}
-.badge {font-size:12px; line-height:1; padding:6px 10px; border-radius:999px;
-        background:#f0f2f6; color:#3b3f44; border:1px solid #e3e6ec; white-space:nowrap;}
-.badge-primary { background:#eef6ff; color:#0b5cab; border-color:#d6e9ff; font-weight:600;}
-.badge-blue    { background:#e8f1ff; color:#1b66d1; border-color:#cfe1ff;}
-.badge-purple  { background:#f1e9ff; color:#6e42c1; border-color:#e4d6ff;}
-.badge-teal    { background:#e6faf7; color:#0f766e; border-color:#c6f7ee;}
-.badge-green   { background:#e9f9ee; color:#1f9254; border-color:#c9f2d9;}
-.badge-yellow  { background:#fff7e6; color:#b26b00; border-color:#ffe1a6;}
-.badge-red     { background:#ffecec; color:#b42318; border-color:#ffc9c9;}
-.badge-gray    { background:#f6f7f9; color:#5b616a; border-color:#e9ecf2;}
-</style>
-"""
-if not SS.get('_badge_css_injected'):
-    st.markdown(_BADGE_CSS, unsafe_allow_html=True)
-    SS['_badge_css_injected'] = True
-
-from typing import Optional
-
-def _benford_risk_level() -> Optional[str]:
-    """Return 'green'|'yellow'|'red'|None dựa trên bf1_res/bf2_res trong SS."""
-    thr = SS.get('risk_diff_threshold', 0.05)
-
-    def sev_from_res(r: dict|None) -> Optional[str]:
-        if not r or not isinstance(r, dict):
-            return None
-        var = r.get('variance')
-        p = float(r.get('p', 1.0))
-        mad = float(r.get('MAD', 0.0))
-        try:
-            maxdiff = float(var['diff_pct'].abs().max()) if isinstance(var, pd.DataFrame) else 0.0
-        except Exception:
-            maxdiff = 0.0
-        if (p < 0.01) or (mad > 0.015) or (maxdiff >= 2*thr):
-            return 'red'
-        if (p < 0.05) or (mad > 0.012) or (maxdiff >= thr):
-            return 'yellow'
-        return 'green'
-
-    s1 = sev_from_res(SS.get('bf1_res'))
-    s2 = sev_from_res(SS.get('bf2_res'))
-    if not s1 and not s2:
-        return None
-    order = {'red': 3, 'yellow': 2, 'green': 1, None: 0}
-    return max([s1, s2], key=lambda x: order.get(x, 0))
-
-
-def _flags_risk_level() -> Optional[str]:
-    """Return 'green'|'yellow'|'red'|None dựa trên fraud_flags trong SS."""
-    flags = SS.get('fraud_flags') or []
-    if not flags:
-        return None
-    red = False
-    yellow = False
-    for f in flags:
-        try:
-            v = float(f.get('value')) if f.get('value') is not None else None
-        except Exception:
-            v = None
-        try:
-            t = float(f.get('threshold')) if f.get('threshold') is not None else None
-        except Exception:
-            t = None
-        if v is not None and t is not None:
-            if v > t:
-                red = True
-            else:
-                yellow = True
-        else:
-            yellow = True
-    if red:
-        return 'red'
-    if yellow:
-        return 'yellow'
-    return 'green'
-
-
-def render_filter_badge(kind: str = 'all', context: Optional[str] = None):
-    """
-    kind: 'num' | 'cat' | 'dt' | 'all'
-    context: 'profiling'|'trend'|'benford'|'tests'|'flags'|'regression'|'risk'|None
-    - Luôn hiển thị 'Filtering: N cols' (N = số cột trong whitelist hiện hành).
-    - Theo từng tab, chỉ hiện Num/Cat/Dt như yêu cầu.
-    - Màu rủi ro: chỉ áp dụng cho context 'benford' và 'flags' (xanh/vàng/đỏ).
-    """
-    try:
-        total = len(ALL_COLS)
-    except Exception:
-        total = len(SS.get('col_whitelist') or [])
-    n_num = len(NUM_COLS)
-    n_cat = len(CAT_COLS)
-    n_dt  = len(DT_COLS)
-
-    color_num = "badge-blue"    # Num
-    color_cat = "badge-purple"  # Cat
-    color_dt  = "badge-teal"    # Dt
-
-    if context == 'benford':
-        sev = _benford_risk_level()
-        if   sev == 'red':    color_num = "badge-red"
-        elif sev == 'yellow': color_num = "badge-yellow"
-        elif sev == 'green':  color_num = "badge-green"
-    elif context == 'flags':
-        sev = _flags_risk_level()
-        if   sev == 'red':    color_cat = "badge-red"
-        elif sev == 'yellow': color_cat = "badge-yellow"
-        elif sev == 'green':  color_cat = "badge-green"
-
-    parts = [f'<span class="badge badge-primary">Filtering: {total} cols</span>']
-    if kind in ('all', 'num'):
-        parts.append(f'<span class="badge {color_num}">Num {n_num}</span>')
-    if kind in ('all', 'cat'):
-        parts.append(f'<span class="badge {color_cat}">Cat {n_cat}</span>')
-    if kind in ('all', 'dt'):
-        parts.append(f'<span class="badge {color_dt}">Dt {n_dt}</span>')
-
-    html = f'<div class="badge-row">{"".join(parts)}</div>'
-    st.markdown(html, unsafe_allow_html=True)
-# === End Filter Badge ===
-
 
 # ------------------------------ Rule Engine Core ------------------------------
 class Rule:
@@ -863,7 +739,6 @@ TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
-    render_filter_badge('num', context='profiling')
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
@@ -1116,7 +991,6 @@ with TAB1:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
     st.subheader('📈 Trend & 🔗 Correlation')
-    render_filter_badge('num', context='trend')
     trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
@@ -1254,7 +1128,6 @@ with TAB3:
 # ------------------------------- TAB 4: Tests --------------------------------
 with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
-    render_filter_badge('cat', context='tests')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1311,7 +1184,8 @@ with TAB4:
                     out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
-                    SS['t4_results']=out
+            SS['t4_results']=out
+
     out = SS.get('t4_results', {})
     if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
@@ -1357,10 +1231,9 @@ with TAB4:
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
-    render_filter_badge('num', context='regression')
-if not HAS_SK:
+    if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
-else:
+    else:
         use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
         REG_DF = DF_FULL if (use_full_reg and SS['df'] is not None) else DF_VIEW
         tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
@@ -1509,15 +1382,14 @@ else:
                                 pass
                     except Exception as e:
                         st.error(f'Logistic Regression error: {e}')
-                        
-        with st.expander('🧠 Rule Engine (Regression) — Insights'):
-            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
-            st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
+
+    with st.expander('🧠 Rule Engine (Regression) — Insights'):
+        ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
+        st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
 
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
     st.subheader('🚩 Fraud Flags')
-    render_filter_badge('cat', context='flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
     if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
@@ -1539,7 +1411,7 @@ with TAB6:
             near_str = st.text_input('Near approval thresholds (vd: 1,000,000; 2,000,000)', key='ff_near_list')
             near_eps_pct = st.number_input('Biên ±% quanh ngưỡng', 0.1, 10.0, 1.0, 0.1, key='ff_near_eps')
             use_daily_dups = st.checkbox('Dò trùng Amount theo ngày (khi có Datetime)', value=True, key='ff_dup_day')
-            run_flags = st.button('🔎 Scan Flags', key='ff_scan', use_container_width=True)
+        run_flags = st.button('🔎 Scan Flags', key='ff_scan', use_container_width=True)
 
     def _parse_near_thresholds(txt: str) -> list[float]:
         out=[]
@@ -1665,12 +1537,9 @@ with TAB6:
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
-    render_filter_badge('all', context='risk')
     left, right = st.columns([3,2])
-
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
-
         # Quick quality & signals (light)
         def _quality_report(df_in: pd.DataFrame) -> tuple[pd.DataFrame, int]:
             rep_rows=[]
@@ -1678,28 +1547,24 @@ with TAB7:
                 s=df_in[c]
                 rep_rows.append({'column':c,'dtype':str(s.dtype),'missing_ratio': round(float(s.isna().mean()),4),
                                  'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
-                dupes=int(df_in.duplicated().sum())
+            dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
-
         rep_df, n_dupes = _quality_report(DF_VIEW)
         signals=[]
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce')                     .replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
                 signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
-
-        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]),
-              use_container_width=True, height=320)
+        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
 
         with st.expander('🧠 Rule Engine — Insights (All tests)'):
-            ctx = build_rule_context()
-            df_r = evaluate_rules(ctx, scope=None)
+            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
             if df_r.empty:
                 st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
             else:
@@ -1709,27 +1574,23 @@ with TAB7:
                     st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
     with right:
-        st.subheader('🗂️ Export (Plotly snapshots) — DOCX / PDF')
+        st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
         # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
         st.caption('Chọn nội dung từ các tab, sau đó xuất báo cáo với tiêu đề tuỳ chỉnh.')
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
         scale = st.slider('Export scale (DPI factor)', 1.0, 3.0, 2.0, 0.5, key='exp_scale')
-
         # For simplicity, take screenshots of figures currently present is not feasible; typical approach is to maintain a registry.
         # Here we export only a simple PDF/DOCX shell with metadata.
         if st.button('🖼️ Export blank shell DOCX/PDF'):
             meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'), 'time': datetime.now().isoformat(timespec='seconds')}
             docx_path=None; pdf_path=None
-
             if HAS_DOCX:
                 try:
                     d = docx.Document(); d.add_heading(meta['title'], 0)
                     d.add_paragraph(f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}")
                     d.add_paragraph('Gợi ý: quay lại các tab để capture hình (kèm Kaleido) và chèn vào báo cáo.')
                     docx_path = f"report_{int(time.time())}.docx"; d.save(docx_path)
-                except Exception:
-                    pass
-
+                except Exception: pass
             if HAS_PDF:
                 try:
                     doc = fitz.open(); page = doc.new_page(); y=36
@@ -1737,15 +1598,12 @@ with TAB7:
                     page.insert_text((36,y), f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}", fontsize=10); y+=18
                     page.insert_text((36,y), 'Gợi ý: quay lại các tab để capture hình (Kaleido) và chèn vào báo cáo.', fontsize=10)
                     pdf_path = f"report_{int(time.time())}.pdf"; doc.save(pdf_path); doc.close()
-                except Exception:
-                    pass
-
+                except Exception: pass
             outs=[p for p in [docx_path,pdf_path] if p]
             if outs:
                 st.success('Exported: ' + ', '.join(outs))
                 for pth in outs:
-                    with open(pth,'rb') as f:
-                        st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
+                    with open(pth,'rb') as f: st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
 
