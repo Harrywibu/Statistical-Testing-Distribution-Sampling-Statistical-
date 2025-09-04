@@ -428,7 +428,7 @@ if fname.lower().endswith('.csv'):
         st_df(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
-SS['col_whitelist'] = selected if selected else headers
+        SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
