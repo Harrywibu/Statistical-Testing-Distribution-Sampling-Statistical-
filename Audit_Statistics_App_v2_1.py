@@ -864,9 +864,9 @@ TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 with TAB1:
     st.subheader('📈 Distribution & Shape')
     render_filter_badge('num', context='profiling')
-navL, navR = st.columns([2,3])
+    navL, navR = st.columns([2,3])
     with navL:
-        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
+        col_nav = st.selectbox('Chọn cột', DF_VIEW.columns.tolist(), key='t1_nav_col')
         s_nav = DF_VIEW[col_nav]
         if col_nav in NUM_COLS: dtype_nav='Numeric'
         elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
@@ -885,6 +885,7 @@ navL, navR = st.columns([2,3])
     st.divider()
 
     sub_num, sub_cat, sub_dt = st.tabs(["Numeric","Categorical","Datetime"])
+
 
     # ---------- Numeric ----------
     with sub_num:
