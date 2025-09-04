@@ -1192,10 +1192,9 @@ for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
     if k not in SS: SS[k]=None
 with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
-    render_filter_badge('num', context='benford')
-if not NUM_COLS:
+    if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
-        else:
+    else:
         run_on_full = (SS['df'] is not None) and st.checkbox('Use FULL dataset thay vì sample (khuyến nghị cho Benford)', value=True, key='bf_use_full')
         data_for_benford = DF_FULL if (run_on_full and SS['df'] is not None) else DF_VIEW
         if (not run_on_full) and (SS['df'] is not None):
