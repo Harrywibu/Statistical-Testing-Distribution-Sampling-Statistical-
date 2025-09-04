@@ -1509,10 +1509,10 @@ else:
                                 pass
                     except Exception as e:
                         st.error(f'Logistic Regression error: {e}')
-
-    with st.expander('🧠 Rule Engine (Regression) — Insights'):
-        ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
-        st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
+                        
+        with st.expander('🧠 Rule Engine (Regression) — Insights'):
+            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
+            st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
 
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
