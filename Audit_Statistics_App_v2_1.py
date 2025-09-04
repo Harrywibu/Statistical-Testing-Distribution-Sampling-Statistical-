@@ -201,7 +201,7 @@ def write_parquet_cache(df: pd.DataFrame, sha: str, key: str) -> str:
     if not HAS_PYARROW: return ''
     try:
         df = sanitize_for_arrow(df)
-        table = pa.Table.from_pandas(df)
+ table = pa.Table.from_pandas(df)
         path = _parquet_cache_path(sha, key)
         pq.write_table(table, path)
         return path
@@ -413,7 +413,7 @@ if fname.lower().endswith('.csv'):
     if do_preview or SS['df_preview'] is None:
         try:
             SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS['pv_n']))
-            SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
+ SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
     if SS['df_preview'] is not None:
@@ -446,15 +446,15 @@ else:
             except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
         try:
             prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
-            SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
+ SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
-            st_df(prev, use_container_width=True, height=260)
-            headers=list(prev.columns)
-            st.caption(f'Columns: {len(headers)} • SHA12={sha}')
-            SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
-            filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
-            selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
+        st_df(prev, use_container_width=True, height=260)
+        headers=list(prev.columns)
+        st.caption(f'Columns: {len(headers)} • SHA12={sha}')
+        SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
+        filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+        selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
         if st.button('📥 Load full data', key='btn_load_xlsx'):
             key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
             key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
@@ -471,12 +471,11 @@ if SS['df'] is None and SS['df_preview'] is None:
     st.stop()
 
 # Source & typing
-candidates = (SS.get(k) for k in ('df', 'df_preview', 'last_good_df', 'last_good_preview'))
-df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.empty), None)
-if df_src is None:
-    st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
-    st.stop()
-df_src = sanitize_for_arrow(df_src)  # nếu bạn đang dùng Arrow fix
+df_src = SS.get('df') or SS.get('df_preview') or SS.get('last_good_df') or SS.get('last_good_preview')
+if isinstance(df_src, pd.DataFrame):
+ df_src = sanitize_for_arrow(df_src)
+else:
+ st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.'); st.stop()
 DT_COLS = [c for c in df_src.columns if is_datetime_like(c, df_src[c])]
 NUM_COLS = df_src.select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = df_src.select_dtypes(include=['object','category','bool']).columns.tolist()
@@ -1158,7 +1157,7 @@ with TAB4:
                     out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
-                SS['t4_results']=out
+            SS['t4_results']=out
 
     out = SS.get('t4_results', {})
     if not out:
