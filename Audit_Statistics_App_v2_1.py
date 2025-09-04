@@ -5,6 +5,7 @@ from typing import Optional, List, Callable, Dict, Any
 import numpy as np
 import pandas as pd
 import streamlit as st
+
 from inspect import signature
 
 # ---- Arrow sanitization ----
@@ -152,6 +153,7 @@ DEFAULTS = {
     'xlsx_sheet': '',
     'header_row': 1,
     'skip_top': 0,
+ 'col_whitelist': None,
 }
 for k, v in DEFAULTS.items():
     SS.setdefault(k, v)
@@ -180,14 +182,7 @@ def corr_cached(df: pd.DataFrame, cols: List[str], method: str = 'pearson') -> p
     return sub.corr(method=method)
 
 def is_datetime_like(colname: str, s: pd.Series) -> bool:
-    """Detect datetime-like columns by dtype or column name safely."""
-    try:
-        if pd.api.types.is_datetime64_any_dtype(s):
-            return True
-        name = str(colname).lower()
-        return ('date' in name) or ('time' in name)
-    except Exception:
-        return False
+    return pd.api.types.is_datetime64_any_dtype(s) or bool(re.search(r'(date|time)', str(colname), re.I))
 
 def _downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
     for c in df.select_dtypes(include=['float64']).columns:
@@ -389,8 +384,8 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         SS['df']=None; SS['df_preview']=None
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
-        for k in ['file_bytes','uploaded_name','sha12','df','df_preview']:
-            SS[k]=DEFAULTS.get(k, None)
+        for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
+    SS[k]=DEFAULTS.get(k, None)
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
@@ -433,6 +428,7 @@ if fname.lower().endswith('.csv'):
         st_df(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
+SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
@@ -442,7 +438,7 @@ if fname.lower().endswith('.csv'):
                 if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
-            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True
+            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
     sheets = list_sheets_xlsx(fb)
@@ -477,7 +473,7 @@ else:
                 if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
-            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True
+            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 
 if SS['df'] is None and SS['df_preview'] is None:
@@ -489,13 +485,14 @@ df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.em
 if df_src is None:
     st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
     st.stop()
-DT_COLS = [c for c in df_src.columns if is_datetime_like(c, df_src[c])]
-NUM_COLS = df_src.select_dtypes(include=[np.number]).columns.tolist()
-CAT_COLS = df_src.select_dtypes(include=['object','category','bool']).columns.tolist()
-
+ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
+NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
 # Downsample view for visuals
 DF_SAMPLE_MAX=50_000
 DF_VIEW = df_src
+VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 if SS.get('downsample_view', True) and len(DF_VIEW)>DF_SAMPLE_MAX:
     DF_VIEW = DF_VIEW.sample(DF_SAMPLE_MAX, random_state=42)
     st.caption('⬇️ Downsampled view to 50k rows (visuals & quick stats reflect this sample).')
@@ -505,8 +502,6 @@ DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
 # Spearman auto flag
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
-    """Return True if data looks non-normal / heavy-tailed -> recommend Spearman.
-    Robust to exceptions and always defines local vars."""
     for c in cols[:20]:
         if c not in df.columns:
             continue
@@ -540,6 +535,131 @@ def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
     return False
 
 SS['spearman_recommended'] = spearman_flag(DF_VIEW, NUM_COLS)
+
+
+# === Filter Badge: CSS + helpers ===
+_BADGE_CSS = """
+<style>
+.badge-row {display:flex; gap:6px; align-items:center; margin:4px 0 8px;}
+.badge {font-size:12px; line-height:1; padding:6px 10px; border-radius:999px;
+        background:#f0f2f6; color:#3b3f44; border:1px solid #e3e6ec; white-space:nowrap;}
+.badge-primary { background:#eef6ff; color:#0b5cab; border-color:#d6e9ff; font-weight:600;}
+.badge-blue    { background:#e8f1ff; color:#1b66d1; border-color:#cfe1ff;}
+.badge-purple  { background:#f1e9ff; color:#6e42c1; border-color:#e4d6ff;}
+.badge-teal    { background:#e6faf7; color:#0f766e; border-color:#c6f7ee;}
+.badge-green   { background:#e9f9ee; color:#1f9254; border-color:#c9f2d9;}
+.badge-yellow  { background:#fff7e6; color:#b26b00; border-color:#ffe1a6;}
+.badge-red     { background:#ffecec; color:#b42318; border-color:#ffc9c9;}
+.badge-gray    { background:#f6f7f9; color:#5b616a; border-color:#e9ecf2;}
+</style>
+"""
+if not SS.get('_badge_css_injected'):
+    st.markdown(_BADGE_CSS, unsafe_allow_html=True)
+    SS['_badge_css_injected'] = True
+
+from typing import Optional
+
+def _benford_risk_level() -> Optional[str]:
+    """Return 'green'|'yellow'|'red'|None dựa trên bf1_res/bf2_res trong SS."""
+    thr = SS.get('risk_diff_threshold', 0.05)
+
+    def sev_from_res(r: dict|None) -> Optional[str]:
+        if not r or not isinstance(r, dict):
+            return None
+        var = r.get('variance')
+        p = float(r.get('p', 1.0))
+        mad = float(r.get('MAD', 0.0))
+        try:
+            maxdiff = float(var['diff_pct'].abs().max()) if isinstance(var, pd.DataFrame) else 0.0
+        except Exception:
+            maxdiff = 0.0
+        if (p < 0.01) or (mad > 0.015) or (maxdiff >= 2*thr):
+            return 'red'
+        if (p < 0.05) or (mad > 0.012) or (maxdiff >= thr):
+            return 'yellow'
+        return 'green'
+
+    s1 = sev_from_res(SS.get('bf1_res'))
+    s2 = sev_from_res(SS.get('bf2_res'))
+    if not s1 and not s2:
+        return None
+    order = {'red': 3, 'yellow': 2, 'green': 1, None: 0}
+    return max([s1, s2], key=lambda x: order.get(x, 0))
+
+
+def _flags_risk_level() -> Optional[str]:
+    """Return 'green'|'yellow'|'red'|None dựa trên fraud_flags trong SS."""
+    flags = SS.get('fraud_flags') or []
+    if not flags:
+        return None
+    red = False
+    yellow = False
+    for f in flags:
+        try:
+            v = float(f.get('value')) if f.get('value') is not None else None
+        except Exception:
+            v = None
+        try:
+            t = float(f.get('threshold')) if f.get('threshold') is not None else None
+        except Exception:
+            t = None
+        if v is not None and t is not None:
+            if v > t:
+                red = True
+            else:
+                yellow = True
+        else:
+            yellow = True
+    if red:
+        return 'red'
+    if yellow:
+        return 'yellow'
+    return 'green'
+
+
+def render_filter_badge(kind: str = 'all', context: Optional[str] = None):
+    """
+    kind: 'num' | 'cat' | 'dt' | 'all'
+    context: 'profiling'|'trend'|'benford'|'tests'|'flags'|'regression'|'risk'|None
+    - Luôn hiển thị 'Filtering: N cols' (N = số cột trong whitelist hiện hành).
+    - Theo từng tab, chỉ hiện Num/Cat/Dt như yêu cầu.
+    - Màu rủi ro: chỉ áp dụng cho context 'benford' và 'flags' (xanh/vàng/đỏ).
+    """
+    try:
+        total = len(ALL_COLS)
+    except Exception:
+        total = len(SS.get('col_whitelist') or [])
+    n_num = len(NUM_COLS)
+    n_cat = len(CAT_COLS)
+    n_dt  = len(DT_COLS)
+
+    color_num = "badge-blue"    # Num
+    color_cat = "badge-purple"  # Cat
+    color_dt  = "badge-teal"    # Dt
+
+    if context == 'benford':
+        sev = _benford_risk_level()
+        if   sev == 'red':    color_num = "badge-red"
+        elif sev == 'yellow': color_num = "badge-yellow"
+        elif sev == 'green':  color_num = "badge-green"
+    elif context == 'flags':
+        sev = _flags_risk_level()
+        if   sev == 'red':    color_cat = "badge-red"
+        elif sev == 'yellow': color_cat = "badge-yellow"
+        elif sev == 'green':  color_cat = "badge-green"
+
+    parts = [f'<span class="badge badge-primary">Filtering: {total} cols</span>']
+    if kind in ('all', 'num'):
+        parts.append(f'<span class="badge {color_num}">Num {n_num}</span>')
+    if kind in ('all', 'cat'):
+        parts.append(f'<span class="badge {color_cat}">Cat {n_cat}</span>')
+    if kind in ('all', 'dt'):
+        parts.append(f'<span class="badge {color_dt}">Dt {n_dt}</span>')
+
+    html = f'<div class="badge-row">{"".join(parts)}</div>'
+    st.markdown(html, unsafe_allow_html=True)
+# === End Filter Badge ===
+
 
 # ------------------------------ Rule Engine Core ------------------------------
 class Rule:
@@ -743,9 +863,10 @@ TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
-    navL, navR = st.columns([2,3])
+    render_filter_badge('num', context='profiling')
+navL, navR = st.columns([2,3])
     with navL:
-        col_nav = st.selectbox('Chọn cột', DF_VIEW.columns.tolist(), key='t1_nav_col')
+        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
         s_nav = DF_VIEW[col_nav]
         if col_nav in NUM_COLS: dtype_nav='Numeric'
         elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
@@ -995,10 +1116,11 @@ with TAB1:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
     st.subheader('📈 Trend & 🔗 Correlation')
-    trendL, trendR = st.columns(2)
+    render_filter_badge('num', context='trend')
+trendL, trendR = st.columns(2)
     with trendL:
-        num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or DF_VIEW.columns.tolist(), key='t2_num')
-        dt_for_trend = st.selectbox('Datetime column', DT_COLS or DF_VIEW.columns.tolist(), key='t2_dt')
+        num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
+        dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
         freq = st.selectbox('Aggregate frequency', ['D','W','M','Q'], index=2)
         agg_opt = st.radio('Aggregate by', ['sum','mean','count'], index=0, horizontal=True)
         win = st.slider('Rolling window (periods)', 2, 24, 3)
@@ -1070,7 +1192,8 @@ for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
     if k not in SS: SS[k]=None
 with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
-    if not NUM_COLS:
+    render_filter_badge('num', context='benford')
+if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
         run_on_full = (SS['df'] is not None) and st.checkbox('Use FULL dataset thay vì sample (khuyến nghị cho Benford)', value=True, key='bf_use_full')
@@ -1132,14 +1255,15 @@ with TAB3:
 # ------------------------------- TAB 4: Tests --------------------------------
 with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
-    st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
+    render_filter_badge('cat', context='tests')
+st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
     def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
 
     navL, navR = st.columns([2,3])
     with navL:
-        selected_col = st.selectbox('Chọn cột để test', DF_VIEW.columns.tolist(), key='t4_col')
+        selected_col = st.selectbox('Chọn cột để test', ALL_COLS, key='t4_col')
         s0 = DF_VIEW[selected_col]
         dtype = ('Datetime' if (selected_col in DT_COLS or is_datetime_like(selected_col, s0)) else
                  'Numeric' if is_numeric_series(s0) else 'Categorical')
@@ -1235,7 +1359,8 @@ with TAB4:
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
-    if not HAS_SK:
+    render_filter_badge('num', context='regression')
+if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
         use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
@@ -1394,12 +1519,13 @@ with TAB5:
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
     st.subheader('🚩 Fraud Flags')
-    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
+    render_filter_badge('cat', context='flags')
+use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
     if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
-    group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=FLAG_DF.columns.tolist(), key='ff_groups')
+    group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
 
     with st.expander('⚙️ Tham số quét cờ (điều chỉnh được)'):
         c1,c2,c3 = st.columns(3)
@@ -1541,6 +1667,7 @@ with TAB6:
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
+render_filter_badge('all', context='risk')
     left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
