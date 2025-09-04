@@ -1117,7 +1117,7 @@ with TAB1:
 with TAB2:
     st.subheader('📈 Trend & 🔗 Correlation')
     render_filter_badge('num', context='trend')
-trendL, trendR = st.columns(2)
+    trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
         dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
@@ -1312,8 +1312,7 @@ st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giả
                     out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
-            SS['t4_results']=out
-
+                    SS['t4_results']=out
     out = SS.get('t4_results', {})
     if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
