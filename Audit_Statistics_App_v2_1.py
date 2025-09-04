@@ -386,8 +386,8 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
         for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
-        SS[k]=DEFAULTS.get(k, None)
-        st.rerun()
+            SS[k]=DEFAULTS.get(k, None)
+            st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
