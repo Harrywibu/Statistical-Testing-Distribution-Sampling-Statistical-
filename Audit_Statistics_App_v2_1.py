@@ -446,15 +446,15 @@ else:
             except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
         try:
             prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
- SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
+            SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
-        st_df(prev, use_container_width=True, height=260)
-        headers=list(prev.columns)
-        st.caption(f'Columns: {len(headers)} • SHA12={sha}')
-        SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
-        filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
-        selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
+            st_df(prev, use_container_width=True, height=260)
+            headers=list(prev.columns)
+            st.caption(f'Columns: {len(headers)} • SHA12={sha}')
+            SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
+            filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+            selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
         if st.button('📥 Load full data', key='btn_load_xlsx'):
             key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
             key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
@@ -1157,7 +1157,7 @@ with TAB4:
                     out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
-            SS['t4_results']=out
+                SS['t4_results']=out
 
     out = SS.get('t4_results', {})
     if not out:
