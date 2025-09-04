@@ -1118,7 +1118,7 @@ with TAB1:
 with TAB2:
     st.subheader('📈 Trend & 🔗 Correlation')
     render_filter_badge('num', context='trend')
-trendL, trendR = st.columns(2)
+    trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
         dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
