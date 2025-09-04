@@ -413,7 +413,7 @@ if fname.lower().endswith('.csv'):
     if do_preview or SS['df_preview'] is None:
         try:
             SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS['pv_n']))
- SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
+            SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
     if SS['df_preview'] is not None:
