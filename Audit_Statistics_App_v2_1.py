@@ -1518,7 +1518,7 @@ else:
 with TAB6:
     st.subheader('🚩 Fraud Flags')
     render_filter_badge('cat', context='flags')
-use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
+    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
     if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
@@ -1539,7 +1539,7 @@ use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is 
             near_str = st.text_input('Near approval thresholds (vd: 1,000,000; 2,000,000)', key='ff_near_list')
             near_eps_pct = st.number_input('Biên ±% quanh ngưỡng', 0.1, 10.0, 1.0, 0.1, key='ff_near_eps')
             use_daily_dups = st.checkbox('Dò trùng Amount theo ngày (khi có Datetime)', value=True, key='ff_dup_day')
-        run_flags = st.button('🔎 Scan Flags', key='ff_scan', use_container_width=True)
+            run_flags = st.button('🔎 Scan Flags', key='ff_scan', use_container_width=True)
 
     def _parse_near_thresholds(txt: str) -> list[float]:
         out=[]
@@ -1678,7 +1678,7 @@ with TAB7:
                 s=df_in[c]
                 rep_rows.append({'column':c,'dtype':str(s.dtype),'missing_ratio': round(float(s.isna().mean()),4),
                                  'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
-            dupes=int(df_in.duplicated().sum())
+                dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
 
         rep_df, n_dupes = _quality_report(DF_VIEW)
