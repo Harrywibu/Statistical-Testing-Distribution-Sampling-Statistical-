@@ -201,7 +201,7 @@ def write_parquet_cache(df: pd.DataFrame, sha: str, key: str) -> str:
     if not HAS_PYARROW: return ''
     try:
         df = sanitize_for_arrow(df)
-     table = pa.Table.from_pandas(df)
+        table = pa.Table.from_pandas(df)
         path = _parquet_cache_path(sha, key)
         pq.write_table(table, path)
         return path
