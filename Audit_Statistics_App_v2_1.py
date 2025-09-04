@@ -1368,11 +1368,12 @@ with TAB5:
                             model = LogisticRegression(max_iter=1000, class_weight=('balanced' if class_bal else None)).fit(Xtr,ytr)
                             proba = model.predict_proba(Xte)[:,1]; pred = (proba>=thr).astype(int)
                             acc = accuracy_score(yte, pred)
-                            # metrics
-                            def _safe_div(a,b): return (a/b) if b else 0.0
+                            # metrics                           
                             tp = int(((pred==1)&(yte==1)).sum()); fp=int(((pred==1)&(yte==0)).sum())
                             fn = int(((pred==0)&(yte==1)).sum()); tn=int(((pred==0)&(yte==0)).sum())
-                            prec=_safe_div(tp, tp+fp); rec=_safe_div(tp, tp+fn); f1=_safe_div(2*prec*rec, prec+rec) if (prec+rec) else 0.0
+                            prec = (tp/(tp+fp)) if (tp+fp) else 0.0
+                            rec  = (tp/(tp+fn)) if (tp+fn) else 0.0
+                            f1   = (2*prec*rec/(prec+rec)) if (prec+rec) else 0.0
                             try: auc = roc_auc_score(yte, proba)
                             except Exception: auc=np.nan
                             meta = {
