@@ -500,26 +500,52 @@ if SS.get('downsample_view', True) and len(DF_VIEW)>DF_SAMPLE_MAX:
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
 
-# Spearman auto flag
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
-    for c in cols[:20]:
-        if c not in df.columns: continue
-        s = pd.to_numeric(df[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
-        if len(s)<50: continue
+    try:
+        if df is None or not isinstance(df, pd.DataFrame):
+            return False
+    except Exception:
+        return False
+
+    for c in (cols or [])[:20]:
+        if c not in df.columns:
+            continue
+
+        s = pd.to_numeric(df[c], errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
+        if len(s) < 50:
+            continue
+
+        sk, ku, tail, p_norm = 0.0, 0.0, 0.0, 1.0  # defaults
+
         try:
-            sk=float(stats.skew(s)) if len(s)>2 else 0.0
-            ku=float(stats.kurtosis(s, fisher=True)) if len(s)>3 else 0.0
+            if len(s) > 2:
+                sk = float(stats.skew(s))
         except Exception:
-            sk=ku=0.0
-            p99 = s.quantile(0.99); tail=float((s>p99).mean())
-        try: p_norm=float(stats.normaltest(s)[1]) if len(s)>20 else 1.0
-        except Exception: p_norm=1.0
-        if (abs(sk)>1) or (abs(ku)>3) or (tail>0.02) or (p_norm<0.05):
+            pass
+
+        try:
+            if len(s) > 3:
+                ku = float(stats.kurtosis(s, fisher=True))
+        except Exception:
+            pass
+
+        try:
+            p99 = s.quantile(0.99)
+            if pd.notna(p99):
+                tail = float((s > p99).mean())
+        except Exception:
+            pass
+
+        try:
+            if len(s) > 20:
+                p_norm = float(stats.normaltest(s)[1])
+        except Exception:
+            pass
+
+        if (abs(sk) > 1) or (abs(ku) > 3) or (tail > 0.02) or (p_norm < 0.05):
             return True
     return False
-
-SS['spearman_recommended'] = spearman_flag(DF_VIEW, NUM_COLS)
 
 # ------------------------------ Rule Engine Core ------------------------------
 class Rule:
