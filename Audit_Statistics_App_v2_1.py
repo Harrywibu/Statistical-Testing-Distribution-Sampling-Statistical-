@@ -149,8 +149,7 @@ DEFAULTS = {
  'ingest_ready': False,
     'sha12': '',
     'uploaded_name': '',
-    'downsample_view': True,
-    'xlsx_sheet': '',
+        'xlsx_sheet': '',
     'header_row': 1,
     'skip_top': 0,
  'col_whitelist': None,
@@ -384,14 +383,18 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         SS['df']=None; SS['df_preview']=None
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
-        for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
-            SS[k]=DEFAULTS.get(k, None)
-            st.rerun()
+    base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
+    result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
+    for k in base_keys:
+        SS[k] = DEFAULTS.get(k, None)
+    for k in result_keys:
+        if k in SS:
+            SS[k] = None
+    st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
     SS['kde_threshold'] = st.number_input('KDE max n', 1_000, 300_000, SS.get('kde_threshold',150_000), 1_000)
-    SS['downsample_view'] = st.checkbox('Downsample view 50k', value=SS.get('downsample_view', True))
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
     SS['risk_diff_threshold'] = st.slider('Benford diff% threshold', 0.01, 0.10, SS.get('risk_diff_threshold',0.05), 0.01)
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
@@ -490,12 +493,7 @@ DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
 NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
 # Downsample view for visuals
-DF_SAMPLE_MAX=50_000
 DF_VIEW = df_src
-if SS.get('downsample_view', True) and len(DF_VIEW)>DF_SAMPLE_MAX:
-    DF_VIEW = DF_VIEW.sample(DF_SAMPLE_MAX, random_state=42)
-    st.caption('⬇️ Downsampled view to 50k rows (visuals & quick stats reflect this sample).')
-
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
 
@@ -744,10 +742,10 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
 TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
  '0) Data Quality (FULL)', '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
 ])
+
 # ---- TAB 0: Data Quality (FULL) ----
 with TAB0:
     st.subheader('🧪 Data Quality — FULL dataset')
-    # Chỉ hiển thị khi đã Load full data, tránh nhảy về ingest
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality (FULL).')
     else:
@@ -767,7 +765,6 @@ with TAB0:
                 n_nan = int(n - n_nonnull)
                 n_unique = int(s.nunique(dropna=True))
                 mem_mb = float(s.memory_usage(deep=True)) / 1048576.0
-                # blank/zero theo loại
                 blank = None; blank_pct = None
                 zero = None; zero_pct = None
                 if base_type in ('Text','Categorical'):
@@ -778,7 +775,6 @@ with TAB0:
                     s_num = pd.to_numeric(s, errors='coerce')
                     zero = int(s_num.eq(0).sum())
                     zero_pct = round(zero / n, 4) if n else None
-                # valid = non-null trừ blank cho text-like
                 valid = n_nonnull - (blank or 0) if base_type in ('Text','Categorical') else n_nonnull
                 rows.append({
                     'column': c,
@@ -800,7 +796,7 @@ with TAB0:
             dq = dq[cols_order]
             return dq.sort_values(['type','column']).reset_index(drop=True)
         try:
-            dq = data_quality_table(DF_FULL)
+            dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
