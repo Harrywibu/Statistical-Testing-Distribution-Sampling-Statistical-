@@ -386,7 +386,7 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
         for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
-    SS[k]=DEFAULTS.get(k, None)
+        SS[k]=DEFAULTS.get(k, None)
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
@@ -429,7 +429,7 @@ if fname.lower().endswith('.csv'):
         st_df(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
-SS['col_whitelist'] = selected if selected else headers
+        SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
@@ -486,10 +486,10 @@ df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.em
 if df_src is None:
     st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
     st.stop()
-ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
-NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
-CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+    ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+    DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
+    NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+    CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
 # Downsample view for visuals
 DF_SAMPLE_MAX=50_000
 DF_VIEW = df_src
