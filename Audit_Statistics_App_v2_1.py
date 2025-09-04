@@ -486,10 +486,10 @@ df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.em
 if df_src is None:
     st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
     st.stop()
-    ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-    DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
-    NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
-    CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
+NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
 # Downsample view for visuals
 DF_SAMPLE_MAX=50_000
 DF_VIEW = df_src
