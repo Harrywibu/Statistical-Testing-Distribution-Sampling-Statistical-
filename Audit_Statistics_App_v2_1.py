@@ -54,6 +54,14 @@ try:
 except Exception:
     _df_supports_width = False
 
+from inspect import signature
+
+try:
+    _df_params = signature(st.dataframe).parameters
+    _df_supports_width = 'width' in _df_params
+except Exception:
+    _df_supports_width = False
+
 def st_df(data=None, **kwargs):
     if _df_supports_width:
         if kwargs.pop('use_container_width', None) is True:
@@ -62,7 +70,7 @@ def st_df(data=None, **kwargs):
             kwargs['width'] = 'stretch'
     else:
         kwargs.setdefault('use_container_width', True)
-    return st_df(data, **kwargs)
+    return st.dataframe(data, **kwargs)  # Không gọi lại st_df
 
 # Upgrade st_plotly to prefer width
 if 'st_plotly' in globals():
