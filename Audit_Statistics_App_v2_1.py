@@ -864,7 +864,7 @@ TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 with TAB1:
     st.subheader('📈 Distribution & Shape')
     render_filter_badge('num', context='profiling')
-navL, navR = st.columns([2,3])
+    navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
         s_nav = DF_VIEW[col_nav]
