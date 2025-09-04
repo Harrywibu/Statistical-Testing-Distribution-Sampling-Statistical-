@@ -358,18 +358,31 @@ st.sidebar.title('Workflow')
 with st.sidebar.expander('0) Ingest data', expanded=True):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
     if up is not None:
-        fb = up.read(); SS['file_bytes']=fb; SS['uploaded_name']=up.name; SS['sha12']=file_sha12(fb)
-        SS['df']=None; SS['df_preview']=None
+        fb = up.read()
+        SS['file_bytes'] = fb
+        SS['uploaded_name'] = up.name
+        SS['sha12'] = file_sha12(fb)
+        SS['df'] = None
+        SS['df_preview'] = None
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+
     if st.button('Clear file', key='btn_clear_file'):
         base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
-        result_keys = ['bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear','last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended','_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top','ingest_ready','last_good_df','last_good_preview']
-        for k in base_keys:
-        SS[k] = DEFAULTS.get(k, None)
-        for k in result_keys:
-    if k in SS:
-            SS[k] = None
-    st.rerun()
+        result_keys = [
+            'bf1_res','bf2_res','bf1_col','bf2_col','t4_results','last_corr','last_linear',
+            'last_logistic','last_numeric_profile','last_gof','fraud_flags','spearman_recommended',
+            '_plt_seq','col_filter','dtype_choice','xlsx_sheet','header_row','skip_top',
+            'ingest_ready','last_good_df','last_good_preview'
+        ]
+        # đặt tên biến khác nhau để tránh đè 'k'
+        for bk in base_keys:
+            SS[bk] = DEFAULTS.get(bk, None)
+
+        for rk in result_keys:
+            if rk in SS:
+                SS[rk] = None
+
+        st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
