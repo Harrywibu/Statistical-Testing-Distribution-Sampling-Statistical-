@@ -365,17 +365,141 @@ def _benford_2d(series: pd.Series):
 
 def _benford_ready(series: pd.Series) -> tuple[bool, str]:
     s = pd.to_numeric(series, errors='coerce')
-    # Cho phép chạy Benford với mọi kích thước mẫu > 0; chỉ chặn khi không có giá trị dương
     n_pos = int((s>0).sum())
     if n_pos < 1:
-        return False, 'Không có giá trị >0 sau khi làm sạch — Benford cần giá trị dương.'
+        return False, f"Không có giá trị > 0 để chạy Benford (hiện {n_pos}, cần ≥300)."
     s_non = s.dropna()
     if s_non.shape[0] > 0:
         ratio_unique = s_non.nunique()/s_non.shape[0]
         if ratio_unique > 0.95:
-            return False, 'Tỉ lệ unique quá cao (khả năng ID/Code) — tránh Benford.'
+            return False, "Tỉ lệ unique quá cao (khả năng ID/Code) — tránh Benford."
     return True, ''
 
+# -------------------------- Sidebar: Workflow & perf ---------------------------
+st.sidebar.title('Workflow')
+with st.sidebar.expander('0) Ingest data', expanded=True):
+    up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
+    if up is not None:
+        fb = up.read(); SS['file_bytes']=fb; SS['uploaded_name']=up.name; SS['sha12']=file_sha12(fb)
+        SS['df']=None; SS['df_preview']=None
+        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+    if st.button('Clear file', key='btn_clear_file'):
+        for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
+            SS[k]=DEFAULTS.get(k, None)
+            st.rerun()
+with st.sidebar.expander('1) Display & Performance', expanded=True):
+    SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
+    SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
+    SS['kde_threshold'] = st.number_input('KDE max n', 1_000, 300_000, SS.get('kde_threshold',150_000), 1_000)
+    SS['downsample_view'] = st.checkbox('Downsample view 50k', value=SS.get('downsample_view', True))
+with st.sidebar.expander('2) Risk & Advanced', expanded=False):
+    SS['risk_diff_threshold'] = st.slider('Benford diff% threshold', 0.01, 0.10, SS.get('risk_diff_threshold',0.05), 0.01)
+    SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
+with st.sidebar.expander('3) Cache', expanded=False):
+    if not HAS_PYARROW:
+        st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
+        SS['use_parquet_cache'] = False
+    SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and HAS_PYARROW)
+    if st.button('🧹 Clear cache'):
+        st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
+
+# ---------------------------------- Main Gate ---------------------------------
+st.title('📊 Audit Statistics')
+if SS['file_bytes'] is None:
+    st.info('Upload a file để bắt đầu.'); st.stop()
+
+fname=SS['uploaded_name']; fb=SS['file_bytes']; sha=SS['sha12']
+colL, colR = st.columns([3,2])
+with colL:
+    st.text_input('File', value=fname or '', disabled=True)
+with colR:
+    SS['pv_n'] = st.slider('Preview rows', 50, 500, SS.get('pv_n',100), 50)
+    do_preview = st.button('🔎 Quick preview', key='btn_prev')
+
+# Ingest flow
+if fname.lower().endswith('.csv'):
+    if do_preview or SS['df_preview'] is None:
+        try:
+            SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS['pv_n']))
+            SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
+        except Exception as e:
+            st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
+    if SS['df_preview'] is not None:
+        st_df(SS['df_preview'], use_container_width=True, height=260)
+        headers=list(SS['df_preview'].columns)
+        selected = st.multiselect('Columns to load', headers, default=headers)
+        SS['col_whitelist'] = selected if selected else headers
+        if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
+            sel_key=';'.join(selected) if selected else 'ALL'
+            key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
+            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
+            if df_cached is None:
+                df_full = sanitize_for_arrow(read_csv_fast(fb, usecols=(selected or None)))
+                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
+            else:
+                df_full = df_cached
+            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
+            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
+else:
+    sheets = list_sheets_xlsx(fb)
+    with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
+        c1,c2,c3 = st.columns([2,1,1])
+        idx=0 if sheets else 0
+        SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
+        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
+        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
+        SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
+        dtype_map=None
+        if SS['dtype_choice'].strip():
+            try: dtype_map=json.loads(SS['dtype_choice'])
+            except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
+        try:
+            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
+            SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
+        except Exception as e:
+            st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
+        st_df(prev, use_container_width=True, height=260)
+        headers=list(prev.columns)
+        st.caption(f'Columns: {len(headers)} • SHA12={sha}')
+        SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
+        filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+        selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
+        if st.button('📥 Load full data', key='btn_load_xlsx'):
+            key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
+            key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
+            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
+            if df_cached is None:
+                df_full = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=(selected or None), header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map))
+                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
+            else:
+                df_full = df_cached
+            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
+            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
+
+if SS['df'] is None and SS['df_preview'] is None:
+    st.stop()
+
+# Source & typing
+candidates = (SS.get(k) for k in ('df', 'df_preview', 'last_good_df', 'last_good_preview'))
+df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.empty), None)
+if df_src is None:
+    st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
+    st.stop()
+ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
+NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+# Downsample view for visuals
+DF_SAMPLE_MAX=50_000
+DF_VIEW = df_src
+if SS.get('downsample_view', True) and len(DF_VIEW)>DF_SAMPLE_MAX:
+    DF_VIEW = DF_VIEW.sample(DF_SAMPLE_MAX, random_state=42)
+    st.caption('⬇️ Downsampled view to 50k rows (visuals & quick stats reflect this sample).')
+
+VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
+
+@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
     try:
         if df is None or not isinstance(df, pd.DataFrame):
@@ -616,10 +740,143 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
 
+# ---------------- Data Quality (FULL) ----------------
+if SS.get('df') is not None:
+    TAB0, = st.tabs(['0) Data Quality (FULL)'])
+    with TAB0:
+        st.subheader('🧪 Data Quality — FULL dataset')
+        DQ_DF = DF_FULL  # always use FULL if available
+
+        @st.cache_data(ttl=900, show_spinner=False, max_entries=32)
+        def data_quality_report(df: pd.DataFrame) -> pd.DataFrame:
+            rows = []
+            n = len(df)
+            for c in df.columns:
+                s = df[c]
+                is_num = pd.api.types.is_numeric_dtype(s)
+                is_dt = pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(c, s)
+                is_bool = pd.api.types.is_bool_dtype(s)
+                is_cat = pd.api.types.is_categorical_dtype(s)
+                base_type = 'Numeric' if is_num else ('Datetime' if is_dt else ('Boolean' if is_bool else ('Categorical' if is_cat else 'Text')))
+                n_nonnull = int(s.notna().sum())
+                n_nan = int(n - n_nonnull)
+                n_unique = int(s.nunique(dropna=True))
+                n_zero = int(pd.to_numeric(s, errors='coerce').eq(0).sum()) if is_num else None
+                n_blank = int(s[s.notna()].astype(str).str.strip().eq('').sum()) if (not is_num and not is_dt) else None
+                mem_mb = float(s.memory_usage(deep=True)) / 1048576.0
+                # valid: non-null & (not blank for text-like)
+                if base_type in ('Text', 'Categorical'):
+                    n_valid = n_nonnull - (n_blank or 0)
+                else:
+                    n_valid = n_nonnull
+                rows.append({
+                    'column': c,
+                    'type': base_type,
+                    'dtype': str(s.dtype),
+                    'rows': n,
+                    'valid': int(n_valid),
+                    'nan': n_nan,
+                    'blank': (int(n_blank) if n_blank is not None else None),
+                    'zero': (int(n_zero) if n_zero is not None else None),
+                    'unique': n_unique,
+                    'memory_MB': round(mem_mb, 3),
+                })
+            dq = pd.DataFrame(rows)
+            dq['valid%'] = (dq['valid'] / dq['rows']).round(4)
+            dq['nan%'] = (dq['nan'] / dq['rows']).round(4)
+            if 'blank' in dq.columns:
+                dq['blank%'] = (dq['blank'] / dq['rows']).round(4)
+            if 'zero' in dq.columns:
+                dq['zero%'] = (dq['zero'] / dq['rows']).round(4)
+            # order columns for tidy UI
+            cols_order = ['column','type','dtype','rows','valid','valid%','nan','nan%','blank','blank%','zero','zero%','unique','memory_MB']
+            dq = dq[[c for c in cols_order if c in dq.columns]]
+            return dq.sort_values(['type','column']).reset_index(drop=True)
+
+        dq = data_quality_report(DQ_DF)
+
+        # Summary metrics
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric('Rows', f"{len(DQ_DF):,}")
+        with c2: st.metric('Columns', f"{DQ_DF.shape[1]:,}")
+        with c3: st.metric('Duplicate rows', f"{int(DQ_DF.duplicated().sum()):,}")
+        with c4: st.metric('Memory (MB)', f"{round(float(DQ_DF.memory_usage(deep=True).sum())/1048576, 2)}")
+
+        # Filters
+        f1, f2, f3, f4 = st.columns([2,2,2,2])
+        with f1:
+            type_sel = st.multiselect('Type', options=sorted(dq['type'].unique().tolist()), default=sorted(dq['type'].unique().tolist()))
+        with f2:
+            only_issue = st.checkbox('Chỉ hiển thị cột có vấn đề (NaN/Blank/Zero)', value=False)
+        with f3:
+            nan_thr = st.slider('Ngưỡng NaN% tối thiểu', 0.0, 1.0, 0.0, 0.05)
+        with f4:
+            sort_by = st.selectbox('Sắp xếp theo', options=['nan%','blank%','zero%','valid%','unique','column'], index=0)
+
+        view = dq[dq['type'].isin(type_sel)].copy()
+        if only_issue:
+            cond = (view['nan'] > 0)
+            if 'blank' in view.columns: cond = cond | (view['blank'] > 0)
+            if 'zero' in view.columns: cond = cond | (view['zero'] > 0)
+            view = view[cond]
+        if 'nan%' in view.columns:
+            view = view[view['nan%'] >= nan_thr]
+        if sort_by in view.columns:
+            view = view.sort_values(sort_by, ascending=(sort_by in ['valid%','column'])).reset_index(drop=True)
+        st_df(view, use_container_width=True, height=min(380, 60 + 24*min(len(view),12)))
+
+        st.markdown('---')
+        st.markdown('**🔎 Chi tiết theo cột**')
+        col_pick = st.selectbox('Chọn cột để xem chi tiết', DQ_DF.columns.tolist(), index=0, key='dq_pick')
+        s = DQ_DF[col_pick]
+        is_num = pd.api.types.is_numeric_dtype(s)
+        is_dt = pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(col_pick, s)
+        is_text = not (is_num or is_dt)
+        meta = {
+            'dtype': str(s.dtype),
+            'non-null': int(s.notna().sum()),
+            'NaN': int(s.isna().sum()),
+            'unique': int(s.nunique(dropna=True)),
+        }
+        if is_num:
+            s_num = pd.to_numeric(s, errors='coerce')
+            meta['zeros'] = int(s_num.eq(0).sum())
+            meta['min'] = float(s_num.min()) if s_num.notna().any() else None
+            meta['max'] = float(s_num.max()) if s_num.notna().any() else None
+        elif is_dt:
+            s_dt = pd.to_datetime(s, errors='coerce')
+            meta['min'] = str(s_dt.min()) if s_dt.notna().any() else None
+            meta['max'] = str(s_dt.max()) if s_dt.notna().any() else None
+        else:
+            s_txt = s[s.notna()].astype(str).str.strip()
+            meta['blank'] = int((s_txt=='').sum())
+        st.json(meta)
+
+        if 'HAS_PLOTLY' in globals() and HAS_PLOTLY:
+            import plotly.express as px
+            if is_num:
+                s_num = pd.to_numeric(s, errors='coerce').dropna()
+                if not s_num.empty:
+                    st_plotly(px.histogram(s_num, nbins=50, title=f'{col_pick} — Histogram'))
+            elif is_dt:
+                s_dt = pd.to_datetime(s, errors='coerce').dropna()
+                if not s_dt.empty:
+                    by = s_dt.dt.date.value_counts().sort_index()
+                    st_plotly(px.bar(x=by.index, y=by.values, labels={'x':'Date','y':'Count'}, title=f'{col_pick} — Daily counts'))
+            else:
+                vc = s.astype(str).value_counts(dropna=True).head(20)
+                if not vc.empty:
+                    st_plotly(px.bar(x=vc.index, y=vc.values, labels={'x':'Value','y':'Count'}, title=f'{col_pick} — Top 20 values'))
+
+        # Download quality table
+        csv_bytes = view.to_csv(index=False).encode('utf-8') if not view.empty else dq.head(0).to_csv(index=False).encode('utf-8')
+        st.download_button('⬇️ Tải bảng Data Quality (.csv)', data=csv_bytes, file_name='data_quality_full.csv')
+
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
- '0) Data Quality', '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
+TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
+    '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
 ])
+
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
@@ -634,7 +891,7 @@ with TAB1:
     with navR:
         sugg=[]
         if dtype_nav=='Numeric':
-            sugg += ['Histogram + KDE', 'Box/ECDF/QQ', 'Outlier review (IQR)', 'Benford 1D/2D (>0)']
+            sugg += ['Histogram + KDE', 'Box/ECDF/QQ', 'Outlier review (IQR)', 'Benford 1D/2D (giá trị > 0)']
         elif dtype_nav=='Categorical':
             sugg += ['Top‑N + Pareto', 'Chi‑square GoF vs Uniform', "Rare category flag/Group 'Others'"]
         else:
@@ -1026,7 +1283,7 @@ with TAB4:
         st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
         st.markdown('**Gợi ý test ưu tiên**')
         if dtype=='Numeric':
-            st.write('- Benford 1D/2D (>0)')
+            st.write('- Benford 1D/2D (giá trị > 0)')
             st.write('- Normality/Outlier: Ecdf/Box/QQ (xem Tab 1)')
         elif dtype=='Categorical':
             st.write('- Top‑N + HHI'); st.write('- Chi‑square GoF vs Uniform'); st.write('- χ² độc lập với biến trạng thái (nếu có)')
