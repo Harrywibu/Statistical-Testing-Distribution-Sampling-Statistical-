@@ -2,7 +2,6 @@ from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
 from datetime import datetime
 from typing import Optional, List, Callable, Dict, Any
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -1236,8 +1235,10 @@ with TAB4:
     with st.expander('🧠 Rule Engine (Tests) — Insights'):
         ctx = build_rule_context()
         df_r = evaluate_rules(ctx, scope='tests')
-        st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
-
+        if not df_r.empty:
+            st_df(df_r, use_container_width=True)
+        else:
+            st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
@@ -1368,7 +1369,8 @@ with TAB5:
                             model = LogisticRegression(max_iter=1000, class_weight=('balanced' if class_bal else None)).fit(Xtr,ytr)
                             proba = model.predict_proba(Xte)[:,1]; pred = (proba>=thr).astype(int)
                             acc = accuracy_score(yte, pred)
-                            # metrics                           
+                            # metrics
+
                             tp = int(((pred==1)&(yte==1)).sum()); fp=int(((pred==1)&(yte==0)).sum())
                             fn = int(((pred==0)&(yte==1)).sum()); tn=int(((pred==0)&(yte==0)).sum())
                             prec = (tp/(tp+fp)) if (tp+fp) else 0.0
@@ -1396,8 +1398,10 @@ with TAB5:
 
     with st.expander('🧠 Rule Engine (Regression) — Insights'):
         ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
-        st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
-
+        if not df_r.empty:
+            st_df(df_r, use_container_width=True)
+        else:
+            st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
     st.subheader('🚩 Fraud Flags')
@@ -1544,8 +1548,10 @@ with TAB6:
 
     with st.expander('🧠 Rule Engine (Flags) — Insights'):
         ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='flags')
-        st_df(df_r, use_container_width=True) if not df_r.empty else st.info('Không có rule nào khớp.')
-
+        if not df_r.empty:
+            st_df(df_r, use_container_width=True)
+        else:
+            st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
     left, right = st.columns([3,2])
