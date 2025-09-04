@@ -385,7 +385,7 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
         st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
     if st.button('Clear file', key='btn_clear_file'):
         for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']:
-            SS[k]=DEFAULTS.get(k, None)
+    SS[k]=DEFAULTS.get(k, None)
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
@@ -428,6 +428,7 @@ if fname.lower().endswith('.csv'):
         st_df(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
+SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
@@ -437,9 +438,8 @@ if fname.lower().endswith('.csv'):
                 if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
-            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True
+            SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
-
 else:
     sheets = list_sheets_xlsx(fb)
     with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
@@ -864,9 +864,9 @@ TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 with TAB1:
     st.subheader('📈 Distribution & Shape')
     render_filter_badge('num', context='profiling')
-    navL, navR = st.columns([2,3])
+navL, navR = st.columns([2,3])
     with navL:
-        col_nav = st.selectbox('Chọn cột', DF_VIEW.columns.tolist(), key='t1_nav_col')
+        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
         s_nav = DF_VIEW[col_nav]
         if col_nav in NUM_COLS: dtype_nav='Numeric'
         elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
@@ -885,7 +885,6 @@ with TAB1:
     st.divider()
 
     sub_num, sub_cat, sub_dt = st.tabs(["Numeric","Categorical","Datetime"])
-
 
     # ---------- Numeric ----------
     with sub_num:
@@ -1118,7 +1117,7 @@ with TAB1:
 with TAB2:
     st.subheader('📈 Trend & 🔗 Correlation')
     render_filter_badge('num', context='trend')
-    trendL, trendR = st.columns(2)
+trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
         dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
@@ -1196,7 +1195,7 @@ with TAB3:
     render_filter_badge('num', context='benford')
 if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
-        else:
+    else:
         run_on_full = (SS['df'] is not None) and st.checkbox('Use FULL dataset thay vì sample (khuyến nghị cho Benford)', value=True, key='bf_use_full')
         data_for_benford = DF_FULL if (run_on_full and SS['df'] is not None) else DF_VIEW
         if (not run_on_full) and (SS['df'] is not None):
@@ -1668,10 +1667,12 @@ use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is 
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
-render_filter_badge('all', context='risk')
+    render_filter_badge('all', context='risk')
     left, right = st.columns([3,2])
+
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
+
         # Quick quality & signals (light)
         def _quality_report(df_in: pd.DataFrame) -> tuple[pd.DataFrame, int]:
             rep_rows=[]
@@ -1681,22 +1682,26 @@ render_filter_badge('all', context='risk')
                                  'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
             dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
+
         rep_df, n_dupes = _quality_report(DF_VIEW)
         signals=[]
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce')                     .replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
                 signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
-        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
+
+        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]),
+              use_container_width=True, height=320)
 
         with st.expander('🧠 Rule Engine — Insights (All tests)'):
-            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
+            ctx = build_rule_context()
+            df_r = evaluate_rules(ctx, scope=None)
             if df_r.empty:
                 st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
             else:
@@ -1706,23 +1711,27 @@ render_filter_badge('all', context='risk')
                     st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
     with right:
-        st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
+        st.subheader('🗂️ Export (Plotly snapshots) — DOCX / PDF')
         # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
         st.caption('Chọn nội dung từ các tab, sau đó xuất báo cáo với tiêu đề tuỳ chỉnh.')
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
         scale = st.slider('Export scale (DPI factor)', 1.0, 3.0, 2.0, 0.5, key='exp_scale')
+
         # For simplicity, take screenshots of figures currently present is not feasible; typical approach is to maintain a registry.
         # Here we export only a simple PDF/DOCX shell with metadata.
         if st.button('🖼️ Export blank shell DOCX/PDF'):
             meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'), 'time': datetime.now().isoformat(timespec='seconds')}
             docx_path=None; pdf_path=None
+
             if HAS_DOCX:
                 try:
                     d = docx.Document(); d.add_heading(meta['title'], 0)
                     d.add_paragraph(f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}")
                     d.add_paragraph('Gợi ý: quay lại các tab để capture hình (kèm Kaleido) và chèn vào báo cáo.')
                     docx_path = f"report_{int(time.time())}.docx"; d.save(docx_path)
-                except Exception: pass
+                except Exception:
+                    pass
+
             if HAS_PDF:
                 try:
                     doc = fitz.open(); page = doc.new_page(); y=36
@@ -1730,12 +1739,15 @@ render_filter_badge('all', context='risk')
                     page.insert_text((36,y), f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}", fontsize=10); y+=18
                     page.insert_text((36,y), 'Gợi ý: quay lại các tab để capture hình (Kaleido) và chèn vào báo cáo.', fontsize=10)
                     pdf_path = f"report_{int(time.time())}.pdf"; doc.save(pdf_path); doc.close()
-                except Exception: pass
+                except Exception:
+                    pass
+
             outs=[p for p in [docx_path,pdf_path] if p]
             if outs:
                 st.success('Exported: ' + ', '.join(outs))
                 for pth in outs:
-                    with open(pth,'rb') as f: st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
+                    with open(pth,'rb') as f:
+                        st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
 
