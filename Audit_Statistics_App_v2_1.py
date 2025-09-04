@@ -1360,7 +1360,7 @@ with TAB5:
     render_filter_badge('num', context='regression')
 if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
-    else:
+else:
         use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
         REG_DF = DF_FULL if (use_full_reg and SS['df'] is not None) else DF_VIEW
         tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
