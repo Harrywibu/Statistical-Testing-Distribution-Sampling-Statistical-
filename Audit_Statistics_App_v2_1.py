@@ -5,7 +5,6 @@ from typing import Optional, List, Callable, Dict, Any
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 from inspect import signature
 
 # ---- Arrow sanitization ----
@@ -181,7 +180,14 @@ def corr_cached(df: pd.DataFrame, cols: List[str], method: str = 'pearson') -> p
     return sub.corr(method=method)
 
 def is_datetime_like(colname: str, s: pd.Series) -> bool:
-    return pd.api.types.is_datetime64_any_dtype(s) or bool(re.search(r'(date|time)', str(colname), re.I))
+    """Detect datetime-like columns by dtype or column name safely."""
+    try:
+        if pd.api.types.is_datetime64_any_dtype(s):
+            return True
+        name = str(colname).lower()
+        return ('date' in name) or ('time' in name)
+    except Exception:
+        return False
 
 def _downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
     for c in df.select_dtypes(include=['float64']).columns:
@@ -499,19 +505,37 @@ DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
 # Spearman auto flag
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
+    """Return True if data looks non-normal / heavy-tailed -> recommend Spearman.
+    Robust to exceptions and always defines local vars."""
     for c in cols[:20]:
-        if c not in df.columns: continue
-        s = pd.to_numeric(df[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
-        if len(s)<50: continue
+        if c not in df.columns:
+            continue
+        s = pd.to_numeric(df[c], errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
+        if len(s) < 50:
+            continue
+        sk, ku, tail, p_norm = 0.0, 0.0, 0.0, 1.0
         try:
-            sk=float(stats.skew(s)) if len(s)>2 else 0.0
-            ku=float(stats.kurtosis(s, fisher=True)) if len(s)>3 else 0.0
+            if len(s) > 2:
+                sk = float(stats.skew(s))
         except Exception:
-            sk=ku=0.0
-            p99 = s.quantile(0.99); tail=float((s>p99).mean())
-        try: p_norm=float(stats.normaltest(s)[1]) if len(s)>20 else 1.0
-        except Exception: p_norm=1.0
-        if (abs(sk)>1) or (abs(ku)>3) or (tail>0.02) or (p_norm<0.05):
+            sk = 0.0
+        try:
+            if len(s) > 3:
+                ku = float(stats.kurtosis(s, fisher=True))
+        except Exception:
+            ku = 0.0
+        try:
+            p99 = s.quantile(0.99)
+            if pd.notna(p99):
+                tail = float((s > p99).mean())
+        except Exception:
+            tail = 0.0
+        try:
+            if len(s) > 20:
+                p_norm = float(stats.normaltest(s)[1])
+        except Exception:
+            p_norm = 1.0
+        if (abs(sk) > 1) or (abs(ku) > 3) or (tail > 0.02) or (p_norm < 0.05):
             return True
     return False
 
