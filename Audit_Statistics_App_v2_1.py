@@ -471,11 +471,12 @@ if SS['df'] is None and SS['df_preview'] is None:
     st.stop()
 
 # Source & typing
-df_src = SS.get('df') or SS.get('df_preview') or SS.get('last_good_df') or SS.get('last_good_preview')
-if isinstance(df_src, pd.DataFrame):
- df_src = sanitize_for_arrow(df_src)
-else:
- st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.'); st.stop()
+candidates = (SS.get(k) for k in ('df', 'df_preview', 'last_good_df', 'last_good_preview'))
+df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.empty), None)
+if df_src is None:
+    st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
+    st.stop()
+df_src = sanitize_for_arrow(df_src)  # nếu bạn đang dùng Arrow fix
 DT_COLS = [c for c in df_src.columns if is_datetime_like(c, df_src[c])]
 NUM_COLS = df_src.select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = df_src.select_dtypes(include=['object','category','bool']).columns.tolist()
