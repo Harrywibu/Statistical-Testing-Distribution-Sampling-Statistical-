@@ -1688,7 +1688,7 @@ with TAB3:
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
-if not NUM_COLS:
+    if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
         data_for_benford = DF_FULL if SS.get('df') is not None else DF_VIEW
