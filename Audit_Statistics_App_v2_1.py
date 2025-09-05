@@ -352,6 +352,184 @@ def _benford_ready(series: pd.Series) -> tuple[bool, str]:
         if ratio_unique > 0.95:
             return False, "Tỉ lệ unique quá cao (khả năng ID/Code) — tránh Benford."
     return True, ''
+# --- Period helpers & By-period analytics (M/Q/Y) ----------------------------
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def _derive_period(df: pd.DataFrame, dt_col: str, gran: str) -> pd.Series:
+    """
+    Trả về Series 'period' (chuỗi) cùng index với df dựa trên cột thời gian dt_col.
+    gran: 'M' | 'Q' | 'Y'
+    """
+    if df is None or dt_col not in df.columns:
+        return pd.Series(index=(df.index if isinstance(df, pd.DataFrame) else []), dtype="object")
+    t = pd.to_datetime(df[dt_col], errors='coerce')
+    if gran == 'M':
+        per = t.dt.to_period('M').astype(str)   # ví dụ: '2025-08'
+    elif gran == 'Q':
+        per = t.dt.to_period('Q').astype(str)   # ví dụ: '2025Q3'
+    else:
+        per = t.dt.to_period('Y').astype(str)   # ví dụ: '2025'
+    # trả về Series có cùng index với df để dùng .loc an toàn
+    return pd.Series(per.values, index=df.index, name='period')
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def benford_by_period(df: pd.DataFrame, val_col: str, dt_col: str, gran: str) -> pd.DataFrame:
+    """
+    Tính Benford 1D theo giai đoạn (M/Q/Y).
+    Trả về DataFrame: period, n, MAD, p, maxdiff
+    """
+    if df is None or val_col not in df.columns or dt_col not in df.columns:
+        return pd.DataFrame(columns=['period','n','MAD','p','maxdiff'])
+
+    per_ser = _derive_period(df, dt_col, gran)
+    x = pd.to_numeric(df[val_col], errors='coerce')
+
+    rows = []
+    for p in sorted(per_ser.dropna().unique()):
+        mask = (per_ser == p)
+        s = x[mask]
+        # chỉ xét >0 đúng như logic Benford
+        s = s.replace([np.inf, -np.inf], np.nan).dropna()
+        s = s[s.abs() > 0]
+        if s.empty:
+            continue
+        r = _benford_1d(s)
+        if r is None:
+            continue
+        try:
+            maxdiff = float(r['variance']['diff_pct'].abs().max())
+        except Exception:
+            maxdiff = np.nan
+        rows.append({
+            'period': p,
+            'n': int(r.get('n', len(s))),
+            'MAD': float(r.get('MAD', np.nan)),
+            'p': float(r.get('p', np.nan)),
+            'maxdiff': maxdiff
+        })
+
+    res = pd.DataFrame(rows)
+    if res.empty:
+        return res
+
+    # Sắp xếp theo đúng thứ tự thời gian
+    try:
+        freq = 'M' if gran == 'M' else ('Q' if gran == 'Q' else 'Y')
+        res['_ord'] = pd.PeriodIndex(res['period'], freq=freq)
+        res = res.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
+    except Exception:
+        res = res.sort_values('period').reset_index(drop=True)
+    return res
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def outlier_iqr_by_period(df: pd.DataFrame, val_col: str, dt_col: str, gran: str) -> pd.DataFrame:
+    """
+    Outlier share theo quy tắc IQR (1.5*IQR) tính RIÊNG cho từng giai đoạn.
+    Trả về: period, n, n_outlier, outlier_share
+    """
+    if df is None or val_col not in df.columns or dt_col not in df.columns:
+        return pd.DataFrame(columns=['period','n','n_outlier','outlier_share'])
+
+    per_ser = _derive_period(df, dt_col, gran)
+    s = pd.to_numeric(df[val_col], errors='coerce').replace([np.inf, -np.inf], np.nan)
+    data = pd.DataFrame({'period': per_ser, 'y': s}).dropna()
+    if data.empty:
+        return pd.DataFrame(columns=['period','n','n_outlier','outlier_share'])
+
+    rows = []
+    for p, g in data.groupby('period'):
+        y = g['y'].dropna()
+        if len(y) < 5:
+            rows.append({'period': p, 'n': int(len(y)), 'n_outlier': 0, 'outlier_share': 0.0})
+            continue
+        q1, q3 = y.quantile([0.25, 0.75])
+        iqr = q3 - q1
+        lo, hi = (q1 - 1.5*iqr, q3 + 1.5*iqr)
+        mask = (y < lo) | (y > hi)
+        n = int(len(y)); n_out = int(mask.sum())
+        rows.append({'period': p, 'n': n, 'n_outlier': n_out, 'outlier_share': (n_out / n if n else 0.0)})
+
+    res = pd.DataFrame(rows)
+    if res.empty:
+        return res
+    try:
+        freq = 'M' if gran == 'M' else ('Q' if gran == 'Q' else 'Y')
+        res['_ord'] = pd.PeriodIndex(res['period'], freq=freq)
+        res = res.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
+    except Exception:
+        res = res.sort_values('period').reset_index(drop=True)
+    return res
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def hhi_by_period(df: pd.DataFrame, cat_col: str, dt_col: str, gran: str) -> pd.DataFrame:
+    """
+    HHI (Herfindahl-Hirschman Index) cho biến phân loại theo giai đoạn.
+    Trả về: period, HHI
+    """
+    if df is None or cat_col not in df.columns or dt_col not in df.columns:
+        return pd.DataFrame(columns=['period','HHI'])
+
+    per_ser = _derive_period(df, dt_col, gran)
+    c = df[cat_col].astype('object')
+    data = pd.DataFrame({'period': per_ser, 'cat': c}).dropna()
+    if data.empty:
+        return pd.DataFrame(columns=['period','HHI'])
+
+    rows = []
+    for p, g in data.groupby('period'):
+        freq = g['cat'].value_counts(dropna=False)
+        share = freq / freq.sum()
+        hhi = float((share**2).sum())
+        rows.append({'period': p, 'HHI': hhi})
+
+    res = pd.DataFrame(rows)
+    if res.empty:
+        return res
+    try:
+        freq = 'M' if gran == 'M' else ('Q' if gran == 'Q' else 'Y')
+        res['_ord'] = pd.PeriodIndex(res['period'], freq=freq)
+        res = res.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
+    except Exception:
+        res = res.sort_values('period').reset_index(drop=True)
+    return res
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def cgof_by_period(df: pd.DataFrame, cat_col: str, dt_col: str, gran: str) -> pd.DataFrame:
+    """
+    Chi-square Goodness-of-Fit so với Uniform cho biến phân loại theo giai đoạn.
+    Trả về: period, chi2, dof, p
+    """
+    if df is None or cat_col not in df.columns or dt_col not in df.columns:
+        return pd.DataFrame(columns=['period','chi2','dof','p'])
+
+    per_ser = _derive_period(df, dt_col, gran)
+    c = df[cat_col].astype('object')
+    data = pd.DataFrame({'period': per_ser, 'cat': c}).dropna()
+    if data.empty:
+        return pd.DataFrame(columns=['period','chi2','dof','p'])
+
+    rows = []
+    for p, g in data.groupby('period'):
+        obs = g['cat'].value_counts(dropna=False)
+        k = int(len(obs))
+        if k < 2:
+            rows.append({'period': p, 'chi2': np.nan, 'dof': 0, 'p': np.nan})
+            continue
+        exp = pd.Series([obs.sum()/k]*k, index=obs.index)
+        chi2 = float(((obs - exp)**2 / exp).sum())
+        dof = k - 1
+        pval = float(1 - stats.chi2.cdf(chi2, dof))
+        rows.append({'period': p, 'chi2': chi2, 'dof': dof, 'p': pval})
+
+    res = pd.DataFrame(rows)
+    if res.empty:
+        return res
+    try:
+        freq = 'M' if gran == 'M' else ('Q' if gran == 'Q' else 'Y')
+        res['_ord'] = pd.PeriodIndex(res['period'], freq=freq)
+        res = res.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
+    except Exception:
+        res = res.sort_values('period').reset_index(drop=True)
+    return res
 
 # -------------------------- Sidebar: Workflow & perf ---------------------------
 st.sidebar.title('Workflow')
@@ -1228,8 +1406,8 @@ with TAB3:
                         per_series = _derive_period(src_df, dtc, gran)
                         ids_a = per_series[per_series == a].index
                         ids_b = per_series[per_series == b].index
-                        s_a = pd.to_numeric(src_df[val_col], errors='coerce').iloc[ids_a]
-                        s_b = pd.to_numeric(src_df[val_col], errors='coerce').iloc[ids_b]
+                        s_a = pd.to_numeric(src_df[val_col], errors='coerce').loc[ids_a]
+                        s_b = pd.to_numeric(src_df[val_col], errors='coerce').loc[ids_b]
                         r_a = _benford_1d(s_a); r_b = _benford_1d(s_b)
                         if r_a and r_b and HAS_PLOTLY:
                             ta, tb = r_a['table'], r_b['table']
