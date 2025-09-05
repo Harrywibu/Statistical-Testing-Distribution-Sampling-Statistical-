@@ -115,8 +115,6 @@ SS = st.session_state
 
 
 # ——— Preview banner helper ———
-def preview_banner():
-    if SS.get('df') is None:
         
 DEFAULTS = {
     'bins': 50,
@@ -1440,6 +1438,7 @@ with TAB1:
 with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
+        st.info('Hãy **Load full data** để xem Data Quality .')
     # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
@@ -1688,6 +1687,7 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
+        st.info('Hãy **Load full data** để xem Data Quality .')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
@@ -1799,6 +1799,7 @@ with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
+        st.info('Hãy **Load full data** để xem Data Quality .')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1891,6 +1892,7 @@ with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
+        st.info('Hãy **Load full data** để xem Data Quality .')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
