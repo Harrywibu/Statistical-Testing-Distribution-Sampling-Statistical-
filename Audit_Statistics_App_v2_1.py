@@ -696,9 +696,11 @@ if DF_FULL is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); st.stop()
 
 ALL_COLS = list(DF_FULL.columns)
-DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
+DT_COLS  = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
 NUM_COLS = DF_FULL.select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = DF_FULL.select_dtypes(include=['object','category','bool']).columns.tolist()
+VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+
 # — Sales risk context on FULL dataset only
 try:
     _sales = compute_sales_flags(DF_FULL)
