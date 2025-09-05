@@ -1658,7 +1658,7 @@ with TAB4:
     with navR:
         st.markdown('**Điều khiển chạy test**')
         use_full = True
-                run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
+        run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
         run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
         run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
         go = st.button('Chạy các test đã chọn', type='primary', key='t4_run_btn')
