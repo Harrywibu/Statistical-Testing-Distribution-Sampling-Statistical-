@@ -1893,7 +1893,7 @@ with TAB5:
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
-if not HAS_SK:
+    if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
         use_full_reg = True
