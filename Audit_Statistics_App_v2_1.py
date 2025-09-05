@@ -1667,7 +1667,7 @@ with TAB4:
         if go:
             out={}
             data_src = DF_FULL
-                out = SS.get('t4_results', {})
+            out = SS.get('t4_results', {})
     if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
     else:
