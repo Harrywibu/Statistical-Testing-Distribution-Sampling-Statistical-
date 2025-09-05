@@ -791,7 +791,19 @@ with TAB0:
             dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
-            st.error(f'Lỗi Data Quality: {e}')
+    # Per-period counts if datetime exists
+    if DT_COLS:
+        with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
+            dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
+            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='dq_gran')
+            src = SS.get('df') if SS.get('df') is not None else DF_VIEW
+            per = _derive_period(src, dtc, gran)
+            cnt = per.value_counts().sort_index().rename('count').reset_index().rename(columns={'index':'period'})
+            st_df(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
+            if HAS_PLOTLY:
+                fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
+                st_plotly(fig)
+                    st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
@@ -1181,7 +1193,57 @@ with TAB3:
                 elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
-# ------------------------------- TAB 4: Tests --------------------------------
+# ------------------------------- 
+    # --- Benford by Time (Month/Quarter/Year) ---
+    st.divider()
+    with st.expander('⏱️ Benford theo thời gian (M/Q/Y) — so sánh & heatmap', expanded=False):
+        if not DT_COLS:
+            st.info('Không có cột thời gian. Hãy chọn file có cột thời gian để dùng tính năng này.')
+        else:
+            dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bf_time_dt')
+            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bf_time_gran')
+            src_df = DF_FULL if (SS.get('df') is not None and SS.get('bf_use_full')) else DF_VIEW
+            val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bf_time_val')
+            res = benford_by_period(src_df, val_col, dtc, gran)
+            if res.empty:
+                st.warning('Không đủ dữ liệu hợp lệ để tính Benford theo thời gian.')
+            else:
+                st.caption(f"Số giai đoạn: {len(res)} • Hiển thị MAD, p-value, maxdiff")
+                st_df(res, use_container_width=True, height=min(360, 60+24*min(len(res),12)))
+                if HAS_PLOTLY:
+                    try:
+                        fig = px.bar(res, x='period', y='MAD', title='Benford MAD theo giai đoạn', labels={'MAD':'MAD'})
+                        st_plotly(fig)
+                        fig2 = px.bar(res, x='period', y='maxdiff', title='Max diff% theo giai đoạn', labels={'maxdiff':'Max diff% (|obs-exp|/exp)'})
+                        st_plotly(fig2)
+                    except Exception:
+                        pass
+                # Side-by-side compare two periods
+                if len(res) >= 2:
+                    p1, p2 = st.columns(2)
+                    with p1:
+                        a = st.selectbox('Chọn giai đoạn A', res['period'], key='bf_time_a')
+                    with p2:
+                        b = st.selectbox('Chọn giai đoạn B', res['period'], index=min(1, len(res)-1), key='bf_time_b')
+                    if a and b and a != b:
+                        per_series = _derive_period(src_df, dtc, gran)
+                        ids_a = per_series[per_series == a].index
+                        ids_b = per_series[per_series == b].index
+                        s_a = pd.to_numeric(src_df[val_col], errors='coerce').iloc[ids_a]
+                        s_b = pd.to_numeric(src_df[val_col], errors='coerce').iloc[ids_b]
+                        r_a = _benford_1d(s_a); r_b = _benford_1d(s_b)
+                        if r_a and r_b and HAS_PLOTLY:
+                            ta, tb = r_a['table'], r_b['table']
+                            ta = ta.rename(columns={'observed_p':'A_obs','expected_p':'A_exp'})
+                            tb = tb.rename(columns={'observed_p':'B_obs','expected_p':'B_exp'})
+                            comp = ta.merge(tb, on='digit', how='inner')
+                            figc = go.Figure()
+                            figc.add_trace(go.Bar(x=comp['digit'], y=comp['A_obs'], name=f'Observed {a}'))
+                            figc.add_trace(go.Bar(x=comp['digit'], y=comp['B_obs'], name=f'Observed {b}'))
+                            figc.add_trace(go.Scatter(x=comp['digit'], y=comp['A_exp'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
+                            figc.update_layout(barmode='group', title=f'Benford 1D so sánh {a} vs {b}', height=360)
+                            st_plotly(figc)
+    TAB 4: Tests --------------------------------
 with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
@@ -1279,6 +1341,49 @@ with TAB4:
             st_df(ddesc if isinstance(ddesc, pd.DataFrame) else ddesc.to_frame(name='gap_hours'), use_container_width=True, height=200)
 
     # Rule Engine expander for this tab
+    st.divider()
+    # --- Phân tích theo thời gian cho Tests ---
+    if DT_COLS:
+        tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
+        gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='t4_time_gran')
+        data_src2 = DF_FULL if (SS.get('df') is not None and use_full) else DF_VIEW
+        if dtype == 'Numeric':
+            with st.expander('Outlier (IQR) theo giai đoạn', expanded=False):
+                df_out = outlier_iqr_by_period(data_src2, selected_col, tcol, gran)
+                if df_out.empty:
+                    st.info('Không đủ dữ liệu.')
+                else:
+                    st_df(df_out, use_container_width=True, height=min(360, 60+24*min(len(df_out),12)))
+                    if HAS_PLOTLY:
+                        fig = px.bar(df_out, x='period', y='outlier_share', title='Outlier share theo giai đoạn')
+                        st_plotly(fig)
+        elif dtype == 'Categorical':
+            colL2, colR2 = st.columns(2)
+            with colL2:
+                with st.expander('HHI theo giai đoạn', expanded=True):
+                    df_h = hhi_by_period(data_src2, selected_col, tcol, gran)
+                    if df_h.empty:
+                        st.info('Không đủ dữ liệu.')
+                    else:
+                        st_df(df_h, use_container_width=True, height=min(320, 60+24*min(len(df_h),10)))
+                        if HAS_PLOTLY:
+                            figh = px.bar(df_h, x='period', y='HHI', title='HHI theo giai đoạn')
+                            st_plotly(figh)
+            with colR2:
+                with st.expander('Chi-square GoF vs Uniform theo giai đoạn', expanded=True):
+                    df_c = cgof_by_period(data_src2, selected_col, tcol, gran)
+                    if df_c.empty:
+                        st.info('Không đủ dữ liệu.')
+                    else:
+                        st_df(df_c, use_container_width=True, height=min(320, 60+24*min(len(df_c),10)))
+                        if HAS_PLOTLY:
+                            try:
+                                figc = px.bar(df_c, x='period', y='p', title='p-value theo giai đoạn (CGOF)'); st_plotly(figc)
+                            except Exception:
+                                pass
+    else:
+        st.caption('Không phát hiện cột thời gian — bỏ qua phân tích theo giai đoạn.')
+    
     with st.expander('🧠 Rule Engine (Tests) — Insights'):
         ctx = build_rule_context()
         df_r = evaluate_rules(ctx, scope='tests')
@@ -1294,7 +1399,18 @@ with TAB5:
     else:
         use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
         REG_DF = DF_FULL if (use_full_reg and SS['df'] is not None) else DF_VIEW
-        tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
+    # Optional: filter REG_DF by selected period
+    if DT_COLS:
+        with st.expander('Bộ lọc thời gian cho Regression (M/Q/Y)', expanded=False):
+            dtc = st.selectbox('Datetime column', DT_COLS, key='reg_dt')
+            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='reg_gran')
+            per_ser = _derive_period(REG_DF, dtc, gran)
+            uniq = sorted([p for p in per_ser.dropna().unique()])
+            pick = st.multiselect('Chọn giai đoạn (lọc)', options=uniq, default=uniq[:1])
+            if pick:
+                REG_DF = REG_DF.loc[per_ser.isin(pick)]
+                st.caption(f'Đã lọc Regression DF theo {len(pick)} giai đoạn, còn {len(REG_DF):,} dòng.')
+                tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
 
         with tab_lin:
             if len(NUM_COLS) < 2:
@@ -1454,7 +1570,18 @@ with TAB6:
     st.subheader('🚩 Fraud Flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
-    if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
+    # Optional: filter FLAG_DF by selected period before scanning
+    if DT_COLS:
+        with st.expander('Bộ lọc thời gian cho Fraud Flags (M/Q/Y)', expanded=False):
+            dtc = st.selectbox('Datetime column', DT_COLS, key='ff_dt_filter')
+            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='ff_gran')
+            per_ser = _derive_period(FLAG_DF, dtc, gran)
+            uniq = sorted([p for p in per_ser.dropna().unique()])
+            pick = st.selectbox('Chọn 1 giai đoạn để quét cờ', options=['(All)'] + uniq, index=0, key='ff_pick')
+            if pick != '(All)':
+                FLAG_DF = FLAG_DF.loc[per_ser == pick]
+                st.caption(f'Đang quét Fraud Flags trong giai đoạn: {pick} — {len(FLAG_DF):,} dòng')
+            if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
