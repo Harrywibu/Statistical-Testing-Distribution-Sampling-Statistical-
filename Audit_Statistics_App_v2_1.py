@@ -1672,7 +1672,7 @@ with TAB4:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
     else:
             # Rule Engine expander for this tab
-    st.divider()
+        st.divider()
     # --- Phân tích theo thời gian cho Tests ---
     if DT_COLS:
         tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
