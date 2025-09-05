@@ -116,7 +116,7 @@ SS = st.session_state
 
 # ——— Preview banner helper ———
 def preview_banner():
-    if SS.get('df') is None:
+if SS.get('df') is None:
         
 DEFAULTS = {
     'bins': 50,
