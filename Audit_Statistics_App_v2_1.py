@@ -1515,9 +1515,7 @@ with TAB3:
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
-        run_on_full = True
         data_for_benford = DF_FULL
-        if (not run_on_full) and (SS['df'] is not None):
         c1,c2 = st.columns(2)
         with c1:
             amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
