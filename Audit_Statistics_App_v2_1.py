@@ -792,8 +792,7 @@ with TAB0:
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             if DT_COLS:
-                with 
-                    st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
+                with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
                     dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
                     gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='dq_gran')
                     src = SS.get('df') if SS.get('df') is not None else DF_VIEW
