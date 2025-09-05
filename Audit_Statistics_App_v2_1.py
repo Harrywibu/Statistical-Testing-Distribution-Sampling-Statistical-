@@ -1507,12 +1507,11 @@ with TAB2:
             else:
                 st.warning('Chọn ≥2 cột.')
 with TAB3:
-    st.subheader(
+    st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
         st.stop()
-        '🔢 Benford Law — 1D & 2D')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
