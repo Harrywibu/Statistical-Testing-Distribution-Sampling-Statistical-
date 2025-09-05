@@ -1436,9 +1436,9 @@ with TAB1:
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
-    st.subheader('🔗 Correlation Studio & 📈 Trend')
+    st.subheader('🔗 Correlation & 📈 Trend')
     if SS.get('df') is None:
-    st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
 # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
