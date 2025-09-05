@@ -969,6 +969,7 @@ TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 # ---- TAB 0: Data Quality  ----
 with TAB0:
     st.subheader('🧪 Data Quality — FULL dataset')
+    st.stop()
     if not FULL_READY:
         st.info('Hãy **Load full data** để xem Data Quality .')
     else:
@@ -1037,6 +1038,7 @@ with TAB0:
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
+    st.stop()
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
@@ -1291,7 +1293,7 @@ with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
+        st.stop()
 
     # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
@@ -1542,7 +1544,7 @@ with TAB3:
     # Gate: require FULL data for this tab
     if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
+        st.stop()
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
@@ -1687,7 +1689,7 @@ with TAB4:
     # Gate: require FULL data for this tab
     if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
+        st.stop()
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1781,7 +1783,7 @@ with TAB5:
     # Gate: require FULL data for this tab
     if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
+        st.stop()
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
