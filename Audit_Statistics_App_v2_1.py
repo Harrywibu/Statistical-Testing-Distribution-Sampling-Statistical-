@@ -654,15 +654,20 @@ if fname.lower().endswith('.csv'):
 else:
     sheets = list_sheets_xlsx(fb)
     with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
-        c1,c2,c3 = st.columns([2,1,1])
-        idx=0 if sheets else 0
-        SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
-        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
-        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
-        SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
-        # (Trong khối Ingest XLSX, thay thế phần khai báo dtype_choice/dtype_map)
+        # Bảo vệ trường hợp file không có sheet
+        if not sheets:
+            st.error('Không tìm thấy sheet trong file XLSX.')
+            st.stop()
+
+        c1, c2, c3 = st.columns([2, 1, 1])
+        SS['xlsx_sheet']   = c1.selectbox('Sheet', sheets, index=0)
+        SS['header_row']   = c2.number_input('Header row (1‑based)', 1, 100, SS.get('header_row', 1))
+        SS['skip_top']     = c3.number_input('Skip N rows after header', 0, 1000, SS.get('skip_top', 0))
+
+        # ✅ Sửa lỗi None.strip(): luôn dùng chuỗi rỗng khi chưa nhập
         raw_dtype = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice', ''), height=60)
         SS['dtype_choice'] = raw_dtype if raw_dtype is not None else ''
+
         dtype_map = None
         val = (SS.get('dtype_choice') or '').strip()
         if val:
@@ -670,11 +675,25 @@ else:
                 dtype_map = json.loads(val)
             except Exception as e:
                 st.warning(f'Không đọc được dtype JSON: {e}')
+
         try:
-            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
-            SS['df_preview']=prev; SS['last_good_preview']=prev  # chỉ để xem định dạng
+            prev = sanitize_for_arrow(
+                read_xlsx_fast(
+                    fb,
+                    SS['xlsx_sheet'],
+                    usecols=None,
+                    header_row=SS['header_row'],
+                    skip_top=SS['skip_top'],
+                    dtype_map=dtype_map
+                ).head(SS['pv_n'])
+            )
+            # Preview chỉ để xem định dạng; KHÔNG ảnh hưởng các Tab
+            SS['df_preview'] = prev
+            SS['last_good_preview'] = prev
         except Exception as e:
-            st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
+            st.error(f'Lỗi đọc XLSX: {e}')
+            prev = pd.DataFrame()
+
         st_df(prev, use_container_width=True, height=260)
         headers=list(prev.columns)
         st.caption(f'Columns: {len(headers)} • SHA12={sha}')
