@@ -1800,7 +1800,7 @@ with TAB4:
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
-st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
+        st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
     def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
