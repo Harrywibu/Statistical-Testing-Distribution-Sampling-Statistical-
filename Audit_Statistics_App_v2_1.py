@@ -169,6 +169,37 @@ def _downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
         df[c] = pd.to_numeric(df[c], downcast='integer')
     return df
 
+
+# --- Ensure unique column names to avoid Plotly/Narwhals DuplicateError ---
+def ensure_unique_columns(df):
+    try:
+        import pandas as pd
+        if df is None:
+            return df
+        cols = list(map(str, getattr(df, 'columns', [])))
+        seen = {}
+        out = []
+        for c in cols:
+            base = c
+            if base not in seen:
+                seen[base] = 0
+                out.append(base)
+            else:
+                seen[base] += 1
+                new = f'{base}.{seen[base]}'
+                while new in seen:
+                    seen[base] += 1
+                    new = f'{base}.{seen[base]}'
+                seen[new] = 0
+                out.append(new)
+        if hasattr(df, 'columns'):
+            df = df.copy()
+            df.columns = out
+        return df
+    except Exception:
+        return df
+
+
 def to_float(x) -> Optional[float]:
     from numbers import Real
     try:
@@ -1121,11 +1152,11 @@ with TAB1:
                     if run_hist and HAS_PLOTLY:
                         fig = px.histogram(s, nbins=30, marginal='box', title=f'Histogram + KDE — {num_col}')
                         st_plotly(fig)
-                    if run_outlier:
+                    if run_outlier and FULL_READY:
                         q1,q3 = s.quantile([0.25,0.75]); iqr=q3-q1
                         outliers = s[(s<q1-1.5*iqr) | (s>q3+1.5*iqr)]
                         st.write(f'Số lượng outlier: {len(outliers)}'); st_df(outliers.to_frame(num_col).head(200), use_container_width=True)
-                    if run_b1:
+                    if run_b1 and FULL_READY:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1136,7 +1167,7 @@ with TAB1:
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
                                 st_df(var, use_container_width=True, height=220)
-                    if run_b2:
+                    if run_b2 and FULL_READY:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1159,7 +1190,7 @@ with TAB1:
                                 fig = px.scatter(sub, x=num_col, y=other_num, trendline=trend, title=f'{num_col} vs {other_num} ({method})')
                                 st_plotly(fig)
                             st.json({'method': method, 'r': float(r), 'p': float(pv)})
-                    if grp_for_quick and grp_for_quick!='(None)':
+                    if FULL_READY and grp_for_quick and grp_for_quick!='(None)':
                         sub = DF_VIEW[[num_col, grp_for_quick]].dropna()
                         if sub[grp_for_quick].nunique()<2:
                             st.warning('Cần ≥2 nhóm để ANOVA.')
@@ -1235,7 +1266,12 @@ with TAB1:
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
-    st.subheader('📈 Trend & 🔗 Correlation')
+    st.subheader(
+    # Gate: require FULL data for this tab
+    if SS.get('df') is None:
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+        st.stop()
+'📈 Trend & 🔗 Correlation')
     trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
@@ -1310,14 +1346,18 @@ with TAB2:
 for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
     if k not in SS: SS[k]=None
 with TAB3:
-    st.subheader('🔢 Benford Law — 1D & 2D')
+    st.subheader(
+    # Gate: require FULL data for this tab
+    if SS.get('df') is None:
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+        st.stop()
+'🔢 Benford Law — 1D & 2D')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
-        run_on_full = (SS['df'] is not None) and st.checkbox('Use FULL dataset thay vì sample (khuyến nghị cho Benford)', value=True, key='bf_use_full')
-        data_for_benford = DF_FULL if (run_on_full and SS['df'] is not None) else DF_VIEW
+        run_on_full = True
+        data_for_benford = DF_FULL
         if (not run_on_full) and (SS['df'] is not None):
-            st.caption('ℹ️ Đang dùng SAMPLE do bạn tắt "Use FULL". Bật lại để kết quả Benford ổn định hơn.')
         c1,c2 = st.columns(2)
         with c1:
             amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
@@ -1339,7 +1379,7 @@ with TAB3:
                 if HAS_PLOTLY:
                     fig1 = go.Figure(); fig1.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
                     fig1.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
+                    src_tag = 'FULL'
                     fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
                     st_plotly(fig1)
                 st_df(var, use_container_width=True, height=220)
@@ -1357,7 +1397,7 @@ with TAB3:
                 if HAS_PLOTLY:
                     fig2 = go.Figure(); fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
                     fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
+                    src_tag = 'FULL'
                     fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
                     st_plotly(fig2)
                 st_df(var2, use_container_width=True, height=220)
@@ -1379,7 +1419,7 @@ with TAB3:
         else:
             dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bf_time_dt')
             gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bf_time_gran')
-            src_df = DF_FULL if (SS.get('df') is not None and SS.get('bf_use_full')) else DF_VIEW
+            src_df = DF_FULL if (SS.get('df') is not None and True) else DF_VIEW
             val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bf_time_val')
             res = benford_by_period(src_df, val_col, dtc, gran)
             if res.empty:
@@ -1422,7 +1462,12 @@ with TAB3:
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
 with TAB4:
-    st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
+    st.subheader(
+    # Gate: require FULL data for this tab
+    if SS.get('df') is None:
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+        st.stop()
+'🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1445,7 +1490,7 @@ with TAB4:
             st.write('- DOW/Hour distribution, Seasonality (xem Tab 1)'); st.write('- Gap/Sequence test (khoảng cách thời gian)')
     with navR:
         st.markdown('**Điều khiển chạy test**')
-        use_full = st.checkbox('Dùng FULL dataset (nếu đã load) cho test thời gian/Benford', value=SS['df'] is not None, key='t4_use_full')
+        use_full = True
         run_benford = st.checkbox('Benford 1D/2D (Numeric)', value=(dtype=='Numeric'), key='t4_run_benford')
         run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
         run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
@@ -1455,13 +1500,13 @@ with TAB4:
         if 't4_results' not in SS: SS['t4_results']={}
         if go:
             out={}
-            data_src = DF_FULL if (use_full and SS['df'] is not None) else DF_VIEW
+            data_src = DF_FULL
             if run_benford and dtype=='Numeric':
                 ok,msg = _benford_ready(data_src[selected_col])
                 if not ok: st.warning(msg)
                 else:
                     out['benford']={'r1': _benford_1d(data_src[selected_col]), 'r2': _benford_2d(data_src[selected_col]), 'col': selected_col,
-                                    'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
+                                    'src': 'FULL'}
             if (run_cgof or run_hhi) and dtype=='Categorical':
                 freq = cat_freq(s0.astype(str))
                 if run_cgof and len(freq)>=2:
@@ -1476,7 +1521,7 @@ with TAB4:
                 t = pd.to_datetime(data_src[selected_col], errors='coerce').dropna().sort_values()
                 if len(t)>=3:
                     gaps = (t.diff().dropna().dt.total_seconds()/3600.0)
-                    out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
+                    out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
             SS['t4_results']=out
@@ -1570,12 +1615,17 @@ with TAB4:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
-    st.subheader('📘 Regression (Linear / Logistic)')
+    st.subheader(
+    # Gate: require FULL data for this tab
+    if SS.get('df') is None:
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+        st.stop()
+'📘 Regression (Linear / Logistic)')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
-        use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
-        REG_DF = DF_FULL if (use_full_reg and SS['df'] is not None) else DF_VIEW
+        use_full_reg = True
+        REG_DF = DF_FULL
     # Optional: filter REG_DF by selected period
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Regression (M/Q/Y)', expanded=False):
