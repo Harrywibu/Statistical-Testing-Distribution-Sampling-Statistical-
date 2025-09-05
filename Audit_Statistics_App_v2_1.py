@@ -791,7 +791,7 @@ with TAB0:
             dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
-    # Per-period counts if datetime exists 
+        # Per-period counts if datetime exists
             if DT_COLS:
                 with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
                     dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
@@ -1243,7 +1243,7 @@ with TAB3:
                             figc.add_trace(go.Scatter(x=comp['digit'], y=comp['A_exp'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                             figc.update_layout(barmode='group', title=f'Benford 1D so sánh {a} vs {b}', height=360)
                             st_plotly(figc)
-    TAB 4: Tests --------------------------------
+# ---------------- TAB 4: Tests ----------------
 with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
