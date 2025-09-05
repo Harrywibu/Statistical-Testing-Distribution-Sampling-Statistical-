@@ -112,6 +112,13 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
+
+
+# ——— Preview banner helper ———
+def preview_banner():
+    if SS.get('df') is None:
+        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+
 DEFAULTS = {
     'bins': 50,
     'log_scale': False,
@@ -697,6 +704,18 @@ CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).
 DF_VIEW = df_src
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
+
+
+# — Sales risk context computed on currently active dataset (FULL if available else PREVIEW)
+try:
+    _BASE_DF = DF_FULL if SS.get('df') is not None else DF_VIEW
+    _sales = compute_sales_flags(_BASE_DF)
+    SS['sales_summary'] = _sales.get('summary', {})
+    # Merge with any existing flags (e.g., off-hours) if present
+    SS['fraud_flags'] = (_sales.get('flags', []) or [])
+except Exception:
+    pass
+
 FULL_READY = SS.get('df') is not None
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
@@ -926,6 +945,50 @@ def rules_catalog() -> List[Rule]:
         action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
         rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
     ))
+    
+    # — Sales: negative margin share
+    R.append(Rule(
+        id='SALES_GM_NEG', name='GM% âm (tỷ lệ > 2%)', scope='flags', severity='High',
+        condition=lambda c: float(_get(c,'sales','gm_neg_share', default=0) or 0) > 0.02,
+        action='Khoanh vùng giao dịch GM âm theo sản phẩm/khách hàng; xác minh giá/COGS.',
+        rationale='GM âm có thể do sai sót giá/COGS hoặc chiết khấu vượt quy định.'
+    ))
+    # — Sales: discount share high
+    R.append(Rule(
+        id='SALES_DISC_HIGH', name='Chiết khấu chiếm tỷ trọng cao', scope='flags', severity='Medium',
+        condition=lambda c: float(_get(c,'sales','disc_share', default=0) or 0) > 0.05,
+        action='Rà soát điều kiện chiết khấu, phê duyệt, và thời điểm hạch toán.',
+        rationale='Chiết khấu cao bất thường làm xói mòn doanh thu và có thể bị lạm dụng.'
+    ))
+    # — Sales: price variance high by product
+    R.append(Rule(
+        id='SALES_PRICE_VAR', name='Biến động giá/đơn vị cao theo sản phẩm', scope='flags', severity='Medium',
+        condition=lambda c: float(_get(c,'sales','price_cv_max', default=0) or 0) > 0.35,
+        action='So sánh giá theo khu vực/khách hàng; kiểm tra phê duyệt ngoại lệ.',
+        rationale='CV giá cao gợi ý định giá thiếu nhất quán hoặc ngoại lệ không kiểm soát.'
+    ))
+    # — Sales: weight per bag mismatch
+    R.append(Rule(
+        id='SALES_W_MISMATCH', name='Sai lệch khối lượng/bao', scope='flags', severity='Medium',
+        condition=lambda c: int(_get(c,'sales','weight_mismatch', default=0) or 0) > 0,
+        action='Đối chiếu trọng lượng thực tế/bao (10kg/25kg) với số lượng xuất.',
+        rationale='Sai lệch định lượng có thể do lập chứng từ sai hoặc gian lận cân đo.'
+    ))
+    # — Sales: duplicates
+    R.append(Rule(
+        id='SALES_DUP_KEYS', name='Trùng chứng từ (Docno×Refdocno)', scope='flags', severity='High',
+        condition=lambda c: int(_get(c,'sales','dup_cnt', default=0) or 0) > 0,
+        action='Loại bỏ bút toán trùng/đảo; đối chiếu số chứng từ nguồn.',
+        rationale='Gây rủi ro double posting/doanh thu ảo.'
+    ))
+    # — Sales: weekend share high
+    R.append(Rule(
+        id='SALES_WEEKEND', name='Hạch toán cuối tuần cao', scope='flags', severity='Low',
+        condition=lambda c: float(_get(c,'sales','weekend_share', default=0) or 0) > 0.35,
+        action='Đánh giá quy trình bán hàng ngày nghỉ; phân quyền & lịch làm việc.',
+        rationale='Hạch toán ngoài ngày làm việc có thể là tín hiệu bất thường.'
+    ))
+
     return R
 
 def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFrame:
@@ -1269,10 +1332,8 @@ with TAB1:
 with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
-        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
-
-    # —— Helpers: metrics for mixed data-type pairs ——
+    st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+# —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
     from scipy import stats as _stats
@@ -1520,12 +1581,11 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
-    if not NUM_COLS:
+    st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
-        data_for_benford = DF_FULL
+        data_for_benford = DF_FULL if SS.get('df') is not None else DF_VIEW
         c1,c2 = st.columns(2)
         with c1:
             amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
@@ -1633,9 +1693,8 @@ with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
-    st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
+    st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
     def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
@@ -1666,7 +1725,7 @@ with TAB4:
         if 't4_results' not in SS: SS['t4_results']={}
         if go:
             out={}
-            data_src = DF_FULL
+            data_src = DF_FULL if SS.get('df') is not None else DF_VIEW
             out = SS.get('t4_results', {})
     if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
@@ -1727,13 +1786,12 @@ with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
-    st.stop()
-    if not HAS_SK:
+    st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
+if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
         use_full_reg = True
-        REG_DF = DF_FULL
+        REG_DF = DF_FULL if SS.get('df') is not None else DF_VIEW
     # Optional: filter REG_DF by selected period
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Regression (M/Q/Y)', expanded=False):
