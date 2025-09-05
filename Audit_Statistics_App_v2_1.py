@@ -1526,30 +1526,46 @@ with TAB2:
         denom = max(1e-12, min(kcorr-1, rcorr-1))
         v = (phi2corr/denom) ** 0.5 if denom>0 else _np.nan
         return float(v), float(p), float(chi2)
-
+        
     def _mann_kendall(y):
-        y = _pd.Series(y).dropna().values
+        import numpy as _np
+        # Làm sạch & ép kiểu float
+        y = _np.asarray(y, dtype=float)
+        y = y[~_np.isnan(y)]
         n = len(y)
         if n < 8:
             return _np.nan, _np.nan, _np.nan
+    
+        # Tính S bằng tổng dấu (sign) của chênh lệch — không dùng trừ boolean
         s = 0
-        for i in range(n-1):
-            s += ((y[i+1:] > y[i]) - (y[i+1:] < y[i])).sum()
-        # tie correction for variance
+        for i in range(n - 1):
+            diff = y[i+1:] - y[i]
+            s += int(_np.sign(diff).sum())
+    
+        # Hiệu chỉnh ties cho phương sai
         unique, counts = _np.unique(y, return_counts=True)
-        ties = counts[counts>1]
-        var_s = (n*(n-1)*(2*n+1))/18
-        if ties.size>0:
-            var_s -= (_np.sum(ties*(ties-1)*(2*ties+1)))/18
-        if s>0:
-            z = (s - 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
-        elif s<0:
-            z = (s + 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
+        ties = counts[counts > 1]
+        var_s = (n * (n - 1) * (2 * n + 1)) / 18.0
+        if ties.size > 0:
+            var_s -= (_np.sum(ties * (ties - 1) * (2 * ties + 1))) / 18.0
+    
+        # Tính Z theo phân phối xấp xỉ chuẩn
+        if var_s <= 0:
+            return _np.nan, _np.nan, 'no trend'
+    
+        if s > 0:
+          z = (s - 1) / _np.sqrt(var_s)
+        elif s < 0:
+          z = (s + 1) / _np.sqrt(var_s)
         else:
-            z = 0.0
-        p = 2*(1 - _stats.norm.cdf(abs(z)))
-        trend = 'increasing' if z>0 and p<0.05 else ('decreasing' if z<0 and p<0.05 else 'no trend')
+          z = 0.0
+    
+        # p-value hai phía
+        from scipy import stats as _stats
+        p = 2 * (1 - _stats.norm.cdf(abs(z)))
+        trend = 'increasing' if (z > 0 and p < 0.05) else ('decreasing' if (z < 0 and p < 0.05) else 'no trend')
         return float(z), float(p), trend
+
 
     def _theil_sen(t_ord, y):
         try:
