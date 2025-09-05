@@ -790,7 +790,8 @@ with TAB0:
         try:
             dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
-    except Exception as e:
+        except Exception as e:
+            st.error(f'Lỗi Data Quality: {e}')
     # Per-period counts if datetime exists
  if DT_COLS:
         with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
