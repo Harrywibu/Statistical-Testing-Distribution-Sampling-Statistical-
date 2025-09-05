@@ -1620,12 +1620,11 @@ with TAB3:
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
 with TAB4:
-    st.subheader(
+    st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
         st.stop()
-'🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1773,12 +1772,11 @@ with TAB4:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
-    st.subheader(
+    st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
         st.stop()
-'📘 Regression (Linear / Logistic)')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
