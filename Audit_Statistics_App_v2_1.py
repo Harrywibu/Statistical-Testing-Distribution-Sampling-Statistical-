@@ -1266,85 +1266,246 @@ with TAB1:
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
-    st.subheader(
-    # Gate: require FULL data for this tab
+    st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
         st.stop()
-'📈 Trend & 🔗 Correlation')
-    trendL, trendR = st.columns(2)
-    with trendL:
-        num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
-        dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
-        freq = st.selectbox('Aggregate frequency', ['D','W','M','Q'], index=2)
-        agg_opt = st.radio('Aggregate by', ['sum','mean','count'], index=0, horizontal=True)
-        win = st.slider('Rolling window (periods)', 2, 24, 3)
-    @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-    def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int) -> pd.DataFrame:
-        t = pd.to_datetime(df[dt_col], errors='coerce')
-        y = pd.to_numeric(df[y_col], errors='coerce')
-        sub = pd.DataFrame({'t':t, 'y':y}).dropna().sort_values('t')
-        if sub.empty: return pd.DataFrame()
-        ts = sub.set_index('t')['y']
-        if agg=='count': ser = ts.resample(freq).count()
-        elif agg=='mean': ser = ts.resample(freq).mean()
-        else: ser = ts.resample(freq).sum()
-        out = ser.to_frame('y'); out['roll']=out['y'].rolling(win, min_periods=1).mean()
-        try: return out.reset_index(names='t')
-        except TypeError: return out.reset_index().rename(columns={'index':'t'})
-    with trendR:
-        if (dt_for_trend in DF_VIEW.columns) and (num_for_trend in DF_VIEW.columns):
-            tsdf = ts_aggregate_cached(DF_VIEW, dt_for_trend, num_for_trend, freq, agg_opt, win)
-            if tsdf.empty: st.warning('Không đủ dữ liệu sau khi chuẩn hoá datetime/numeric.')
-            else:
-                if HAS_PLOTLY:
-                    figt = go.Figure()
-                    figt.add_trace(go.Scatter(x=tsdf['t'], y=tsdf['y'], name=f'{agg_opt.capitalize()}'))
-                    figt.add_trace(go.Scatter(x=tsdf['t'], y=tsdf['roll'], name=f'Rolling{win}', line=dict(dash='dash')))
-                    figt.update_layout(title=f'{num_for_trend} — Trend ({freq})', height=360)
-                    st_plotly(figt)
-        else:
-            st.info('Chọn 1 cột numeric và 1 cột datetime hợp lệ để xem Trend.')
 
-    st.markdown('### 🔗 Correlation heatmap')
-    if len(NUM_COLS) < 2:
-        st.info('Cần ≥2 cột numeric để tính tương quan.')
-    else:
-        with st.expander('🧪 Tuỳ chọn cột (mặc định: tất cả numeric)'):
-            default_cols = NUM_COLS[:30]
-            pick_cols = st.multiselect('Chọn cột để tính tương quan', options=NUM_COLS, default=default_cols, key='t2_corr_cols')
-        if len(pick_cols) < 2:
-            st.warning('Chọn ít nhất 2 cột để tính tương quan.')
+    # —— Helpers: metrics for mixed data-type pairs ——
+    import numpy as _np
+    import pandas as _pd
+    from scipy import stats as _stats
+
+    def _is_num(s: _pd.Series) -> bool:
+        return _pd.api.types.is_numeric_dtype(s)
+
+    def _is_cat(s: _pd.Series) -> bool:
+        return _pd.api.types.is_bool_dtype(s) or _pd.api.types.is_categorical_dtype(s) or s.dtype == 'object'
+
+    def _is_dt(colname: str, s: _pd.Series) -> bool:
+        return _pd.api.types.is_datetime64_any_dtype(s) or is_datetime_like(colname, s)
+
+    def _clean_num(s: _pd.Series) -> _pd.Series:
+        return _pd.to_numeric(s, errors='coerce').replace([_np.inf, -_np.inf], _np.nan)
+
+    def _correlation_ratio(categories, values):
+        # η: correlation ratio for categorical (nominal) → numeric
+        y = _clean_num(values).dropna()
+        if y.empty:
+            return _np.nan
+        c = _pd.Series(categories).reindex(y.index)
+        df = _pd.DataFrame({'c': c, 'y': y}).dropna()
+        if df.empty or df['c'].nunique() < 2:
+            return _np.nan
+        groups = df.groupby('c')['y']
+        n_total = df.shape[0]
+        mean_total = df['y'].mean()
+        ss_between = float(((groups.mean() - mean_total)**2 * groups.size()).sum())
+        ss_total = float(((df['y'] - mean_total)**2).sum())
+        if ss_total <= 0:
+            return _np.nan
+        eta2 = ss_between / ss_total
+        return float(eta2)
+
+    def _cramers_v(x, y):
+        # Bias-corrected Cramér's V
+        tbl = _pd.crosstab(x, y)
+        if tbl.size == 0 or (tbl.values.sum() == 0):
+            return _np.nan, _np.nan, _np.nan
+        chi2, p, dof, exp = _stats.chi2_contingency(tbl, correction=False)
+        n = tbl.values.sum()
+        if n == 0:
+            return _np.nan, p, chi2
+        r, k = tbl.shape
+        phi2 = chi2 / n
+        phi2corr = max(0.0, phi2 - (k-1)*(r-1)/(n-1)) if n>1 else 0.0
+        rcorr = r - ((r-1)**2)/(n-1) if n>1 else r
+        kcorr = k - ((k-1)**2)/(n-1) if n>1 else k
+        denom = max(1e-12, min(kcorr-1, rcorr-1))
+        v = (phi2corr/denom) ** 0.5 if denom>0 else _np.nan
+        return float(v), float(p), float(chi2)
+
+    def _mann_kendall(y):
+        y = _pd.Series(y).dropna().values
+        n = len(y)
+        if n < 8:
+            return _np.nan, _np.nan, _np.nan
+        s = 0
+        for i in range(n-1):
+            s += ((y[i+1:] > y[i]) - (y[i+1:] < y[i])).sum()
+        # tie correction for variance
+        unique, counts = _np.unique(y, return_counts=True)
+        ties = counts[counts>1]
+        var_s = (n*(n-1)*(2*n+1))/18
+        if ties.size>0:
+            var_s -= (_np.sum(ties*(ties-1)*(2*ties+1)))/18
+        if s>0:
+            z = (s - 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
+        elif s<0:
+            z = (s + 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
         else:
-            method_label = 'Spearman (recommended)' if SS.get('spearman_recommended') else 'Spearman'
-            method = st.radio('Correlation method', ['Pearson', method_label], index=(1 if SS.get('spearman_recommended') else 0), horizontal=True, key='t2_corr_m')
-            mth = 'pearson' if method.startswith('Pearson') else 'spearman'
-            corr = corr_cached(DF_VIEW, pick_cols, mth)
-            SS['last_corr']=corr
-            if corr.empty:
-                st.warning('Không thể tính ma trận tương quan (có thể do cột hằng hoặc NA).')
+            z = 0.0
+        p = 2*(1 - _stats.norm.cdf(abs(z)))
+        trend = 'increasing' if z>0 and p<0.05 else ('decreasing' if z<0 and p<0.05 else 'no trend')
+        return float(z), float(p), trend
+
+    def _theil_sen(t_ord, y):
+        try:
+            slope, intercept, lo, hi = _stats.theilslopes(y, t_ord)
+            return float(slope), float(lo), float(hi)
+        except Exception:
+            return _np.nan, _np.nan, _np.nan
+
+    # —— UI ——
+    c1, c2, c3 = st.columns([2, 2, 1.5])
+    var_x = c1.selectbox('Variable X', ALL_COLS, key='t2_x')
+    cand_y = [c for c in ALL_COLS if c != var_x] or ALL_COLS
+    var_y = c2.selectbox('Variable Y', cand_y, key='t2_y')
+
+    sX = DF_FULL[var_x] if var_x in DF_FULL.columns else DF_VIEW[var_x]
+    sY = DF_FULL[var_y] if var_y in DF_FULL.columns else DF_VIEW[var_y]
+
+    tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
+    tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
+
+    st.caption(f'Kiểu cặp: **{tX} – {tY}**')
+
+    # Numeric – Numeric
+    if tX=='Numeric' and tY=='Numeric':
+        method = c3.radio('Method', ['Pearson','Spearman','Kendall'], index=(1 if SS.get('spearman_recommended') else 0), horizontal=True, key='t2_nn_m')
+        x = _clean_num(sX)
+        y = _clean_num(sY)
+        sub = _pd.concat([x, y], axis=1).dropna()
+        if sub.shape[0] < 10:
+            st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
+        else:
+            if method=='Pearson':
+                r, p = _stats.pearsonr(sub.iloc[:,0], sub.iloc[:,1])
+                trend='ols'
+            elif method=='Spearman':
+                r, p = _stats.spearmanr(sub.iloc[:,0], sub.iloc[:,1])
+                trend=None
             else:
-                if HAS_PLOTLY:
-                    figH = px.imshow(corr, color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title=f'Correlation heatmap ({mth.capitalize()})', aspect='auto')
+                r, p = _stats.kendalltau(sub.iloc[:,0], sub.iloc[:,1])
+                trend=None
+            st.dataframe(_pd.DataFrame([{'method': method, 'r': float(r), 'p': float(p), 'n': int(sub.shape[0])}]), use_container_width=True, height=80)
+            if HAS_PLOTLY:
+                fig = px.scatter(sub, x=sub.columns[0], y=sub.columns[1], trendline=trend, title=f'{var_x} vs {var_y} ({method})')
+                st_plotly(fig)
+
+    # Numeric – Categorical
+    elif (tX=='Numeric' and tY=='Categorical') or (tX=='Categorical' and tY=='Numeric'):
+        num = _clean_num(sX) if tX=='Numeric' else _clean_num(sY)
+        cat = (sY if tY=='Categorical' else sX).astype('object')
+        df = _pd.DataFrame({'num': num, 'cat': cat}).dropna()
+        if df['cat'].nunique() < 2 or df.shape[0] < 10:
+            st.warning('Cần ≥2 nhóm và đủ bản ghi (≥10).')
+        else:
+            eta2 = _correlation_ratio(df['cat'], df['num'])
+            groups = [g.values for _, g in df.groupby('cat')['num']]
+            try:
+                H, p_kw = _stats.kruskal(*groups)
+            except Exception:
+                H, p_kw = _np.nan, _np.nan
+            pb_r = _np.nan; pb_p = _np.nan
+            if df['cat'].nunique() == 2:
+                # map to 0/1 for point-biserial
+                m = {k:i for i,k in enumerate(sorted(df['cat'].unique()))}
+                z = df['cat'].map(m)
+                try:
+                    pb = _stats.pointbiserialr(z, df['num'])
+                    pb_r, pb_p = float(pb.statistic), float(pb.pvalue) if hasattr(pb,'pvalue') else float(pb.pvalue)
+                except Exception:
+                    pb_r, pb_p = _np.nan, _np.nan
+            st.dataframe(_pd.DataFrame([{
+                'η² (effect size)': eta2,
+                'Kruskal–Wallis H': float(H) if not _np.isnan(H) else _np.nan,
+                'Kruskal p': float(p_kw) if not _np.isnan(p_kw) else _np.nan,
+                'Point-biserial r (binary only)': pb_r,
+                'Point-biserial p': pb_p,
+                'k groups': int(df['cat'].nunique()),
+                'n': int(df.shape[0])
+            }]), use_container_width=True, height=100)
+            if HAS_PLOTLY:
+                fig = px.box(df, x='cat', y='num', color='cat', title=f'{("%s by %s"%(var_x,var_y)) if tX=="Numeric" else ("%s by %s"%(var_y,var_x))}')
+                st_plotly(fig)
+
+    # Categorical – Categorical
+    elif tX=='Categorical' and tY=='Categorical':
+        df = _pd.DataFrame({'x': sX.astype('object'), 'y': sY.astype('object')}).dropna()
+        if df['x'].nunique()<2 or df['y'].nunique()<2:
+            st.warning('Cần mỗi biến có ≥2 nhóm.')
+        else:
+            V, p, chi2 = _cramers_v(df['x'], df['y'])
+            st.dataframe(_pd.DataFrame([{'Cramér’s V': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
+            if HAS_PLOTLY:
+                tbl = _pd.crosstab(df['x'], df['y'])
+                fig = px.imshow(tbl, text_auto=True, title=f'Contingency: {var_x} × {var_y}')
+                st_plotly(fig)
+
+    # Datetime – Numeric
+    elif (tX=='Datetime' and tY=='Numeric') or (tX=='Numeric' and tY=='Datetime'):
+        t = _pd.to_datetime(sX if tX=='Datetime' else sY, errors='coerce')
+        y = _clean_num(sY if tY=='Numeric' else sX)
+        df = _pd.DataFrame({'t': t, 'y': y}).dropna().sort_values('t')
+        if df.shape[0] < 8:
+            st.warning('Cần ≥8 bản ghi hợp lệ theo thời gian.')
+        else:
+            # Spearman time-rank
+            ranks = _pd.Series(_np.arange(len(df)), index=df.index)
+            rho, p_rho = _stats.spearmanr(ranks.values, df['y'].values)
+            z_mk, p_mk, trend = _mann_kendall(df['y'].values)
+            slope, lo, hi = _theil_sen(_np.arange(len(df)), df['y'].values)
+            st.dataframe(_pd.DataFrame([{
+                'Spearman(time-rank) ρ': float(rho), 'pρ': float(p_rho),
+                'Mann–Kendall Z': z_mk, 'pMK': p_mk, 'trend': trend,
+                'Theil–Sen slope': slope, 'slope CI low': lo, 'slope CI high': hi,
+                'n': int(df.shape[0])
+            }]), use_container_width=True, height=100)
+            if HAS_PLOTLY:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
+                fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
+                st_plotly(fig)
+
+    # Datetime – Categorical
+    elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
+        dt_col = var_x if tX=='Datetime' else var_y
+        cat_col = var_y if tY=='Categorical' else var_x
+        gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='t2_dt_cat_g')
+        per = _derive_period(DF_FULL, dt_col, gran)
+        df = _pd.DataFrame({'period': per, 'cat': DF_FULL[cat_col].astype('object')}).dropna()
+        if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
+            st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
+        else:
+            V, p, chi2 = _cramers_v(df['period'], df['cat'])
+            st.dataframe(_pd.DataFrame([{'Cramér’s V (period×cat)': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
+            if HAS_PLOTLY:
+                tbl = _pd.crosstab(df['period'], df['cat'])
+                fig = px.imshow(tbl, text_auto=False, aspect='auto', title=f'Contingency: period × {cat_col}')
+                st_plotly(fig)
+
+    st.divider()
+    # Optional: Numeric-only heatmap kept under expander for a cleaner UI
+    with st.expander('🔢 Numeric-only correlation heatmap (optional)'):
+        if len(NUM_COLS) < 2:
+            st.info('Cần ≥2 cột numeric để tính tương quan.')
+        else:
+            mth = st.radio('Method', ['Pearson','Spearman','Kendall'], index=1 if SS.get('spearman_recommended') else 0, horizontal=True, key='t2_heat_m')
+            sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='t2_heat_cols')
+            if len(sel) >= 2:
+                if mth=='Kendall':
+                    sub = DF_VIEW[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
+                    corr = sub.corr(method='kendall') if sub.shape[1]>=2 else _pd.DataFrame()
+                else:
+                    corr = corr_cached(DF_VIEW, sel, 'spearman' if mth=='Spearman' else 'pearson')
+                SS['last_corr'] = corr
+                if not corr.empty and HAS_PLOTLY:
+                    figH = px.imshow(corr, color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title=f'Correlation heatmap ({mth})', aspect='auto')
                     figH.update_xaxes(tickangle=45)
                     st_plotly(figH)
-                with st.expander('📌 Top tương quan theo |r| (bỏ đường chéo)'):
-                    tri = corr.where(~np.eye(len(corr), dtype=bool))
-                    pairs=[]; cols=list(tri.columns)
-                    for i in range(len(cols)):
-                        for j in range(i+1, len(cols)):
-                            r = tri.iloc[i,j]
-                            if pd.notna(r): pairs.append((cols[i], cols[j], float(r), abs(float(r))))
-                    pairs = sorted(pairs, key=lambda x: x[3], reverse=True)[:30]
-                    if pairs:
-                        df_pairs = pd.DataFrame(pairs, columns=['var1','var2','r','|r|'])
-                        st_df(df_pairs, use_container_width=True, height=260)
-                    else:
-                        st.write('Không có cặp đáng kể.')
-
-# ------------------------------- TAB 3: Benford -------------------------------
-for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
-    if k not in SS: SS[k]=None
+            else:
+                st.warning('Chọn ≥2 cột.')
 with TAB3:
     st.subheader(
     # Gate: require FULL data for this tab
