@@ -791,20 +791,19 @@ with TAB0:
             dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
-            st.error(f'Lỗi Data Quality: {e}')
-    # Per-period counts if datetime exists
- if DT_COLS:
-        with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
-            dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
-            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='dq_gran')
-            src = SS.get('df') if SS.get('df') is not None else DF_VIEW
-            per = _derive_period(src, dtc, gran)
-            cnt = per.value_counts().sort_index().rename('count').reset_index().rename(columns={'index':'period'})
-            st_df(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
-            if HAS_PLOTLY:
-                fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
-                st_plotly(fig)
-                    st.error(f'Lỗi Data Quality: {e}')
+    # Per-period counts if datetime exists 
+            if DT_COLS:
+                with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
+                    dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
+                    gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='dq_gran')
+                    src = SS.get('df') if SS.get('df') is not None else DF_VIEW
+                    per = _derive_period(src, dtc, gran)
+                    cnt = per.value_counts().sort_index().rename('count').reset_index().rename(columns={'index':'period'})
+                    st_df(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
+                    if HAS_PLOTLY:
+                        fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
+                        st_plotly(fig)
+                            st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
