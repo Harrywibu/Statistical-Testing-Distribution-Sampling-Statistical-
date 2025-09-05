@@ -148,6 +148,26 @@ def st_plotly(fig, **kwargs):
     kwargs.setdefault('key', f'plt_{SS["_plt_seq"]}')
     return st.plotly_chart(fig, **kwargs)
 
+# --- Guide note helpers (annotation + caption) ---
+def add_guide(fig, text: str, where: str = "top"):
+    try:
+        if where == "top":
+            y, yanchor, tpad = 1.12, "bottom", 100
+        else:
+            y, yanchor, tpad = -0.20, "top", 60
+        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=y,
+                           xanchor="left", yanchor=yanchor,
+                           text=text, showarrow=False,
+                           font=dict(size=11, color="#555"))
+        cur_t = fig.layout.margin.t if fig.layout.margin and fig.layout.margin.t is not None else 60
+        fig.update_layout(margin=dict(t=max(cur_t, tpad)))
+    except Exception:
+        pass
+    return fig
+
+def guide(text: str):
+    st.caption(f"ℹ {text}")
+
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def corr_cached(df: pd.DataFrame, cols: List[str], method: str = 'pearson') -> pd.DataFrame:
     if not cols: return pd.DataFrame()
