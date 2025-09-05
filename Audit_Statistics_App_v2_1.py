@@ -1831,16 +1831,22 @@ with TAB4:
         run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
         go = st.button('Chạy các test đã chọn', type='primary', key='t4_run_btn')
 
-        if 't4_results' not in SS: SS['t4_results']={}
+                # --- T4: init kết quả & chạy test (FULL-only) ---
+        SS.setdefault('t4_results', {})           # luôn có key trong Session State
+        out = SS['t4_results']                    # lấy ra để dùng hiển thị nếu chưa bấm GO
+        
         if go:
-            out={}
-            data_src = DF_FULL if SS.get('df') is not None else DF_FULL
-            out = SS.get('t4_results', {})
-    if not out:
+            data_src = DF_FULL                    # FULL-only (không còn fallback/preview)
+            out = {}                              # reset kết quả cho lần chạy này
+            SS['t4_results'] = out
+
+    # --- Hiển thị kết quả ---
+    if not SS['t4_results']:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
     else:
-            # Rule Engine expander for this tab
         st.divider()
+        out = SS['t4_results']
+
     # --- Phân tích theo thời gian cho Tests ---
     if DT_COLS:
         tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
