@@ -660,10 +660,16 @@ else:
         SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
         SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
         SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
-        dtype_map=None
-        if SS['dtype_choice'].strip():
-            try: dtype_map=json.loads(SS['dtype_choice'])
-            except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
+        # (Trong khối Ingest XLSX, thay thế phần khai báo dtype_choice/dtype_map)
+        raw_dtype = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice', ''), height=60)
+        SS['dtype_choice'] = raw_dtype if raw_dtype is not None else ''
+        dtype_map = None
+        val = (SS.get('dtype_choice') or '').strip()
+        if val:
+            try:
+                dtype_map = json.loads(val)
+            except Exception as e:
+                st.warning(f'Không đọc được dtype JSON: {e}')
         try:
             prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
             SS['df_preview']=prev; SS['last_good_preview']=prev  # chỉ để xem định dạng
