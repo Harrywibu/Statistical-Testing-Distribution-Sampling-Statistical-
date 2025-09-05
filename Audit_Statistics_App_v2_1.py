@@ -654,18 +654,24 @@ if fname.lower().endswith('.csv'):
 else:
     sheets = list_sheets_xlsx(fb)
     with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
-        # Bảo vệ trường hợp file không có sheet
+        # Guard khi file không có sheet
         if not sheets:
             st.error('Không tìm thấy sheet trong file XLSX.')
             st.stop()
 
         c1, c2, c3 = st.columns([2, 1, 1])
-        SS['xlsx_sheet']   = c1.selectbox('Sheet', sheets, index=0)
-        SS['header_row']   = c2.number_input('Header row (1‑based)', 1, 100, SS.get('header_row', 1))
-        SS['skip_top']     = c3.number_input('Skip N rows after header', 0, 1000, SS.get('skip_top', 0))
+        SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=0)
+
+        # ✅ Ép kiểu & gán mặc định an toàn
+        hrow_default  = int(SS.get('header_row') or 1)
+        skip_default  = int(SS.get('skip_top')   or 0)
+        header_row    = int(c2.number_input('Header row (1‑based)', 1, 100, hrow_default, step=1))
+        skip_top      = int(c3.number_input('Skip N rows after header', 0, 1000, skip_default, step=1))
+        SS['header_row'] = max(1, header_row)
+        SS['skip_top']   = max(0, skip_top)
 
         # ✅ Sửa lỗi None.strip(): luôn dùng chuỗi rỗng khi chưa nhập
-        raw_dtype = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice', ''), height=60)
+        raw_dtype = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice', '') or '', height=60)
         SS['dtype_choice'] = raw_dtype if raw_dtype is not None else ''
 
         dtype_map = None
@@ -682,12 +688,12 @@ else:
                     fb,
                     SS['xlsx_sheet'],
                     usecols=None,
-                    header_row=SS['header_row'],
-                    skip_top=SS['skip_top'],
+                    header_row=SS['header_row'],   # luôn là int ≥1
+                    skip_top=SS['skip_top'],       # luôn là int ≥0
                     dtype_map=dtype_map
-                ).head(SS['pv_n'])
+                ).head(int(SS.get('pv_n') or 100))
             )
-            # Preview chỉ để xem định dạng; KHÔNG ảnh hưởng các Tab
+            # Preview CHỈ để xem định dạng; không ảnh hưởng các Tab
             SS['df_preview'] = prev
             SS['last_good_preview'] = prev
         except Exception as e:
