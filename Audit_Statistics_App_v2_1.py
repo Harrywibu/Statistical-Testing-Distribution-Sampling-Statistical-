@@ -697,6 +697,7 @@ CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).
 DF_VIEW = df_src
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
+FULL_READY = SS.get('df') is not None
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
