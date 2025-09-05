@@ -148,6 +148,7 @@ def st_plotly(fig, **kwargs):
     kwargs.setdefault('key', f'plt_{SS["_plt_seq"]}')
     return st.plotly_chart(fig, **kwargs)
 
+
 # --- Guide note helpers (annotation + caption) ---
 def add_guide(fig, text: str, where: str = "top"):
     try:
@@ -968,7 +969,7 @@ TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
 # ---- TAB 0: Data Quality  ----
 with TAB0:
     st.subheader('🧪 Data Quality — FULL dataset')
-    if SS.get('df') is None:
+    if not FULL_READY:
         st.info('Hãy **Load full data** để xem Data Quality .')
     else:
         @st.cache_data(ttl=900, show_spinner=False, max_entries=16)
@@ -1288,7 +1289,7 @@ with TAB1:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
-    if SS.get('df') is None:
+    if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
     st.stop()
 
@@ -1539,7 +1540,7 @@ with TAB2:
 with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
-    if SS.get('df') is None:
+    if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
     st.stop()
     if not NUM_COLS:
@@ -1649,10 +1650,42 @@ with TAB3:
                             figc.update_layout(barmode='group', title=f'Benford 1D so sánh {a} vs {b}', height=360)
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def cgof_uniform(series: pd.Series):
+    s = series.dropna().astype("object")
+    if s.nunique() < 2:
+        return {'chi2': np.nan, 'dof': 0, 'p': np.nan, 'table': pd.DataFrame()}
+    obs = s.value_counts()
+    k = int(len(obs))
+    exp = pd.Series([obs.sum()/k]*k, index=obs.index)
+    chi2 = float(((obs-exp)**2/exp).sum())
+    dof = k - 1
+    pval = float(1 - stats.chi2.cdf(chi2, dof))
+    tbl = pd.DataFrame({'category': obs.index, 'observed': obs.values, 'expected': exp.values})
+    return {'chi2': chi2, 'dof': dof, 'p': pval, 'table': tbl}
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def hhi_overall(series: pd.Series):
+    s = series.dropna().astype("object")
+    if s.empty: return {'hhi': np.nan, 'table': pd.DataFrame()}
+    freq = s.value_counts(dropna=False)
+    share = freq/freq.sum()
+    hhi = float((share**2).sum())
+    return {'hhi': hhi, 'table': pd.DataFrame({'category': freq.index, 'count': freq.values, 'share': share.values})}
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
+def time_gap_stats(series: pd.Series):
+    t = pd.to_datetime(series, errors='coerce').dropna().sort_values()
+    if len(t) < 3:
+        return {'gaps': {'gap_hours': {'describe': {}}}, 'n': int(len(t))}
+    gaps = t.diff().dropna().dt.total_seconds()/3600.0
+    desc = gaps.describe(percentiles=[.5,.75,.9,.95,.99]).to_dict()
+    return {'gaps': {'gap_hours': {'describe': desc}}, 'n': int(len(t)), 'sample': gaps.head(200).to_frame('gap_hours')}
 with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
-    if SS.get('df') is None:
+    if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
     st.stop()
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
@@ -1746,7 +1779,7 @@ with TAB4:
 with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
-    if SS.get('df') is None:
+    if not FULL_READY:
         st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
     st.stop()
     if not HAS_SK:
