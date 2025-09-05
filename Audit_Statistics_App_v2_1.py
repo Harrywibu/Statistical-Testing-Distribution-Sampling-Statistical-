@@ -112,13 +112,6 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
-
-
-# ——— Preview banner helper ———
-def preview_banner():
-    if SS.get('df') is None:
-         st.info('Hãy **Load full data** để xem Data Quality .')
-    
 DEFAULTS = {
     'bins': 50,
     'log_scale': False,
@@ -654,52 +647,21 @@ if fname.lower().endswith('.csv'):
 else:
     sheets = list_sheets_xlsx(fb)
     with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
-        # Guard khi file không có sheet
-        if not sheets:
-            st.error('Không tìm thấy sheet trong file XLSX.')
-            st.stop()
-
-        c1, c2, c3 = st.columns([2, 1, 1])
-        SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=0)
-
-        # ✅ Ép kiểu & gán mặc định an toàn
-        hrow_default  = int(SS.get('header_row') or 1)
-        skip_default  = int(SS.get('skip_top')   or 0)
-        header_row    = int(c2.number_input('Header row (1‑based)', 1, 100, hrow_default, step=1))
-        skip_top      = int(c3.number_input('Skip N rows after header', 0, 1000, skip_default, step=1))
-        SS['header_row'] = max(1, header_row)
-        SS['skip_top']   = max(0, skip_top)
-
-        # ✅ Sửa lỗi None.strip(): luôn dùng chuỗi rỗng khi chưa nhập
-        raw_dtype = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice', '') or '', height=60)
-        SS['dtype_choice'] = raw_dtype if raw_dtype is not None else ''
-
-        dtype_map = None
-        val = (SS.get('dtype_choice') or '').strip()
-        if val:
-            try:
-                dtype_map = json.loads(val)
-            except Exception as e:
-                st.warning(f'Không đọc được dtype JSON: {e}')
-
+        c1,c2,c3 = st.columns([2,1,1])
+        idx=0 if sheets else 0
+        SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
+        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
+        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
+        SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
+        dtype_map=None
+        if SS['dtype_choice'].strip():
+            try: dtype_map=json.loads(SS['dtype_choice'])
+            except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
         try:
-            prev = sanitize_for_arrow(
-                read_xlsx_fast(
-                    fb,
-                    SS['xlsx_sheet'],
-                    usecols=None,
-                    header_row=SS['header_row'],   # luôn là int ≥1
-                    skip_top=SS['skip_top'],       # luôn là int ≥0
-                    dtype_map=dtype_map
-                ).head(int(SS.get('pv_n') or 100))
-            )
-            # Preview CHỈ để xem định dạng; không ảnh hưởng các Tab
-            SS['df_preview'] = prev
-            SS['last_good_preview'] = prev
+            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
+            SS['df_preview']=prev; SS['last_good_preview']=prev; SS['ingest_ready']=True
         except Exception as e:
-            st.error(f'Lỗi đọc XLSX: {e}')
-            prev = pd.DataFrame()
-
+            st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
         st_df(prev, use_container_width=True, height=260)
         headers=list(prev.columns)
         st.caption(f'Columns: {len(headers)} • SHA12={sha}')
@@ -722,36 +684,20 @@ if SS['df'] is None and SS['df_preview'] is None:
     st.stop()
 
 # Source & typing
-DF_FULL = SS.get('df')
-if DF_FULL is None:
-    st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); st.stop()
-
-ALL_COLS = list(DF_FULL.columns)
-DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
-NUM_COLS = DF_FULL.select_dtypes(include=[np.number]).columns.tolist()
-CAT_COLS = DF_FULL.select_dtypes(include=['object','category','bool']).columns.tolist()
-VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-# — Sales risk context on FULL dataset only
-try:
-    _sales = compute_sales_flags(DF_FULL)
-    SS['sales_summary'] = _sales.get('summary', {})
-    existing_flags = SS.get('fraud_flags') or []
-    SS['fraud_flags'] = existing_flags + (_sales.get('flags', []) or [])
-except Exception:
-    pass
-
-
-
-# — Sales risk context computed on currently active dataset (FULL if available else PREVIEW)
-try:
-    _BASE_DF = DF_FULL if SS.get('df') is not None else DF_FULL
-    _sales = compute_sales_flags(_BASE_DF)
-    SS['sales_summary'] = _sales.get('summary', {})
-    # Merge with any existing flags (e.g., off-hours) if present
-    SS['fraud_flags'] = (_sales.get('flags', []) or [])
-except Exception:
-    pass
-
+candidates = (SS.get(k) for k in ('df', 'df_preview', 'last_good_df', 'last_good_preview'))
+df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.empty), None)
+if df_src is None:
+    st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
+    st.stop()
+ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
+NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+# Downsample view for visuals
+DF_VIEW = df_src
+VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
+FULL_READY = SS.get('df') is not None
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
@@ -801,110 +747,6 @@ def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
     return False
 
 # ------------------------------ Rule Engine Core ------------------------------
-
-# --- Sales schema guesser & risk summary ---
-import math
-
-def _first_match(cols, names):
-    for n in names:
-        for c in cols:
-            if str(c).strip().lower() == str(n).strip().lower():
-                return c
-    # fallback: contains
-    for n in names:
-        for c in cols:
-            if n.lower() in str(c).lower():
-                return c
-    return None
-
-@st.cache_data(ttl=900, show_spinner=False, max_entries=32)
-def compute_sales_flags(df):
-    """
-    Chuẩn hoá cột sales và tính các chỉ số rủi ro/flags dùng cho Rule Engine.
-    Trả về dict: { 'summary': {...}, 'flags': [ ... ] }
-    """
-    out = {'summary': {}, 'flags': []}
-    if df is None or not hasattr(df, 'columns') or len(df)==0:
-        return out
-    cols = list(df.columns)
-    # Map likely columns for Five Star Sales.xlsx
-    c_date   = _first_match(cols, ['Posting date','Posting Date','Document Date','Ngày hạch toán','Posting'])
-    c_prod   = _first_match(cols, ['Product','Material','Mã hàng','Item'])
-    c_cust   = _first_match(cols, ['Customer','Khách hàng','Sold-to'])
-    c_order  = _first_match(cols, ['Order','Số đơn','SO','Doc no','Document'])
-    c_qty    = _first_match(cols, ['Sales Quantity','Quantity','Số lượng'])
-    c_weight = _first_match(cols, ['Sales weight','Weight','Trọng lượng'])
-    c_uqty   = _first_match(cols, ['Unit Sales Qty','Unit Qty','Số lượng/đơn vị'])
-    c_uw     = _first_match(cols, ['Unit Sales weig','Unit weight','Kg/đv','Khối lượng/đơn vị'])
-    c_rev    = _first_match(cols, ['Net Sales revenue','Net Revenue','Doanh thu thuần']) or _first_match(cols, ['Sales Revenue'])
-    c_disc   = _first_match(cols, ['Sales Discount','Chiết khấu'])
-    c_price_w = _first_match(cols, ['Net Sales/Weight','Net/Weight','Giá/Weight'])
-    c_price_q = _first_match(cols, ['Net Sales/Qty','Net/Qty','Giá/Qty'])
-
-    import pandas as pd, numpy as np
-    def as_num(s):
-        return pd.to_numeric(s, errors='coerce').replace([np.inf, -np.inf], np.nan)
-
-    # Weekend share
-    weekend_share = None
-    if c_date is not None and c_date in df.columns:
-        t = pd.to_datetime(df[c_date], errors='coerce')
-        weekend_share = float(((t.dt.dayofweek>=5)).mean()) if t.notna().any() else None
-    # Discount share (trên doanh thu thuần nếu có)
-    disc_share = None
-    if c_disc in df.columns and (c_rev in df.columns or 'Sales Revenue' in df.columns):
-        d = as_num(df[c_disc])
-        base = as_num(df[c_rev]) if c_rev in df.columns else as_num(df['Sales Revenue'])
-        disc_share = float(d.sum()/base.abs().sum()) if base.abs().sum()>0 else None
-    # Unit price per kg/qty
-    price_series = None
-    if c_price_w in df.columns:
-        price_series = as_num(df[c_price_w])
-    elif c_rev in df.columns and c_weight in df.columns:
-        w = as_num(df[c_weight])
-        r = as_num(df[c_rev])
-        price_series = r.divide(w).replace([np.inf, -np.inf], np.nan)
-    elif c_price_q in df.columns:
-        price_series = as_num(df[c_price_q])
-    # CV theo sản phẩm
-    price_cv_max = None
-    if price_series is not None and c_prod in df.columns:
-        tmp = pd.DataFrame({'prod': df[c_prod].astype('object'), 'p': price_series})
-        grp = tmp.dropna().groupby('prod')['p']
-        if not grp.size().empty:
-            cv = grp.std()/grp.mean().replace(0, np.nan)
-            cv = cv.replace([np.inf, -np.inf], np.nan)
-            if not cv.dropna().empty:
-                price_cv_max = float(cv.dropna().max())
-    # Weight mismatch: |weight - unit_qty*unit_weight| > 5% weight
-    weight_mismatch = 0
-    if (c_weight in df.columns) and (c_uqty in df.columns) and (c_uw in df.columns):
-        W = as_num(df[c_weight])
-        expW = as_num(df[c_uqty]) * as_num(df[c_uw])
-        tol = 0.05
-        mis = (W.notna() & expW.notna()) & ((W-expW).abs() > tol * W.abs().replace(0, np.nan))
-        weight_mismatch = int(mis.sum())
-        if weight_mismatch>0:
-            out['flags'].append({'flag': 'Weight mismatch (>5%)', 'count': int(mis.sum())})
-    # Duplicates by Order (if exists)
-    dup_cnt = 0
-    if c_order in df.columns:
-        d = df[c_order].astype('object')
-        vc = d.value_counts()
-        dups = vc[vc>1]
-        dup_cnt = int(dups.sum()) if not dups.empty else 0
-        if dup_cnt>0:
-            out['flags'].append({'flag': 'Duplicate by Order', 'count': dup_cnt})
-    # Assemble summary
-    out['summary'] = {
-        'weekend_share': weekend_share if weekend_share is not None else 0.0,
-        'disc_share':    disc_share if disc_share is not None else 0.0,
-        'price_cv_max':  price_cv_max if price_cv_max is not None else 0.0,
-        'weight_mismatch': weight_mismatch,
-        'dup_cnt': dup_cnt,
-        'gm_neg_share': 0.0,
-    }
-    return out
 class Rule:
     def __init__(self, id: str, name: str, scope: str, severity: str,
                  condition: Callable[[Dict[str,Any]], bool],
@@ -938,7 +780,6 @@ def _get(ctx: Dict[str,Any], *keys, default=None):
 
 def build_rule_context() -> Dict[str,Any]:
     ctx = {
-        'sales': SS.get('sales_summary'),
         'thr': {
             'benford_diff': SS.get('risk_diff_threshold', 0.05),
             'zero_ratio': 0.30,
@@ -1085,50 +926,6 @@ def rules_catalog() -> List[Rule]:
         action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
         rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
     ))
-    
-    # — Sales: negative margin share
-    R.append(Rule(
-        id='SALES_GM_NEG', name='GM% âm (tỷ lệ > 2%)', scope='flags', severity='High',
-        condition=lambda c: float(_get(c,'sales','gm_neg_share', default=0) or 0) > 0.02,
-        action='Khoanh vùng giao dịch GM âm theo sản phẩm/khách hàng; xác minh giá/COGS.',
-        rationale='GM âm có thể do sai sót giá/COGS hoặc chiết khấu vượt quy định.'
-    ))
-    # — Sales: discount share high
-    R.append(Rule(
-        id='SALES_DISC_HIGH', name='Chiết khấu chiếm tỷ trọng cao', scope='flags', severity='Medium',
-        condition=lambda c: float(_get(c,'sales','disc_share', default=0) or 0) > 0.05,
-        action='Rà soát điều kiện chiết khấu, phê duyệt, và thời điểm hạch toán.',
-        rationale='Chiết khấu cao bất thường làm xói mòn doanh thu và có thể bị lạm dụng.'
-    ))
-    # — Sales: price variance high by product
-    R.append(Rule(
-        id='SALES_PRICE_VAR', name='Biến động giá/đơn vị cao theo sản phẩm', scope='flags', severity='Medium',
-        condition=lambda c: float(_get(c,'sales','price_cv_max', default=0) or 0) > 0.35,
-        action='So sánh giá theo khu vực/khách hàng; kiểm tra phê duyệt ngoại lệ.',
-        rationale='CV giá cao gợi ý định giá thiếu nhất quán hoặc ngoại lệ không kiểm soát.'
-    ))
-    # — Sales: weight per bag mismatch
-    R.append(Rule(
-        id='SALES_W_MISMATCH', name='Sai lệch khối lượng/bao', scope='flags', severity='Medium',
-        condition=lambda c: int(_get(c,'sales','weight_mismatch', default=0) or 0) > 0,
-        action='Đối chiếu trọng lượng thực tế/bao (10kg/25kg) với số lượng xuất.',
-        rationale='Sai lệch định lượng có thể do lập chứng từ sai hoặc gian lận cân đo.'
-    ))
-    # — Sales: duplicates
-    R.append(Rule(
-        id='SALES_DUP_KEYS', name='Trùng chứng từ (Docno×Refdocno)', scope='flags', severity='High',
-        condition=lambda c: int(_get(c,'sales','dup_cnt', default=0) or 0) > 0,
-        action='Loại bỏ bút toán trùng/đảo; đối chiếu số chứng từ nguồn.',
-        rationale='Gây rủi ro double posting/doanh thu ảo.'
-    ))
-    # — Sales: weekend share high
-    R.append(Rule(
-        id='SALES_WEEKEND', name='Hạch toán cuối tuần cao', scope='flags', severity='Low',
-        condition=lambda c: float(_get(c,'sales','weekend_share', default=0) or 0) > 0.35,
-        action='Đánh giá quy trình bán hàng ngày nghỉ; phân quyền & lịch làm việc.',
-        rationale='Hạch toán ngoài ngày làm việc có thể là tín hiệu bất thường.'
-    ))
-
     return R
 
 def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFrame:
@@ -1201,14 +998,14 @@ with TAB0:
             dq = dq[cols_order]
             return dq.sort_values(['type','column']).reset_index(drop=True)
         try:
-            dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_FULL)
+            dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_VIEW)
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             if DT_COLS:
                 with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
                     dtc = st.selectbox('Datetime column', DT_COLS, key='dq_dt')
                     gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='dq_gran')
-                    src = SS.get('df') if SS.get('df') is not None else DF_FULL
+                    src = SS.get('df') if SS.get('df') is not None else DF_VIEW
                     per = _derive_period(src, dtc, gran)
                     cnt = per.value_counts().sort_index().rename('count').reset_index().rename(columns={'index':'period'})
                     st_df(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
@@ -1222,7 +1019,7 @@ with TAB1:
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
-        s_nav = DF_FULL[col_nav]
+        s_nav = DF_VIEW[col_nav]
         if col_nav in NUM_COLS: dtype_nav='Numeric'
         elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
         else: dtype_nav='Categorical'
@@ -1251,7 +1048,7 @@ with TAB1:
                 num_col = st.selectbox('Numeric column', NUM_COLS, key='t1_num')
             with c2:
                 kde_on = st.checkbox('KDE (n ≤ ngưỡng)', value=True)
-            s0 = pd.to_numeric(DF_FULL[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan)
+            s0 = pd.to_numeric(DF_VIEW[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan)
             s = s0.dropna(); n_na = int(s0.isna().sum())
             if s.empty:
                 st.warning('Không còn giá trị numeric sau khi làm sạch.')
@@ -1356,11 +1153,11 @@ with TAB1:
                     if run_hist and HAS_PLOTLY:
                         fig = px.histogram(s, nbins=30, marginal='box', title=f'Histogram + KDE — {num_col}')
                         st_plotly(fig)
-                    if run_outlier:
+                    if run_outlier and FULL_READY:
                         q1,q3 = s.quantile([0.25,0.75]); iqr=q3-q1
                         outliers = s[(s<q1-1.5*iqr) | (s>q3+1.5*iqr)]
                         st.write(f'Số lượng outlier: {len(outliers)}'); st_df(outliers.to_frame(num_col).head(200), use_container_width=True)
-                    if run_b1:
+                    if run_b1 and FULL_READY:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1371,7 +1168,7 @@ with TAB1:
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
                                 st_df(var, use_container_width=True, height=220)
-                    if run_b2:
+                    if run_b2 and FULL_READY:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1382,8 +1179,8 @@ with TAB1:
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
                                 st_df(var, use_container_width=True, height=220)
-                    if run_corr and other_num in DF_FULL.columns:
-                        sub = DF_FULL[[num_col, other_num]].dropna()
+                    if run_corr and other_num in DF_VIEW.columns:
+                        sub = DF_VIEW[[num_col, other_num]].dropna()
                         if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
                         else:
                             if method=='Pearson':
@@ -1394,8 +1191,8 @@ with TAB1:
                                 fig = px.scatter(sub, x=num_col, y=other_num, trendline=trend, title=f'{num_col} vs {other_num} ({method})')
                                 st_plotly(fig)
                             st.json({'method': method, 'r': float(r), 'p': float(pv)})
-                    if grp_for_quick and grp_for_quick!='(None)':
-                        sub = DF_FULL[[num_col, grp_for_quick]].dropna()
+                    if FULL_READY and grp_for_quick and grp_for_quick!='(None)':
+                        sub = DF_VIEW[[num_col, grp_for_quick]].dropna()
                         if sub[grp_for_quick].nunique()<2:
                             st.warning('Cần ≥2 nhóm để ANOVA.')
                         else:
@@ -1425,7 +1222,7 @@ with TAB1:
             st.info('Không phát hiện cột categorical.')
         else:
             cat_col = st.selectbox('Categorical column', CAT_COLS, key='t1_cat')
-            df_freq = cat_freq(DF_FULL[cat_col])
+            df_freq = cat_freq(DF_VIEW[cat_col])
             topn = st.number_input('Top‑N (Pareto)', 3, 50, 15, step=1)
             st_df(df_freq.head(int(topn)), use_container_width=True, height=240)
             if HAS_PLOTLY and not df_freq.empty:
@@ -1445,7 +1242,7 @@ with TAB1:
             st.info('Không phát hiện cột datetime‑like.')
         else:
             dt_col = st.selectbox('Datetime column', dt_candidates, key='t1_dt')
-            t = pd.to_datetime(DF_FULL[dt_col], errors='coerce')
+            t = pd.to_datetime(DF_VIEW[dt_col], errors='coerce')
             t_clean = t.dropna(); n_missing = int(t.isna().sum())
             meta = pd.DataFrame([{
                 'count': int(len(t)), 'n_missing': n_missing,
@@ -1472,7 +1269,9 @@ with TAB1:
 with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
-         st.info('Hãy **Load full data** để xem Data Quality .')
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+    st.stop()
+
     # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
@@ -1526,46 +1325,30 @@ with TAB2:
         denom = max(1e-12, min(kcorr-1, rcorr-1))
         v = (phi2corr/denom) ** 0.5 if denom>0 else _np.nan
         return float(v), float(p), float(chi2)
-        
+
     def _mann_kendall(y):
-        import numpy as _np
-        # Làm sạch & ép kiểu float
-        y = _np.asarray(y, dtype=float)
-        y = y[~_np.isnan(y)]
+        y = _pd.Series(y).dropna().values
         n = len(y)
         if n < 8:
             return _np.nan, _np.nan, _np.nan
-    
-        # Tính S bằng tổng dấu (sign) của chênh lệch — không dùng trừ boolean
         s = 0
-        for i in range(n - 1):
-            diff = y[i+1:] - y[i]
-            s += int(_np.sign(diff).sum())
-    
-        # Hiệu chỉnh ties cho phương sai
+        for i in range(n-1):
+            s += ((y[i+1:] > y[i]) - (y[i+1:] < y[i])).sum()
+        # tie correction for variance
         unique, counts = _np.unique(y, return_counts=True)
-        ties = counts[counts > 1]
-        var_s = (n * (n - 1) * (2 * n + 1)) / 18.0
-        if ties.size > 0:
-            var_s -= (_np.sum(ties * (ties - 1) * (2 * ties + 1))) / 18.0
-    
-        # Tính Z theo phân phối xấp xỉ chuẩn
-        if var_s <= 0:
-            return _np.nan, _np.nan, 'no trend'
-    
-        if s > 0:
-          z = (s - 1) / _np.sqrt(var_s)
-        elif s < 0:
-          z = (s + 1) / _np.sqrt(var_s)
+        ties = counts[counts>1]
+        var_s = (n*(n-1)*(2*n+1))/18
+        if ties.size>0:
+            var_s -= (_np.sum(ties*(ties-1)*(2*ties+1)))/18
+        if s>0:
+            z = (s - 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
+        elif s<0:
+            z = (s + 1)/(_np.sqrt(var_s) if var_s>0 else _np.nan)
         else:
-          z = 0.0
-    
-        # p-value hai phía
-        from scipy import stats as _stats
-        p = 2 * (1 - _stats.norm.cdf(abs(z)))
-        trend = 'increasing' if (z > 0 and p < 0.05) else ('decreasing' if (z < 0 and p < 0.05) else 'no trend')
+            z = 0.0
+        p = 2*(1 - _stats.norm.cdf(abs(z)))
+        trend = 'increasing' if z>0 and p<0.05 else ('decreasing' if z<0 and p<0.05 else 'no trend')
         return float(z), float(p), trend
-
 
     def _theil_sen(t_ord, y):
         try:
@@ -1580,8 +1363,8 @@ with TAB2:
     cand_y = [c for c in ALL_COLS if c != var_x] or ALL_COLS
     var_y = c2.selectbox('Variable Y', cand_y, key='t2_y')
 
-    sX = DF_FULL[var_x] if var_x in DF_FULL.columns else DF_FULL[var_x]
-    sY = DF_FULL[var_y] if var_y in DF_FULL.columns else DF_FULL[var_y]
+    sX = DF_FULL[var_x] if var_x in DF_FULL.columns else DF_VIEW[var_x]
+    sY = DF_FULL[var_y] if var_y in DF_FULL.columns else DF_VIEW[var_y]
 
     tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
     tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
@@ -1713,10 +1496,10 @@ with TAB2:
             sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='t2_heat_cols')
             if len(sel) >= 2:
                 if mth=='Kendall':
-                    sub = DF_FULL[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
+                    sub = DF_VIEW[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
                     corr = sub.corr(method='kendall') if sub.shape[1]>=2 else _pd.DataFrame()
                 else:
-                    corr = corr_cached(DF_FULL, sel, 'spearman' if mth=='Spearman' else 'pearson')
+                    corr = corr_cached(DF_VIEW, sel, 'spearman' if mth=='Spearman' else 'pearson')
                 SS['last_corr'] = corr
                 if not corr.empty and HAS_PLOTLY:
                     figH = px.imshow(corr, color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title=f'Correlation heatmap ({mth})', aspect='auto')
@@ -1737,7 +1520,8 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-         st.info('Hãy **Load full data** để xem Data Quality .')
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+    st.stop()
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
@@ -1803,7 +1587,7 @@ with TAB3:
         else:
             dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bf_time_dt')
             gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bf_time_gran')
-            src_df = DF_FULL if (SS.get('df') is not None and True) else DF_FULL
+            src_df = DF_FULL if (SS.get('df') is not None and True) else DF_VIEW
             val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bf_time_val')
             res = benford_by_period(src_df, val_col, dtc, gran)
             if res.empty:
@@ -1849,7 +1633,8 @@ with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-         st.info('Hãy **Load full data** để xem Data Quality .')
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+    st.stop()
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1858,7 +1643,7 @@ with TAB4:
     navL, navR = st.columns([2,3])
     with navL:
         selected_col = st.selectbox('Chọn cột để test', ALL_COLS, key='t4_col')
-        s0 = DF_FULL[selected_col]
+        s0 = DF_VIEW[selected_col]
         dtype = ('Datetime' if (selected_col in DT_COLS or is_datetime_like(selected_col, s0)) else
                  'Numeric' if is_numeric_series(s0) else 'Categorical')
         st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
@@ -1878,27 +1663,21 @@ with TAB4:
         run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
         go = st.button('Chạy các test đã chọn', type='primary', key='t4_run_btn')
 
-                # --- T4: init kết quả & chạy test (FULL-only) ---
-        SS.setdefault('t4_results', {})           # luôn có key trong Session State
-        out = SS['t4_results']                    # lấy ra để dùng hiển thị nếu chưa bấm GO
-        
+        if 't4_results' not in SS: SS['t4_results']={}
         if go:
-            data_src = DF_FULL                    # FULL-only (không còn fallback/preview)
-            out = {}                              # reset kết quả cho lần chạy này
-            SS['t4_results'] = out
-
-    # --- Hiển thị kết quả ---
-    if not SS['t4_results']:
+            out={}
+            data_src = DF_FULL
+            out = SS.get('t4_results', {})
+    if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
     else:
+            # Rule Engine expander for this tab
         st.divider()
-        out = SS['t4_results']
-
     # --- Phân tích theo thời gian cho Tests ---
     if DT_COLS:
         tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
         gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='t4_time_gran')
-        data_src2 = DF_FULL if (SS.get('df') is not None and use_full) else DF_FULL
+        data_src2 = DF_FULL if (SS.get('df') is not None and use_full) else DF_VIEW
         if dtype == 'Numeric':
             with st.expander('Outlier (IQR) theo giai đoạn', expanded=False):
                 df_out = outlier_iqr_by_period(data_src2, selected_col, tcol, gran)
@@ -1948,12 +1727,13 @@ with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-         st.info('Hãy **Load full data** để xem Data Quality .')
+        st.info('⚠️ Vui lòng **Load Full Data** (Tab Ingest) để sử dụng tab này. Các phép test chỉ chạy trên FULL dataset.')
+    st.stop()
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
         use_full_reg = True
-        REG_DF = DF_FULL if SS.get('df') is not None else DF_FULL
+        REG_DF = DF_FULL
     # Optional: filter REG_DF by selected period
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Regression (M/Q/Y)', expanded=False):
@@ -2124,7 +1904,7 @@ with TAB5:
 with TAB6:
     st.subheader('🚩 Fraud Flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
-    FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
+    FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
     # Optional: filter FLAG_DF by selected period before scanning
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Fraud Flags (M/Q/Y)', expanded=False):
@@ -2136,7 +1916,7 @@ with TAB6:
             if pick != '(All)':
                 FLAG_DF = FLAG_DF.loc[per_ser == pick]
                 st.caption(f'Đang quét Fraud Flags trong giai đoạn: {pick} — {len(FLAG_DF):,} dòng')
-            if FLAG_DF is DF_FULL and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
+            if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
@@ -2295,12 +2075,12 @@ with TAB7:
                                  'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
             dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
-        rep_df, n_dupes = _quality_report(DF_FULL)
+        rep_df, n_dupes = _quality_report(DF_VIEW)
         signals=[]
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_FULL[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
