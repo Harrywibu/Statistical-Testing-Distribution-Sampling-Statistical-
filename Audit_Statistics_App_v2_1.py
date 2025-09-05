@@ -802,7 +802,7 @@ with TAB0:
                     if HAS_PLOTLY:
                         fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
                         st_plotly(fig)
-                            st.error(f'Lỗi Data Quality: {e}')
+            st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     st.subheader('📈 Distribution & Shape')
