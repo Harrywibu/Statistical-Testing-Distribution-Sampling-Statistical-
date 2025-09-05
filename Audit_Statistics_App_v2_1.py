@@ -117,7 +117,6 @@ SS = st.session_state
 # ——— Preview banner helper ———
 def preview_banner():
     if SS.get('df') is None:
-        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
         
 DEFAULTS = {
     'bins': 50,
@@ -696,11 +695,10 @@ if DF_FULL is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); st.stop()
 
 ALL_COLS = list(DF_FULL.columns)
-DT_COLS  = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
 NUM_COLS = DF_FULL.select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = DF_FULL.select_dtypes(include=['object','category','bool']).columns.tolist()
 VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-
 # — Sales risk context on FULL dataset only
 try:
     _sales = compute_sales_flags(DF_FULL)
@@ -1330,7 +1328,7 @@ with TAB1:
                         q1,q3 = s.quantile([0.25,0.75]); iqr=q3-q1
                         outliers = s[(s<q1-1.5*iqr) | (s>q3+1.5*iqr)]
                         st.write(f'Số lượng outlier: {len(outliers)}'); st_df(outliers.to_frame(num_col).head(200), use_container_width=True)
-                    if run_b1 and FULL_READY:
+                    if run_b1:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1341,7 +1339,7 @@ with TAB1:
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
                                 st_df(var, use_container_width=True, height=220)
-                    if run_b2 and FULL_READY:
+                    if run_b2:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
                         else:
@@ -1364,7 +1362,7 @@ with TAB1:
                                 fig = px.scatter(sub, x=num_col, y=other_num, trendline=trend, title=f'{num_col} vs {other_num} ({method})')
                                 st_plotly(fig)
                             st.json({'method': method, 'r': float(r), 'p': float(pv)})
-                    if FULL_READY and grp_for_quick and grp_for_quick!='(None)':
+                    if grp_for_quick and grp_for_quick!='(None)':
                         sub = DF_FULL[[num_col, grp_for_quick]].dropna()
                         if sub[grp_for_quick].nunique()<2:
                             st.warning('Cần ≥2 nhóm để ANOVA.')
@@ -1442,7 +1440,6 @@ with TAB1:
 with TAB2:
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
-        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
     # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
@@ -1691,11 +1688,10 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
-        data_for_benford = DF_FULL if SS.get('df') is not None else DF_FULL
+        data_for_benford = DF_FULL
         c1,c2 = st.columns(2)
         with c1:
             amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
@@ -1803,7 +1799,6 @@ with TAB4:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -1896,7 +1891,6 @@ with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
