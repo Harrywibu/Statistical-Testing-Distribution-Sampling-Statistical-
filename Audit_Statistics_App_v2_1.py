@@ -116,7 +116,8 @@ SS = st.session_state
 
 # ——— Preview banner helper ———
 def preview_banner():
-if SS.get('df') is None:
+    if SS.get('df') is None:
+        st.info('Đang dùng PREVIEW — một số phép tính có thể khác khi dùng FULL data.')
         
 DEFAULTS = {
     'bins': 50,
