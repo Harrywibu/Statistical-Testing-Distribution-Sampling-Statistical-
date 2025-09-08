@@ -284,6 +284,22 @@ except Exception:
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
 
+# ---- Safe DataFrame accessor ----
+def _get_df_base():
+    try:
+        return df
+    except NameError:
+        pass
+    _d = SS.get('df')
+    if _d is not None:
+        return _d
+    try:
+        return DF_FULL
+    except NameError:
+        import pandas as pd
+        return pd.DataFrame()
+
+
 
 # ——— Preview banner helper ———
         
@@ -1379,15 +1395,21 @@ with TAB1:
 
     # Data type mapping & sorting & classification
     with st.expander('⚙️ Data types & phân loại ', expanded=False):
-        # Suggest types
         import pandas as pd
-        _num_cols = list(df.select_dtypes(include=['number']).columns)
-        _dt_cols  = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
-        _txt_cols = [c for c in df.columns if (c not in _num_cols+_dt_cols)]
+        # Safe base df
+        try:
+            _df_base = df
+        except NameError:
+            _df_base = SS.get('df') if SS.get('df') is not None else (DF_FULL.copy() if 'DF_FULL' in globals() else pd.DataFrame())
+        df = _df_base
+        # Suggest types
+        _num_cols = list(_df_base.select_dtypes(include=['number']).columns) if hasattr(_df_base, 'select_dtypes') else []
+        _dt_cols  = [c for c in list(_df_base.columns) if pd.api.types.is_datetime64_any_dtype(_df_base[c])] if hasattr(_df_base, 'columns') else []
+        _txt_cols = [c for c in list(_df_base.columns) if (c not in _num_cols+_dt_cols)] if hasattr(_df_base, 'columns') else []
         cA, cB, cC = st.columns(3)
-        v28_dt = cA.multiselect('Datetime columns', df.columns.tolist(), default=_dt_cols, key='v28_dt_cols')
-        v28_num = cB.multiselect('Numeric columns', df.columns.tolist(), default=_num_cols, key='v28_num_cols')
-        v28_txt = cC.multiselect('Text columns', df.columns.tolist(), default=_txt_cols, key='v28_txt_cols')
+        v28_dt = cA.multiselect('Datetime columns', list(_df_base.columns) if hasattr(_df_base, 'columns') else [], default=_dt_cols, key='v28_dt_cols')
+        v28_num = cB.multiselect('Numeric columns', list(_df_base.columns) if hasattr(_df_base, 'columns') else [], default=_num_cols, key='v28_num_cols')
+        v28_txt = cC.multiselect('Text columns', list(_df_base.columns) if hasattr(_df_base, 'columns') else [], default=_txt_cols, key='v28_txt_cols')
         # Cast (non-destructive)
         _df_cast = df.copy()
         for _c in v28_dt: 
@@ -1399,7 +1421,7 @@ with TAB1:
         df = _df_cast  # use casted for following charts
         # Sorting
         cS1, cS2 = st.columns([3,1])
-        sort_col = cS1.selectbox('Sắp xếp theo cột', ['<none>'] + df.columns.tolist(), index=0, key='v28_sort_col')
+        sort_col = cS1.selectbox('Sắp xếp theo cột', ['<none>'] + (list(_df_base.columns) if hasattr(_df_base, 'columns') else []), index=0, key='v28_sort_col')
         sort_asc = cS2.toggle('Tăng dần', value=True, key='v28_sort_asc')
         if sort_col and sort_col != '<none>':
             try:
@@ -1408,7 +1430,7 @@ with TAB1:
                 st.caption(f'Không thể sắp xếp: {e}')
         # Classification columns
         st.markdown('**Thêm cột phân loại** (ví dụ: Region/Chi nhánh/Sales vs Transfer)')
-        v28_class_cols = st.multiselect('Chọn các cột phân loại có sẵn', [c for c in df.columns if c in (SS.get('col_whitelist') or df.columns)], key='v28_class_cols')
+        v28_class_cols = st.multiselect('Chọn các cột phân loại có sẵn', [c for c in (list(_df_base.columns) if hasattr(_df_base, 'columns') else []) if c in (SS.get('col_whitelist') or (list(_df_base.columns) if hasattr(_df_base, 'columns') else []))], key='v28_class_cols')
         # Optional: quick aggregation pivot
         if v28_class_cols:
             try:
