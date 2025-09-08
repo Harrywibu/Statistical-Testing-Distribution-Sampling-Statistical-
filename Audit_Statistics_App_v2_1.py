@@ -852,24 +852,19 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
                 SS[rk] = None
 
         st.rerun()
-with st.sidebar.expander('1) Display & Performance', expanded=True):
+with st.sidebar.expander('1) Display & Performance', expanded=False):
     SS.setdefault('preserve_results', True)
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
-                                       help='Nếu bật, các kết quả/khung dữ liệu tạm sẽ được giữ trong Session State để không phải chạy lại khi chuyển tab.')
-    
-    # Risk/Test thresholds (can be referenced across tabs)
+                                       help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
     rp = SS['risk_params']
-    rp['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(rp.get('alpha', 0.05)), 0.001, help='Mặc định 0.05')
-    rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1, help='Z-score cao → bất thường')
-    rp['zero_ratio_thr'] = st.slider('Ngưỡng tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
-    rp['benford_dev_thr'] = st.slider('Ngưỡng lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5, help='Phần trăm điểm lệch so với kỳ vọng Benford')
-    st.caption('Gợi ý tham khảo chuẩn nghề (ví dụ Cassarino – Data Analytics for Internal Auditors), điều chỉnh tùy rủi ro.')
-    
-    st.caption('Gợi ý: Bins ảnh hưởng độ mịn histogram; Log scale phù hợp khi phân phối lệch phải. KDE chỉ bật khi n không quá lớn để giữ hiệu năng. ')
-    SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
+    rp['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(rp.get('alpha', 0.05)), 0.001)
+    rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1)
+    rp['zero_ratio_thr'] = st.slider('Tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
+    rp['benford_dev_thr'] = st.slider('Lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5)
+    SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins', 50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
-    SS['kde_threshold'] = st.number_input('KDE max n', 1_000, 300_000, SS.get('kde_threshold',150_000), 1_000)
+    SS['kde_threshold'] = st.number_input('KDE max n', 1000, 300000, SS.get('kde_threshold', 150000), 1000)
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
     SS['risk_diff_threshold'] = st.slider('Benford diff% threshold', 0.01, 0.10, SS.get('risk_diff_threshold',0.05), 0.01)
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
