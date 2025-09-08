@@ -227,7 +227,7 @@ except Exception:
 
 
 
-def st_df(data=None, **kwargs):
+def st.dataframe(data=None, **kwargs):
     if _df_supports_width:
         if kwargs.pop('use_container_width', None) is True:
             kwargs['width'] = 'stretch'
@@ -776,7 +776,7 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
 
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
-    st.caption('Gợi ý: Bins ảnh hưởng độ mịn histogram; Log scale phù hợp khi phân phối lệch phải. KDE chỉ bật khi n không quá lớn để giữ hiệu năng. (v2.8)')
+    st.caption('Gợi ý: Bins ảnh hưởng độ mịn histogram; Log scale phù hợp khi phân phối lệch phải. KDE chỉ bật khi n không quá lớn để giữ hiệu năng. ')
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
     SS['kde_threshold'] = st.number_input('KDE max n', 1_000, 300_000, SS.get('kde_threshold',150_000), 1_000)
@@ -792,7 +792,7 @@ with st.sidebar.expander('3) Cache', expanded=False):
         st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
 
-# --------------------------- v2.8: Template validator ---------------------------
+# --------------------------- : Template validator ---------------------------
 def v28_validate_headers(df_in):
     try:
         import pandas as _pd, numpy as _np
@@ -818,7 +818,7 @@ def v28_validate_headers(df_in):
 
 # ---------------------------------- Main Gate ---------------------------------
 
-# --------------------------- v2.8: Template & Validation ---------------------------
+# --------------------------- : Template & Validation ---------------------------
 with st.sidebar.expander('4) Template & Validation', expanded=False):
     st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
     # default template columns inferred from preview/full data if available
@@ -867,7 +867,7 @@ if fname.lower().endswith('.csv'):
         except Exception as e:
             st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
     if SS['df_preview'] is not None:
-        st_df(SS['df_preview'], use_container_width=True, height=260)
+        st.dataframe(SS['df_preview'], use_container_width=True, height=260)
         headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
         SS['col_whitelist'] = selected if selected else headers
@@ -881,7 +881,7 @@ if fname.lower().endswith('.csv'):
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
-            # v2.8: optional header validation
+            # : optional header validation
             if SS.get('v28_validate_on_load'):
                 _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
@@ -907,7 +907,7 @@ else:
             SS['df_preview']=prev; SS['last_good_preview']=prev  # chỉ để xem định dạng
         except Exception as e:
             st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
-        st_df(prev, use_container_width=True, height=260)
+        st.dataframe(prev, use_container_width=True, height=260)
         headers=list(prev.columns)
         st.caption(f'Columns: {len(headers)} • SHA12={sha}')
         SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
@@ -923,7 +923,7 @@ else:
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
-            # v2.8: optional header validation
+            # : optional header validation
             if SS.get('v28_validate_on_load'):
                 _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
@@ -1359,7 +1359,7 @@ with TAB0:
             return dq.sort_values(['type','column']).reset_index(drop=True)
         try:
             dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_FULL)
-            st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
+            st.dataframe(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             if DT_COLS:
                 with st.expander('Thống kê số lượng theo thời gian (M/Q/Y)', expanded=False):
@@ -1368,7 +1368,7 @@ with TAB0:
                     src = SS.get('df') if SS.get('df') is not None else DF_FULL
                     per = _derive_period(src, dtc, gran)
                     cnt = per.value_counts().sort_index().rename('count').reset_index().rename(columns={'index':'period'})
-                    st_df(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
+                    st.dataframe(cnt, use_container_width=True, height=min(300, 60+24*min(len(cnt),10)))
                     if HAS_PLOTLY:
                         fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
                         st_plotly(fig)
@@ -1378,9 +1378,10 @@ with TAB1:
 
     st.subheader('📊 Overview — Sales activity')
 
-    # v2.8 — Data type mapping & sorting & classification
-    with st.expander('⚙️ Data types & phân loại (v2.8)', expanded=False):
+    # Data type mapping & sorting & classification
+    with st.expander('⚙️ Data types & phân loại ', expanded=False):
         # Suggest types
+        import pandas as pd
         _num_cols = list(df.select_dtypes(include=['number']).columns)
         _dt_cols  = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
         _txt_cols = [c for c in df.columns if (c not in _num_cols+_dt_cols)]
@@ -1417,7 +1418,7 @@ with TAB1:
                     _pv = df.groupby(v28_class_cols)[agg_cols[0]].sum().reset_index().sort_values(agg_cols[0], ascending=False).head(200)
                 else:
                     _pv = df.groupby(v28_class_cols).size().reset_index(name='count').sort_values('count', ascending=False).head(200)
-                st_df(_pv, use_container_width=True, height=220)
+                st.dataframe(_pv, use_container_width=True, height=220)
             except Exception as e:
                 st.caption(f'Không thể tổng hợp phân loại: {e}')
 
@@ -1502,7 +1503,7 @@ with TAB1:
     # Type split (sales/transfer/discount...)
     if col_type and col_amt:
         st.write('**Phân tách theo loại giao dịch**')
-        # v2.8: robust groupby to avoid ValueError on bad types/NaN
+        # : robust groupby to avoid ValueError on bad types/NaN
         _tmp = df.copy()
         _tmp['__type'] = _tmp[col_type].astype('object')
         _tmp['__amt'] = pd.to_numeric(_tmp[col_amt], errors='coerce')
@@ -1572,7 +1573,7 @@ with TAB1:
                     'tail>p99': float((s>p99).mean()) if not np.isnan(p99) else None,
                     'normality_p': (round(p_norm,4) if not np.isnan(p_norm) else None),
                 }])
-                st_df(stat_df, use_container_width=True, height=220)
+                st.dataframe(stat_df, use_container_width=True, height=220)
                 # expose for Rule Engine
                 SS['last_numeric_profile'] = {
                     'column': num_col, 'zero_ratio': zero_ratio,
@@ -1637,7 +1638,7 @@ with TAB1:
                     gof, best, suggest = gof_models(s)
                     SS['last_gof']={'best':best,'suggest':suggest}
                     with st.expander('📘 GoF (Normal/Lognormal/Gamma) — AIC & Transform', expanded=False):
-                        st_df(gof, use_container_width=True, height=150)
+                        st.dataframe(gof, use_container_width=True, height=150)
                         st.info(f'**Best fit:** {best}. **Suggested transform:** {suggest}')
                 except Exception:
                     pass
@@ -1663,7 +1664,7 @@ with TAB1:
                     if run_outlier:
                         q1,q3 = s.quantile([0.25,0.75]); iqr=q3-q1
                         outliers = s[(s<q1-1.5*iqr) | (s>q3+1.5*iqr)]
-                        st.write(f'Số lượng outlier: {len(outliers)}'); st_df(outliers.to_frame(num_col).head(200), use_container_width=True)
+                        st.write(f'Số lượng outlier: {len(outliers)}'); st.dataframe(outliers.to_frame(num_col).head(200), use_container_width=True)
                     if run_b1:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
@@ -1674,7 +1675,7 @@ with TAB1:
                                 fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
+                                st.dataframe(var, use_container_width=True, height=220)
                     if run_b2:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
@@ -1685,7 +1686,7 @@ with TAB1:
                                 fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
+                                st.dataframe(var, use_container_width=True, height=220)
                     if run_corr and other_num in DF_FULL.columns:
                         sub = DF_FULL[[num_col, other_num]].dropna()
                         if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
@@ -1721,7 +1722,7 @@ with TAB1:
                     if df_r.empty:
                         st.info('Không có rule nào khớp.')
                     else:
-                        st_df(df_r, use_container_width=True, height=240)
+                        st.dataframe(df_r, use_container_width=True, height=240)
 
     
     with st.expander('📌 Ghi chú chi tiết (Numeric plots)', expanded=False):
@@ -1740,7 +1741,7 @@ with TAB1:
             cat_col = st.selectbox('Categorical column', CAT_COLS, key='t1_cat')
             df_freq = cat_freq(DF_FULL[cat_col])
             topn = st.number_input('Top‑N (Pareto)', 3, 50, 15, step=1)
-            st_df(df_freq.head(int(topn)), use_container_width=True, height=240)
+            st.dataframe(df_freq.head(int(topn)), use_container_width=True, height=240)
             if HAS_PLOTLY and not df_freq.empty:
                 d = df_freq.head(int(topn)).copy(); d['cum_share']=d['count'].cumsum()/d['count'].sum()
                 figp = make_subplots(specs=[[{"secondary_y": True}]])
@@ -1767,7 +1768,7 @@ with TAB1:
                 'span_days': (int((t_clean.max()-t_clean.min()).days) if len(t_clean)>1 else None),
                 'n_unique_dates': int(t_clean.dt.date.nunique()) if not t_clean.empty else 0
             }])
-            st_df(meta, use_container_width=True, height=120)
+            st.dataframe(meta, use_container_width=True, height=120)
             if HAS_PLOTLY and not t_clean.empty:
                 d1,d2 = st.columns(2)
                 with d1:
@@ -1896,7 +1897,7 @@ with TAB2:
     cand_y = [c for c in pool_y if c != var_x] or pool_y
     var_y = c2.selectbox('Variable Y', cand_y, index=(cand_y.index(SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt'))) if (SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt')) in cand_y) else 0), key='t2_y')
 
-    # v2.8: safer selection
+    # : safer selection
     try:
         sX = DF_FULL[var_x]
         sY = DF_FULL[var_y]
@@ -2052,7 +2053,7 @@ with TAB2:
         if df_corr.empty:
             st.info('Không có rule nào khớp cho tương quan/xu hướng.')
         else:
-            st_df(df_corr, use_container_width=True, height=200)
+            st.dataframe(df_corr, use_container_width=True, height=200)
 with TAB3:
     require_full_data()
     require_full_data()
@@ -2155,7 +2156,7 @@ with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expand
                     src_tag = 'FULL'
                     fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
                     st_plotly(fig1)
-                st_df(var, use_container_width=True, height=220)
+                st.dataframe(var, use_container_width=True, height=220)
                 thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
                 msg = '🟢 Green'
                 if maxdiff >= 2*thr: msg='🚨 Red'
@@ -2173,7 +2174,7 @@ with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expand
                     src_tag = 'FULL'
                     fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
                     st_plotly(fig2)
-                st_df(var2, use_container_width=True, height=220)
+                st.dataframe(var2, use_container_width=True, height=220)
                 thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
                 msg2 = '🟢 Green'
                 if maxdiff2 >= 2*thr: msg2='🚨 Red'
@@ -2199,7 +2200,7 @@ with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expand
                 st.warning('Không đủ dữ liệu hợp lệ để tính Benford theo thời gian.')
             else:
                 st.caption(f"Số giai đoạn: {len(res)} • Hiển thị MAD, p-value, maxdiff")
-                st_df(res, use_container_width=True, height=min(360, 60+24*min(len(res),12)))
+                st.dataframe(res, use_container_width=True, height=min(360, 60+24*min(len(res),12)))
                 if HAS_PLOTLY:
                     try:
                         fig = px.bar(res, x='period', y='MAD', title='Benford MAD theo giai đoạn', labels={'MAD':'MAD'})
@@ -2344,7 +2345,7 @@ with TAB4:
                         if df_out.empty:
                             st.info('Không đủ dữ liệu.')
                         else:
-                            st_df(df_out, use_container_width=True, height=min(360, 60+24*min(len(df_out),12)))
+                            st.dataframe(df_out, use_container_width=True, height=min(360, 60+24*min(len(df_out),12)))
                             if HAS_PLOTLY:
                                 fig = px.bar(df_out, x='period', y='outlier_share', title='Outlier share theo giai đoạn')
                                 st_plotly(fig)
@@ -2356,7 +2357,7 @@ with TAB4:
                             if df_h.empty:
                                 st.info('Không đủ dữ liệu.')
                             else:
-                                st_df(df_h, use_container_width=True, height=min(320, 60+24*min(len(df_h),10)))
+                                st.dataframe(df_h, use_container_width=True, height=min(320, 60+24*min(len(df_h),10)))
                                 if HAS_PLOTLY:
                                     figh = px.bar(df_h, x='period', y='HHI', title='HHI theo giai đoạn')
                                     st_plotly(figh)
@@ -2366,7 +2367,7 @@ with TAB4:
                             if df_c.empty:
                                 st.info('Không đủ dữ liệu.')
                             else:
-                                st_df(df_c, use_container_width=True, height=min(320, 60+24*min(len(df_c),10)))
+                                st.dataframe(df_c, use_container_width=True, height=min(320, 60+24*min(len(df_c),10)))
                                 if HAS_PLOTLY:
                                     try:
                                         figc = px.bar(df_c, x='period', y='p', title='p-value theo giai đoạn (CGOF)'); st_plotly(figc)
@@ -2379,7 +2380,7 @@ with TAB4:
                 ctx = build_rule_context()
                 df_r = evaluate_rules(ctx, scope='tests')
                 if not df_r.empty:
-                    st_df(df_r, use_container_width=True)
+                    st.dataframe(df_r, use_container_width=True)
                 else:
                     st.info('Không có rule nào khớp.')
         # ------------------------------ TAB 5: Regression -----------------------------
@@ -2505,7 +2506,7 @@ with TAB5:
                             SS['last_linear']=meta_cols
                             st.json(meta_cols)
                             coef_df = pd.DataFrame({'feature': X_lin, 'coef': mdl.coef_}).sort_values('coef', key=lambda s: s.abs(), ascending=False)
-                            st_df(coef_df, use_container_width=True, height=240)
+                            st.dataframe(coef_df, use_container_width=True, height=240)
                             if show_diag and HAS_PLOTLY:
                                 resid = yte - yhat
                                 g1,g2 = st.columns(2)
@@ -2603,7 +2604,7 @@ with TAB5:
     with st.expander('🧠 Rule Engine (Regression) — Insights'):
         ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
         if not df_r.empty:
-            st_df(df_r, use_container_width=True)
+            st.dataframe(df_r, use_container_width=True)
         else:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
@@ -2761,12 +2762,12 @@ with TAB6:
         for title, obj in visuals:
             st.markdown(f'**{title}**')
             if isinstance(obj, pd.DataFrame):
-                st_df(obj, use_container_width=True, height=min(320, 40+24*min(len(obj),10)))
+                st.dataframe(obj, use_container_width=True, height=min(320, 40+24*min(len(obj),10)))
 
     with st.expander('🧠 Rule Engine (Flags) — Insights'):
         ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='flags')
         if not df_r.empty:
-            st_df(df_r, use_container_width=True)
+            st.dataframe(df_r, use_container_width=True)
         else:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
@@ -2797,14 +2798,14 @@ with TAB7:
                 signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
-        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
+        st.dataframe(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
 
         with st.expander('🧠 Rule Engine — Insights (All tests)'):
             ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
             if df_r.empty:
                 st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
             else:
-                st_df(df_r, use_container_width=True, height=320)
+                st.dataframe(df_r, use_container_width=True, height=320)
                 st.markdown('**Recommendations:**')
                 for _,row in df_r.iterrows():
                     st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
@@ -2826,7 +2827,7 @@ with TAB7:
                     pd.DataFrame(columns=SS.get('v28_template_cols') or list(DF_FULL.columns)).to_excel(writer, index=False, sheet_name='TEMPLATE')
                     # INFO sheet
                     info_df = pd.DataFrame([
-                        {'key':'generated_by','value':'Audit Statistics v2.8'},
+                        {'key':'generated_by','value':'Audit Statistics '},
                         {'key':'rows','value':len(DF_FULL)},
                         {'key':'cols','value':len(DF_FULL.columns)},
                         {'key':'template_cols','value': '|'.join(SS.get('v28_template_cols') or [])}
