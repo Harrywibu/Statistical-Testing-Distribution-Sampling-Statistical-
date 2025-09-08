@@ -7,33 +7,59 @@ import pandas as pd
 import streamlit as st
 
 # --- Safe helper: robust_suggest_cols_by_goal ---
-def robust_suggest_cols_by_goal(df, goal):
+def robust_suggest_cols_by_goal(df, goal: str):
     import pandas as pd
     try:
         if df is None:
-            return []
+            return {'num': None, 'cat': None, 'dt': None}
         if isinstance(df, pd.Series):
             df = df.to_frame()
         elif not isinstance(df, pd.DataFrame):
-            # Try convert common table-like
-            try:
-                df = pd.DataFrame(df)
-            except Exception:
-                return []
+            df = pd.DataFrame(df)
+
         cols = list(df.columns)
-        if not cols:
-            return []
-        # very light heuristic based on goal string
-        g = (goal or '').lower()
-        if 'date' in g or 'time' in g:
-            pref = [c for c in cols if 'date' in c.lower() or 'time' in c.lower()]
-            return pref or cols[:5]
-        if 'amount' in g or 'value' in g or 'revenue' in g or 'price' in g:
-            pref = [c for c in cols if any(k in c.lower() for k in ['amt','amount','value','revenue','price','qty','quantity'])]
-            return pref or cols[:5]
-        return cols[:5]
+        num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+        dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
+        cat_cols = [c for c in cols if (c not in num_cols) and (c not in dt_cols)]
+
+        # patterns
+        def _match_any(name, patterns):
+            return any(p in str(name).lower() for p in patterns)
+
+        pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net']
+        pat_discount = ['discount','giam','disc','rebate','promo']
+        pat_qty      = ['qty','quantity','so_luong','soluong','units','unit','volume']
+        pat_customer = ['customer','cust','khach','client','buyer','account','party']
+        pat_product  = ['product','sku','item','hang','ma_hang','mat_hang','goods','code','product_id']
+        pat_time     = ['date','time','ngay','thoi_gian','period','posting','invoice_date','doc_date','posting_date']
+
+        sug_num = None; sug_cat = None; sug_dt = None
+
+        if goal in ('Doanh thu','Giảm giá'):
+            for c in num_cols:
+                if _match_any(c, pat_amount + (pat_discount if goal=='Giảm giá' else [])):
+                    sug_num = c; break
+        if goal == 'Số lượng':
+            for c in num_cols:
+                if _match_any(c, pat_qty):
+                    sug_num = c; break
+        if goal in ('Khách hàng','Sản phẩm'):
+            base = pat_customer if goal=='Khách hàng' else pat_product
+            for c in cat_cols:
+                if _match_any(c, base):
+                    sug_cat = c; break
+        if goal == 'Thời điểm':
+            for c in dt_cols:
+                if _match_any(c, pat_time):
+                    sug_dt = c; break
+
+        if sug_num is None and num_cols: sug_num = num_cols[0]
+        if sug_cat is None and cat_cols: sug_cat = cat_cols[0]
+        if sug_dt  is None and dt_cols:  sug_dt  = dt_cols[0]
+
+        return {'num': sug_num, 'cat': sug_cat, 'dt': sug_dt}
     except Exception:
-        return []
+        return {'num': None, 'cat': None, 'dt': None}
 
 # ---- Safe boolean indexer to avoid IndexingError ----
 def _safe_loc_bool(df, mask):
@@ -1278,7 +1304,7 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
 
 if SS['df'] is None and SS['df_preview'] is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
-    pass
+    st.stop
 
 # Source & typing
 DF_FULL = SS.get('df')
