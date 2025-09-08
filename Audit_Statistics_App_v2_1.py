@@ -1200,8 +1200,12 @@ if fname.lower().endswith('.csv'):
 
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
-        # If this returns ['<csv>'], it means the uploaded file is CSV mislabeled as XLSX.
-    if sheets == ['<csv>']:
+    # Detect sheets safely. This covers CSV disguised as XLSX.
+    try:
+        sheets = list_sheets_xlsx(fb, fname)
+    except Exception:
+        sheets = []
+    if sheets and sheets == ['<csv>']:
         st.info('Nhận diện là CSV. Vui lòng xử lý theo luồng CSV ở trên.');
     with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
         c1,c2,c3 = st.columns([2,1,1])
