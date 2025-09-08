@@ -776,6 +776,7 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
 
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
+    st.caption('Gợi ý: Bins ảnh hưởng độ mịn histogram; Log scale phù hợp khi phân phối lệch phải. KDE chỉ bật khi n không quá lớn để giữ hiệu năng. (v2.8)')
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
     SS['kde_threshold'] = st.number_input('KDE max n', 1_000, 300_000, SS.get('kde_threshold',150_000), 1_000)
@@ -790,7 +791,61 @@ with st.sidebar.expander('3) Cache', expanded=False):
     if st.button('🧹 Clear cache'):
         st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
+
+# --------------------------- v2.8: Template validator ---------------------------
+def v28_validate_headers(df_in):
+    try:
+        import pandas as _pd, numpy as _np
+        tpl = SS.get('v28_template_cols') or []
+        if not tpl or not isinstance(tpl, (list, tuple)):
+            return True, 'Không có TEMPLATE; bỏ qua kiểm tra.'
+        missing = [c for c in tpl if c not in df_in.columns]
+        extra   = [c for c in df_in.columns if c not in tpl]
+        if missing:
+            return False, f"Thiếu cột trong dữ liệu: {missing}"
+        # types (optional)
+        if SS.get('v28_strict_types'):
+            # heuristic: detect basic types from sample
+            def _infer(s):
+                import pandas as _pd
+                if _pd.api.types.is_datetime64_any_dtype(s): return 'date'
+                if _pd.api.types.is_numeric_dtype(s): return 'number'
+                return 'text'
+            inferred = {c: _infer(df_in[c]) for c in df_in.columns}
+        return True, f"OK. Dữ liệu có {len(df_in):,} dòng, {len(df_in.columns)} cột."
+    except Exception as e:
+        return False, f"Lỗi kiểm tra TEMPLATE: {e}"
+
 # ---------------------------------- Main Gate ---------------------------------
+
+# --------------------------- v2.8: Template & Validation ---------------------------
+with st.sidebar.expander('4) Template & Validation', expanded=False):
+    st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
+    # default template columns inferred from preview/full data if available
+    _template_cols_default = (list(SS.get('df_preview').columns) if SS.get('df_preview') is not None else (list(SS.get('df').columns) if SS.get('df') is not None else [
+        'Posting Date','Document No','Customer','Product','Quantity','Weight','Net Sales revenue','Sales Discount','Type','Region','Branch','Salesperson'
+    ]))
+    tpl_text_default = ','.join(SS.get('v28_template_cols', _template_cols_default))
+    tpl_text = st.text_area('Header TEMPLATE (CSV, cho phép sửa)', tpl_text_default, height=60)
+    SS['v28_template_cols'] = [c.strip() for c in tpl_text.split(',') if c.strip()]
+    # allow saving as excel template
+    from io import BytesIO
+    import pandas as _pd
+    if st.button('📄 Tạo & tải TEMPLATE.xlsx', key='v28_btn_tpl'):
+        _bio = BytesIO()
+        with _pd.ExcelWriter(_bio, engine='openpyxl') as w:
+            _pd.DataFrame(columns=SS['v28_template_cols']).to_excel(w, index=False, sheet_name='TEMPLATE')
+            # nhúng hướng dẫn
+            _guide = _pd.DataFrame({
+                'Field': SS['v28_template_cols'],
+                'Type (gợi ý)': ['date','text','text','text','number','number','number','number','text','text','text','text'][:len(SS['v28_template_cols'])]
+            })
+            _guide.to_excel(w, index=False, sheet_name='GUIDE')
+        st.download_button('⬇️ Download TEMPLATE.xlsx', data=_bio.getvalue(), file_name='TEMPLATE.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    st.divider()
+    SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False), help='Nếu bật, khi Load full data, hệ thống sẽ kiểm tra cột có khớp TEMPLATE.')
+    SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
+
 st.title('📊 Audit Statistics')
 if SS['file_bytes'] is None:
     st.info('Upload a file để bắt đầu.'); st.stop()
@@ -826,6 +881,13 @@ if fname.lower().endswith('.csv'):
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
+            # v2.8: optional header validation
+            if SS.get('v28_validate_on_load'):
+                _ok, _msg = v28_validate_headers(SS['df'])
+                st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
+                if not _ok:
+                    st.stop()
+
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
     sheets = list_sheets_xlsx(fb)
@@ -861,6 +923,13 @@ else:
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
+            # v2.8: optional header validation
+            if SS.get('v28_validate_on_load'):
+                _ok, _msg = v28_validate_headers(SS['df'])
+                st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
+                if not _ok:
+                    st.stop()
+
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 
 if SS['df'] is None and SS['df_preview'] is None:
@@ -1308,6 +1377,50 @@ with TAB0:
 with TAB1:
 
     st.subheader('📊 Overview — Sales activity')
+
+    # v2.8 — Data type mapping & sorting & classification
+    with st.expander('⚙️ Data types & phân loại (v2.8)', expanded=False):
+        # Suggest types
+        _num_cols = list(df.select_dtypes(include=['number']).columns)
+        _dt_cols  = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
+        _txt_cols = [c for c in df.columns if (c not in _num_cols+_dt_cols)]
+        cA, cB, cC = st.columns(3)
+        v28_dt = cA.multiselect('Datetime columns', df.columns.tolist(), default=_dt_cols, key='v28_dt_cols')
+        v28_num = cB.multiselect('Numeric columns', df.columns.tolist(), default=_num_cols, key='v28_num_cols')
+        v28_txt = cC.multiselect('Text columns', df.columns.tolist(), default=_txt_cols, key='v28_txt_cols')
+        # Cast (non-destructive)
+        _df_cast = df.copy()
+        for _c in v28_dt: 
+            try: _df_cast[_c] = pd.to_datetime(_df_cast[_c], errors='coerce', dayfirst=True)
+            except Exception: pass
+        for _c in v28_num:
+            try: _df_cast[_c] = pd.to_numeric(_df_cast[_c], errors='coerce')
+            except Exception: pass
+        df = _df_cast  # use casted for following charts
+        # Sorting
+        cS1, cS2 = st.columns([3,1])
+        sort_col = cS1.selectbox('Sắp xếp theo cột', ['<none>'] + df.columns.tolist(), index=0, key='v28_sort_col')
+        sort_asc = cS2.toggle('Tăng dần', value=True, key='v28_sort_asc')
+        if sort_col and sort_col != '<none>':
+            try:
+                df = df.sort_values(sort_col, ascending=sort_asc, kind='mergesort')
+            except Exception as e:
+                st.caption(f'Không thể sắp xếp: {e}')
+        # Classification columns
+        st.markdown('**Thêm cột phân loại** (ví dụ: Region/Chi nhánh/Sales vs Transfer)')
+        v28_class_cols = st.multiselect('Chọn các cột phân loại có sẵn', [c for c in df.columns if c in (SS.get('col_whitelist') or df.columns)], key='v28_class_cols')
+        # Optional: quick aggregation pivot
+        if v28_class_cols:
+            try:
+                agg_cols = [col_amt] if 'col_amt' in locals() and col_amt else []
+                if agg_cols:
+                    _pv = df.groupby(v28_class_cols)[agg_cols[0]].sum().reset_index().sort_values(agg_cols[0], ascending=False).head(200)
+                else:
+                    _pv = df.groupby(v28_class_cols).size().reset_index(name='count').sort_values('count', ascending=False).head(200)
+                st_df(_pv, use_container_width=True, height=220)
+            except Exception as e:
+                st.caption(f'Không thể tổng hợp phân loại: {e}')
+
     df = DF_FULL.copy()
     # Heuristic column mapping
     cols = df.columns.str.lower()
@@ -1389,7 +1502,16 @@ with TAB1:
     # Type split (sales/transfer/discount...)
     if col_type and col_amt:
         st.write('**Phân tách theo loại giao dịch**')
-        tdf = df.groupby(col_type)[col_amt].sum().sort_values(ascending=False).reset_index()
+        # v2.8: robust groupby to avoid ValueError on bad types/NaN
+        _tmp = df.copy()
+        _tmp['__type'] = _tmp[col_type].astype('object')
+        _tmp['__amt'] = pd.to_numeric(_tmp[col_amt], errors='coerce')
+        _tmp = _tmp.dropna(subset=['__type','__amt'])
+        try:
+            tdf = _tmp.groupby('__type', dropna=False)['__amt'].sum().sort_values(ascending=False).reset_index().rename(columns={'__type': col_type, '__amt': col_amt})
+        except Exception as e:
+            st.warning(f'Không thể nhóm theo {col_type}: {e}')
+            tdf = pd.DataFrame({col_type: [], col_amt: []})
         if HAS_PLOTLY: st_plotly(px.bar(tdf, x=col_type, y=col_amt))
         st.dataframe(tdf, use_container_width=True)
 
@@ -1774,8 +1896,12 @@ with TAB2:
     cand_y = [c for c in pool_y if c != var_x] or pool_y
     var_y = c2.selectbox('Variable Y', cand_y, index=(cand_y.index(SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt'))) if (SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt')) in cand_y) else 0), key='t2_y')
 
-    sX = DF_FULL[var_x] if var_x in DF_FULL.columns else DF_FULL[var_x]
-    sY = DF_FULL[var_y] if var_y in DF_FULL.columns else DF_FULL[var_y]
+    # v2.8: safer selection
+    try:
+        sX = DF_FULL[var_x]
+        sY = DF_FULL[var_y]
+    except Exception as e:
+        st.error(f'Lỗi chọn biến X/Y: {e}'); st.stop()
 
     tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
     tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
@@ -2685,6 +2811,32 @@ with TAB7:
 
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
+
+        st.markdown('---')
+        st.subheader('📦 Export Excel package (kèm TEMPLATE)')
+        pkg_name = st.text_input('Tên file', 'audit_export_v28.xlsx', key='v28_pkg_name')
+        if st.button('⬇️ Export Excel (.xlsx) (DATA + TEMPLATE + INFO)', key='v28_btn_xlsx'):
+            try:
+                from io import BytesIO
+                bio = BytesIO()
+                with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+                    # DATA sheet (limited to keep file small)
+                    DF_FULL.head(100000).to_excel(writer, index=False, sheet_name='DATA')
+                    # TEMPLATE sheet
+                    pd.DataFrame(columns=SS.get('v28_template_cols') or list(DF_FULL.columns)).to_excel(writer, index=False, sheet_name='TEMPLATE')
+                    # INFO sheet
+                    info_df = pd.DataFrame([
+                        {'key':'generated_by','value':'Audit Statistics v2.8'},
+                        {'key':'rows','value':len(DF_FULL)},
+                        {'key':'cols','value':len(DF_FULL.columns)},
+                        {'key':'template_cols','value': '|'.join(SS.get('v28_template_cols') or [])}
+                    ])
+                    info_df.to_excel(writer, index=False, sheet_name='INFO')
+                st.download_button('⬇️ Download Excel package', data=bio.getvalue(), file_name=pkg_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                st.success('Đã tạo gói Excel (kèm TEMPLATE).')
+            except Exception as e:
+                st.error(f'Export Excel thất bại: {e}')
+
         # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
         st.caption('Chọn nội dung từ các tab, sau đó xuất báo cáo với tiêu đề tuỳ chỉnh.')
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
