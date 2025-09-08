@@ -1058,6 +1058,31 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
         st_plotly(fig4)
         st.caption("ECDF: phân phối tích lũy thực nghiệm — giúp nhìn tail và phần trăm.")
 
+
+# ---------------------- Safe DF accessors ----------------------
+def _df_base():
+    # prioritize current working df in Session State, else DF_FULL, else empty
+    import pandas as pd
+    try:
+        if 'df' in globals() and isinstance(df, pd.DataFrame):
+            return df
+    except Exception:
+        pass
+    _d = SS.get('df')
+    if _d is not None:
+        return _d
+    try:
+        return DF_FULL if isinstance(DF_FULL, pd.DataFrame) else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def _df_full_safe():
+    import pandas as pd
+    try:
+        return DF_FULL if isinstance(DF_FULL, pd.DataFrame) else _df_base()
+    except Exception:
+        return _df_base()
+
 # ---------------------------------- Main Gate ---------------------------------
 
 # --------------------------- : Template & Validation ---------------------------
@@ -1185,10 +1210,10 @@ DF_FULL = SS.get('df')
 if DF_FULL is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); # soft gate removed to avoid jumping tabs
 
-ALL_COLS = list(DF_FULL.columns)
+ALL_COLS = list(_df_full_safe().columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
-NUM_COLS = DF_FULL.select_dtypes(include=[np.number]).columns.tolist()
-CAT_COLS = DF_FULL.select_dtypes(include=['object','category','bool']).columns.tolist()
+NUM_COLS = _df_full_safe().select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = _df_full_safe().select_dtypes(include=['object','category','bool']).columns.tolist()
 VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 # — Sales risk context on FULL dataset only
 try:
@@ -3097,7 +3122,7 @@ with TAB7:
                     # DATA sheet (limited to keep file small)
                     DF_FULL.head(100000).to_excel(writer, index=False, sheet_name='DATA')
                     # TEMPLATE sheet
-                    pd.DataFrame(columns=SS.get('v28_template_cols') or list(DF_FULL.columns)).to_excel(writer, index=False, sheet_name='TEMPLATE')
+                    pd.DataFrame(columns=SS.get('v28_template_cols') or list(_df_full_safe().columns)).to_excel(writer, index=False, sheet_name='TEMPLATE')
                     # INFO sheet
                     info_df = pd.DataFrame([
                         {'key':'generated_by','value':'Audit Statistics '},
