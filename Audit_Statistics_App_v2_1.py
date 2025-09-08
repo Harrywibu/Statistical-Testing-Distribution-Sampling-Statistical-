@@ -1905,7 +1905,7 @@ with TAB1:
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
     with navL:
-                col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
+        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
         _df = _df_full_safe()
         if col_nav not in _df.columns:
             st.warning(f"⚠️ Cột '{col_nav}' không tồn tại trong dữ liệu đã nạp. Vui lòng chọn cột khác hoặc kiểm tra header.")
