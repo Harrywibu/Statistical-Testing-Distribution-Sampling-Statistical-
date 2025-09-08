@@ -22,7 +22,7 @@ def _safe_loc_bool(df, mask):
     elif not isinstance(mask, (pd.Series,)):
         # not a boolean index; return empty slice to be safe
         return df.iloc[0:0].copy()
-    return df= _safe_loc_bool(_dfb, mask)
+    return df.loc[mask].copy()
 
 
 # ------------------------------ Unified Reader/Caster ------------------------------
