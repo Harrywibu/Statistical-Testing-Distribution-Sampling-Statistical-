@@ -6,6 +6,25 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# ---- Safe boolean indexer to avoid IndexingError ----
+def _safe_loc_bool(df, mask):
+    import pandas as pd
+    if isinstance(mask, pd.Series):
+        try:
+            mask = mask.reindex(df.index, fill_value=False)
+        except Exception:
+            mask = pd.Series(False, index=df.index)
+    elif isinstance(mask, (list, tuple)):
+        # length-check
+        import numpy as np
+        mask = pd.Series(mask, index=df.index[:len(mask)])
+        mask = mask.reindex(df.index, fill_value=False)
+    elif not isinstance(mask, (pd.Series,)):
+        # not a boolean index; return empty slice to be safe
+        return df.iloc[0:0].copy()
+    return df.loc[mask].copy()
+
+
 # ------------------------------ Unified Reader/Caster ------------------------------
 
 # ------------------------------ Goal-based column suggestions ------------------------------
@@ -1316,9 +1335,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
- '0) Data Quality', '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
-])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Distribution', 'Trend & Corr', 'Benford', 'Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 # ---- TAB 0: Data Quality  ----
 with TAB0:
@@ -1389,9 +1406,11 @@ with TAB0:
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
-with TAB1:
+with TAB0:
 
     st.subheader('📊 Overview — Sales activity')
+
+with TAB1:
 
     # Data type mapping & sorting & classification
     with st.expander('⚙️ Data types & phân loại ', expanded=False):
@@ -2103,7 +2122,7 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
 
 # ---------------- v2_7: Benford (combined 1D+2D) & Drill-down ----------------
-with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expanded=False):
+with st.expander('📦 Benford — 1D, 2D & Drill‑down', expanded=False):
     _dfb = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
     if _dfb is None:
         st.info('Chưa có dữ liệu.')
@@ -2154,7 +2173,7 @@ with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expand
                 mask = l1 == str(digit)
             else:
                 mask = l2 == f'{digit:02d}'
-            sub = _dfb.loc[mask].copy()
+            sub = _safe_loc_bool(_dfb, mask)
             st.write(f'Số dòng match: {len(sub):,}')
             if dt_col:
                 if not str(sub[dt_col].dtype).startswith('datetime'):
@@ -2916,7 +2935,7 @@ with TAB7:
 # End of file
 
     # ---- Drill-down for abnormal Benford digits ----
-    with st.expander('🔍 Drill-down các chỉ số Benford bất thường', expanded=False):
+    with st.expander('🔍 Drill-down (Benford)', expanded=False):
         df = DF_FULL.copy()
         cols = df.columns.str.lower()
         # heuristics
@@ -2938,7 +2957,7 @@ with TAB7:
             vals = pd.to_numeric(df[amt_col], errors='coerce').abs()
             lead = vals.astype(str).str.replace(r'[^0-9]', '', regex=True).str.lstrip('0').str[0]
             mask = lead == str(digit)
-            sub = df.loc[mask].copy()
+            sub = _safe_loc_bool(df, mask)
             st.write(f'Số dòng có leading digit = {digit}: {len(sub):,}')
             # Period filter
             if date_col:
