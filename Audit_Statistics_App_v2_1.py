@@ -300,7 +300,7 @@ except Exception:
     HAS_SK = False
 
 # --------------------------------- App Config ---------------------------------
-st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
+st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
 
 # --- Safe dataframe accessors ---
@@ -499,27 +499,11 @@ def read_parquet_cache(sha: str, key: str) -> Optional[pd.DataFrame]:
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def list_sheets_xlsx(file_bytes: bytes) -> List[str]:
     from openpyxl import load_workbook
-    import zipfile
-    bio = io.BytesIO(file_bytes)
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     try:
-        wb = load_workbook(bio, read_only=True, data_only=True)
-        try:
-            return wb.sheetnames
-        finally:
-            wb.close()
-    except zipfile.BadZipFile:
-        # Not a real XLSX (likely CSV or corrupted). Treat as CSV sentinel.
-        return ['<csv>']
-    except Exception:
-        # Heuristic sniff for CSV
-        try:
-            bio.seek(0)
-            head = bio.read(2048)
-            if b',' in head or b';' in head or b'	' in head:
-                return ['<csv>']
-        except Exception:
-            pass
-        return []
+        return wb.sheetnames
+    finally:
+        wb.close()
 
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def read_csv_fast(file_bytes: bytes, usecols=None) -> pd.DataFrame:
@@ -840,7 +824,7 @@ def cgof_by_period(df: pd.DataFrame, cat_col: str, dt_col: str, gran: str) -> pd
 
 # -------------------------- Sidebar: Workflow & perf ---------------------------
 st.sidebar.title('Workflow')
-with st.sidebar.expander('0) Ingest data', expanded=False):
+with st.sidebar.expander('0) Ingest data', expanded=True):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
     if up is not None:
         fb = up.read()
@@ -1200,10 +1184,8 @@ if fname.lower().endswith('.csv'):
 
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
-        # If this returns ['<csv>'], it means the uploaded file is CSV mislabeled as XLSX.
-    if sheets == ['<csv>']:
-        st.info('Nhận diện là CSV. Vui lòng xử lý theo luồng CSV ở trên.');
-    with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
+    sheets = list_sheets_xlsx(fb)
+    with st.expander('📁 Select sheet & header (XLSX)', expanded=True):
         c1,c2,c3 = st.columns([2,1,1])
         idx=0 if sheets else 0
         SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
@@ -1255,7 +1237,7 @@ if DF_FULL is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); # soft gate removed to avoid jumping tabs
 
 ALL_COLS = list(_df_full_safe().columns)
-DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, _df_full_safe()[c])]
+DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
 NUM_COLS = _df_full_safe().select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = _df_full_safe().select_dtypes(include=['object','category','bool']).columns.tolist()
 VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
@@ -1693,8 +1675,7 @@ with TAB0:
 with TAB1:
 
     # Data type mapping & sorting & classification
-    if False:
-    # moved to Overview — removed from Distribution per v2.8
+    with st.expander('⚙️ Data types & phân loại ', expanded=False):
         import pandas as pd
         # Safe base df
         try:
@@ -1875,7 +1856,7 @@ with TAB1:
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
-        s_nav = _df_full_safe()[col_nav]
+        s_nav = DF_FULL[col_nav]
         if col_nav in NUM_COLS: dtype_nav='Numeric'
         elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
         else: dtype_nav='Categorical'
@@ -1904,7 +1885,7 @@ with TAB1:
                 num_col = st.selectbox('Numeric column', NUM_COLS, key='t1_num')
             with c2:
                 kde_on = st.checkbox('KDE (n ≤ ngưỡng)', value=True)
-            s0 = pd.to_numeric(_df_full_safe()[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan)
+            s0 = pd.to_numeric(DF_FULL[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan)
             s = s0.dropna(); n_na = int(s0.isna().sum())
             if s.empty:
                 st.warning('Không còn giá trị numeric sau khi làm sạch.')
@@ -2036,7 +2017,7 @@ with TAB1:
                                 fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
                                 st.dataframe(var, use_container_width=True, height=220)
                     if run_corr and other_num in _df_full_safe().columns:
-                        sub = _df_full_safe()[[num_col, other_num]].dropna()
+                        sub = DF_FULL[[num_col, other_num]].dropna()
                         if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
                         else:
                             if method=='Pearson':
@@ -2048,7 +2029,7 @@ with TAB1:
                                 st_plotly(fig)
                             st.json({'method': method, 'r': float(r), 'p': float(pv)})
                     if grp_for_quick and grp_for_quick!='(None)':
-                        sub = _df_full_safe()[[num_col, grp_for_quick]].dropna()
+                        sub = DF_FULL[[num_col, grp_for_quick]].dropna()
                         if sub[grp_for_quick].nunique()<2:
                             st.warning('Cần ≥2 nhóm để ANOVA.')
                         else:
@@ -2087,7 +2068,7 @@ with TAB1:
             st.info('Không phát hiện cột categorical.')
         else:
             cat_col = st.selectbox('Categorical column', CAT_COLS, key='t1_cat')
-            df_freq = cat_freq(_df_full_safe()[cat_col])
+            df_freq = cat_freq(DF_FULL[cat_col])
             topn = st.number_input('Top‑N (Pareto)', 3, 50, 15, step=1)
             st.dataframe(df_freq.head(int(topn)), use_container_width=True, height=240)
             if HAS_PLOTLY and not df_freq.empty:
@@ -2107,7 +2088,7 @@ with TAB1:
             st.info('Không phát hiện cột datetime‑like.')
         else:
             dt_col = st.selectbox('Datetime column', dt_candidates, key='t1_dt')
-            t = pd.to_datetime(_df_full_safe()[dt_col], errors='coerce')
+            t = pd.to_datetime(DF_FULL[dt_col], errors='coerce')
             t_clean = t.dropna(); n_missing = int(t.isna().sum())
             meta = pd.DataFrame([{
                 'count': int(len(t)), 'n_missing': n_missing,
@@ -2247,8 +2228,8 @@ with TAB2:
 
     # : safer selection
     try:
-        sX = _df_full_safe()[var_x]
-        sY = _df_full_safe()[var_y]
+        sX = DF_FULL[var_x]
+        sY = DF_FULL[var_y]
     except Exception as e:
         st.error(f'Lỗi chọn biến X/Y: {e}'); # soft gate removed to avoid jumping tabs
 
@@ -2361,7 +2342,7 @@ with TAB2:
         cat_col = var_y if tY=='Categorical' else var_x
         gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='t2_dt_cat_g')
         per = _derive_period(DF_FULL, dt_col, gran)
-        df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
+        df = _pd.DataFrame({'period': per, 'cat': DF_FULL[cat_col].astype('object')}).dropna()
         if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
             st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
         else:
@@ -2382,7 +2363,7 @@ with TAB2:
             sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='t2_heat_cols')
             if len(sel) >= 2:
                 if mth=='Kendall':
-                    sub = _df_full_safe()[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
+                    sub = DF_FULL[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
                     corr = sub.corr(method='kendall') if sub.shape[1]>=2 else _pd.DataFrame()
                 else:
                     corr = corr_cached(DF_FULL, sel, 'spearman' if mth=='Spearman' else 'pearson')
@@ -2652,7 +2633,7 @@ with TAB4:
             navL, navR = st.columns([2,3])
             with navL:
                 selected_col = st.selectbox('Chọn cột để test', ALL_COLS, key='t4_col')
-                s0 = _df_full_safe()[selected_col]
+                s0 = DF_FULL[selected_col]
                 dtype = ('Datetime' if (selected_col in DT_COLS or is_datetime_like(selected_col, s0)) else
                          'Numeric' if is_numeric_series(s0) else 'Categorical')
                 st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
@@ -3139,7 +3120,7 @@ with TAB7:
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(_df_full_safe()[c] if SS['df'] is not None else _df_full_safe()[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_FULL[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
@@ -3232,7 +3213,7 @@ with TAB7:
         # heuristics
         amt_col = None
         for c in _df_full_safe().columns:
-            if pd.api.types.is_numeric_dtype(_df_full_safe()[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
+            if pd.api.types.is_numeric_dtype(DF_FULL[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
                 amt_col = c; break
         date_col = None
         for c in _df_full_safe().columns:
