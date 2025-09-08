@@ -224,10 +224,8 @@ try:
     _df_supports_width = 'width' in _df_params
 except Exception:
     _df_supports_width = False
-
-
-
-def st.dataframe(data=None, **kwargs):
+    
+def st_df(data=None, **kwargs):
     if _df_supports_width:
         if kwargs.pop('use_container_width', None) is True:
             kwargs['width'] = 'stretch'
@@ -236,6 +234,7 @@ def st.dataframe(data=None, **kwargs):
     else:
         kwargs.setdefault('use_container_width', True)
     return st.dataframe(data, **kwargs)  # Không gọi lại st_df
+
 
 from scipy import stats
 
