@@ -1306,6 +1306,99 @@ with TAB0:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
+
+    st.subheader('📊 Overview — Sales activity')
+    df = DF_FULL.copy()
+    # Heuristic column mapping
+    cols = df.columns.str.lower()
+    def pick(patterns, prefer_numeric=False, prefer_datetime=False):
+        idx = -1
+        for i,c in enumerate(cols):
+            if any(p in c for p in patterns):
+                idx = i; break
+        if idx==-1:
+            # fallback by dtype
+            if prefer_numeric:
+                for i,c in enumerate(df.columns):
+                    if df[c].dtype.kind in 'if': return df.columns[i]
+            if prefer_datetime:
+                for i,c in enumerate(df.columns):
+                    if str(df[c].dtype).startswith('datetime'): return df.columns[i]
+            return None
+        return df.columns[idx]
+    col_amt = pick(['salesrevenue','amount','revenue','sales','doanh','thu','net','gross','value'], prefer_numeric=True)
+    col_qty = pick(['qty','quantity','so_luong','soluong','units','unit','volume'], prefer_numeric=True)
+    col_cust = pick(['customer','cust','khach','client','buyer','account','party'])
+    col_prod = pick(['product','prod','sku','item','hang','ma_hang','mat_hang','goods','code'])
+    col_type = pick(['sales/transfer','type','loai','category','class'])
+    col_date = pick(['pstgdate','posting','date','ngay','doc_date','invoice_date','posting_date'], prefer_datetime=True)
+    # Cast hints
+    if col_date and not str(df[col_date].dtype).startswith('datetime'):
+        try: df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
+        except Exception: pass
+    for c in [col_amt, col_qty]:
+        if c is not None: df[c] = pd.to_numeric(df[c], errors='coerce')
+
+    # Period selector
+    left, right = st.columns([2,1])
+    with left:
+        period = st.selectbox('Chu kỳ so sánh', ['Tháng','Quý','Năm'], index=0, key='t1_period')
+    with right:
+        show_adv = st.toggle('Hiện biểu đồ nâng cao (ECDF/QQ/Violin/Lorenz)', value=False, key='t1_adv')
+
+    # KPIs
+    k1,k2,k3,k4 = st.columns(4)
+    total_amt = float(df[col_amt].sum()) if col_amt else 0.0
+    n_tx = int(len(df))
+    uniq_cust = int(df[col_cust].nunique()) if col_cust else 0
+    uniq_prod = int(df[col_prod].nunique()) if col_prod else 0
+    with k1: st.metric('Tổng doanh thu', f"{total_amt:,.0f}")
+    with k2: st.metric('Số giao dịch', f"{n_tx:,}")
+    with k3: st.metric('Số KH', f"{uniq_cust:,}")
+    with k4: st.metric('Số SP', f"{uniq_prod:,}")
+
+    # Period group
+    if col_date:
+        if period=='Tháng':
+            grp = df.groupby([df[col_date].dt.to_period('M')])[col_amt].sum().reset_index()
+            grp[col_date]=grp[col_date].astype(str)
+        elif period=='Quý':
+            grp = df.groupby([df[col_date].dt.to_period('Q')])[col_amt].sum().reset_index()
+            grp[col_date]=grp[col_date].astype(str)
+        else:
+            grp = df.groupby([df[col_date].dt.to_period('Y')])[col_amt].sum().reset_index()
+            grp[col_date]=grp[col_date].astype(str)
+        if HAS_PLOTLY and col_amt:
+            fig = px.bar(grp, x=col_date, y=col_amt, title='Doanh thu theo chu kỳ'); st_plotly(fig)
+
+    # Top breakdowns
+    c1,c2 = st.columns(2)
+    if col_cust and col_amt:
+        top_cust = df.groupby(col_cust)[col_amt].sum().sort_values(ascending=False).head(20).reset_index()
+        with c1:
+            st.write('**Top Khách hàng theo doanh thu**')
+            if HAS_PLOTLY: st_plotly(px.bar(top_cust, x=col_cust, y=col_amt))
+            st.dataframe(top_cust, use_container_width=True)
+    if col_prod and col_amt:
+        top_prod = df.groupby(col_prod)[col_amt].sum().sort_values(ascending=False).head(20).reset_index()
+        with c2:
+            st.write('**Top Sản phẩm theo doanh thu**')
+            if HAS_PLOTLY: st_plotly(px.bar(top_prod, x=col_prod, y=col_amt))
+            st.dataframe(top_prod, use_container_width=True)
+
+    # Type split (sales/transfer/discount...)
+    if col_type and col_amt:
+        st.write('**Phân tách theo loại giao dịch**')
+        tdf = df.groupby(col_type)[col_amt].sum().sort_values(ascending=False).reset_index()
+        if HAS_PLOTLY: st_plotly(px.bar(tdf, x=col_type, y=col_amt))
+        st.dataframe(tdf, use_container_width=True)
+
+    # Advanced plots optional
+    if show_adv and 'px.ecdf' in dir(px):
+        # Expect existing advanced block below uses num_col & s; we keep a minimal safe demo
+        st.info('Biểu đồ nâng cao hiển thị theo cột numeric bạn chọn ở phần Numeric.')
+    
+    require_full_data()
     require_full_data()
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
@@ -1390,8 +1483,6 @@ with TAB1:
                     with gC:
                         try:
                             fig3 = px.ecdf(s, title=f'{num_col} — ECDF'); st_plotly(fig3)
-                            st.caption(f"**Diễn giải:** ECDF của **{num_col}**: tỷ lệ tích luỹ; đuôi dốc/nhảy bậc ⇒ có cụm giá trị/ghi nhận lạ.")
-                            st.caption(f"**Diễn giải:** ECDF của **{num_col}** cho thấy tỷ lệ tích luỹ; đuôi dốc/nhảy bậc bất thường ⇒ có cụm giá trị/ghi nhận bất thường.")
                         except Exception: st.caption('ECDF yêu cầu plotly phiên bản hỗ trợ px.ecdf.')
                     with gD:
                         try:
@@ -1401,16 +1492,12 @@ with TAB1:
                             lim=[min(xq.min(),yq.min()), max(xq.max(),yq.max())]
                             fig4.add_trace(go.Scatter(x=lim, y=lim, mode='lines', line=dict(dash='dash')))
                             fig4.update_layout(title=f'{num_col} — QQ Normal', height=320); st_plotly(fig4)
-                            st.caption(f"**Diễn giải:** QQ‑plot của **{num_col}**: lệch khỏi đường chéo ⇒ đuôi lệch/không chuẩn; cân nhắc winsorize/biến đổi log.")
-                            st.caption(f"**Diễn giải:** QQ‑plot của **{num_col}**: điểm lệch xa đường chéo ⇒ đuôi lệch/không chuẩn; cân nhắc winsorize/biến đổi log.")
                         except Exception: st.caption('Cần SciPy cho QQ plot.')
                     if SS['advanced_visuals']:
                         gE,gF = st.columns(2)
                         with gE:
                             figv = px.violin(pd.DataFrame({num_col:s}), x=num_col, points='outliers', box=True, title=f'{num_col} — Violin')
                             st_plotly(figv)
-                            st.caption(f"**Diễn giải:** Violin của **{num_col}**: mật độ & outlier; nếu có 2 đỉnh ⇒ cần tách nhóm/soi nguyên nhân.")
-                            st.caption(f"**Diễn giải:** Violin của **{num_col}** cho thấy mật độ & outlier; phân bố 2 đỉnh ⇒ cần tách nhóm/soi nguyên nhân.")
                         with gF:
                             v=np.sort(s.values)
                             if len(v)>0 and v.sum()!=0:
@@ -1420,8 +1507,6 @@ with TAB1:
                                 figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
                                 figL.update_layout(title=f'{num_col} — Lorenz (Gini={gini:.3f})', height=320)
                                 st_plotly(figL)
-                                st.caption(f"**Diễn giải:** Lorenz/Gini của **{num_col}**: Gini↑ ⇒ giá trị tập trung vào ít đối tượng; khoanh vùng để kiểm tra.")
-                                st.caption(f"**Diễn giải:** Lorenz/Gini của **{num_col}**: Gini↑ ⇒ giá trị tập trung vào ít đối tượng; khoanh vùng để kiểm tra.")
                             else:
                                 st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
 
@@ -1577,6 +1662,7 @@ with TAB1:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
     require_full_data()
+    require_full_data()
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -1666,10 +1752,27 @@ with TAB2:
             return _np.nan, _np.nan, _np.nan
 
     # —— UI ——
+    # ---- v2_7 Quick-nav inside Trend & Corr ----
+    with st.expander('⚙️ Quick-nav (v2_7) — lọc cột & auto-suggest', expanded=False):
+        _df_t2 = DF_FULL
+        _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
+                            horizontal=True, key='t2_goal')
+        _sug_t2 = suggest_cols_by_goal(_df_t2, _goal_t2)
+        _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
+        def _filter_cols_goal(cols):
+            if not _only_t2: return cols
+            tokens = [(_sug_t2.get(k) or '').lower() for k in ['num','cat','dt']]
+            tokens = [t for t in tokens if t]
+            if not tokens: return cols
+            return [c for c in cols if any(t in c.lower() for t in tokens)] or cols
+        ALL_COLS_T2 = _filter_cols_goal(ALL_COLS)
+        st.caption('Gợi ý cột: num=%s · cat=%s · dt=%s' % (_sug_t2.get('num'), _sug_t2.get('cat'), _sug_t2.get('dt')))
+
     c1, c2, c3 = st.columns([2, 2, 1.5])
-    var_x = c1.selectbox('Variable X', ALL_COLS, key='t2_x')
-    cand_y = [c for c in ALL_COLS if c != var_x] or ALL_COLS
-    var_y = c2.selectbox('Variable Y', cand_y, key='t2_y')
+    var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
+    pool_y = (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)
+    cand_y = [c for c in pool_y if c != var_x] or pool_y
+    var_y = c2.selectbox('Variable Y', cand_y, index=(cand_y.index(SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt'))) if (SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt')) in cand_y) else 0), key='t2_y')
 
     sX = DF_FULL[var_x] if var_x in DF_FULL.columns else DF_FULL[var_x]
     sY = DF_FULL[var_y] if var_y in DF_FULL.columns else DF_FULL[var_y]
@@ -1826,7 +1929,75 @@ with TAB2:
             st_df(df_corr, use_container_width=True, height=200)
 with TAB3:
     require_full_data()
+    require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
+
+# ---------------- v2_7: Benford (combined 1D+2D) & Drill-down ----------------
+with st.expander('📦 Benford v2_7 — chạy 1D & 2D và Drill‑down', expanded=False):
+    _dfb = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
+    if _dfb is None:
+        st.info('Chưa có dữ liệu.')
+    else:
+        # Guess amount/date columns
+        amt_col = None
+        for c in _dfb.columns:
+            if pd.api.types.is_numeric_dtype(_dfb[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
+                amt_col = c; break
+        dt_col = None
+        for c in _dfb.columns:
+            if pd.api.types.is_datetime64_any_dtype(_dfb[c]) or any(k in c.lower() for k in ['date','pstg','post','invoice']):
+                dt_col = c; break
+        if amt_col is None:
+            st.warning('Không tìm thấy cột số tiền.')
+        else:
+            vals = pd.to_numeric(_dfb[amt_col], errors='coerce').dropna().abs()
+            clean = vals.astype(str).str.replace(r'[^0-9]','', regex=True).str.lstrip('0')
+            # 1D
+            l1 = clean.str[0]
+            obs1 = l1[l1.isin(list('123456789'))].value_counts().reindex(list('123456789'), fill_value=0)
+            n1 = obs1.sum(); obs1_p = obs1/n1 if n1>0 else obs1*0
+            exp1_p = np.log10(1 + 1/np.arange(1,10))
+            df1 = pd.DataFrame({'digit': list('123456789'),
+                                'obs': obs1.values,
+                                'obs_pct': (obs1_p*100).round(2),
+                                'exp_pct': (exp1_p*100).round(2),
+                                'diff_pct': ((obs1_p-exp1_p)*100).round(2)})
+            # 2D
+            l2 = clean.str[:2]
+            idx2 = [f'{i:02d}' for i in range(10,100)]
+            obs2 = l2[l2.str.len()==2].value_counts().reindex(idx2, fill_value=0)
+            n2 = obs2.sum(); obs2_p = obs2/n2 if n2>0 else obs2*0
+            exp2_p = np.log10(1 + 1/np.arange(10,100))
+            df2 = pd.DataFrame({'digit': idx2,
+                                'obs': obs2.values,
+                                'obs_pct': (obs2_p*100).round(2),
+                                'exp_pct': (exp2_p*100).round(2),
+                                'diff_pct': ((obs2_p-exp2_p)*100).round(2)})
+            st.write('**Benford 1D**'); st.dataframe(df1, use_container_width=True)
+            st.write('**Benford 2D**'); st.dataframe(df2.head(90), use_container_width=True)
+
+            st.markdown('---')
+            st.write('**🔍 Drill‑down**')
+            mode = st.radio('Kiểu digit', ['1D','2D'], horizontal=True, key='bf_v27_mode')
+            digit = st.selectbox('Chọn (1D: 1–9, 2D: 10–99)', list(range(1,10)) if mode=='1D' else list(range(10,100)), index=0, key='bf_v27_digit')
+            if mode=='1D':
+                mask = l1 == str(digit)
+            else:
+                mask = l2 == f'{digit:02d}'
+            sub = _dfb.loc[mask].copy()
+            st.write(f'Số dòng match: {len(sub):,}')
+            if dt_col:
+                if not str(sub[dt_col].dtype).startswith('datetime'):
+                    sub[dt_col] = pd.to_datetime(sub[dt_col], errors='coerce')
+                gran = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_v27_period')
+                if gran=='Tháng': sub['__per'] = sub[dt_col].dt.to_period('M').astype(str)
+                elif gran=='Quý': sub['__per'] = sub[dt_col].dt.to_period('Q').astype(str)
+                else: sub['__per'] = sub[dt_col].dt.to_period('Y').astype(str)
+                agg = sub.groupby('__per')[amt_col].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
+                st.dataframe(agg, use_container_width=True)
+            st.dataframe(sub.head(500), use_container_width=True)
+            st.download_button('Tải CSV (toàn bộ kết quả)', data=sub.to_csv(index=False).encode('utf-8'),
+                               file_name=f'benford_drilldown_{mode}_{digit}.csv', mime='text/csv')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -1939,152 +2110,200 @@ with TAB3:
 # ---------------- TAB 4: Tests ----------------
 with TAB4:
 
-    require_full_data()
-    st.subheader('🧮 Sales Activity — Guided Tests')
-    st.markdown("**Chọn mục tiêu kiểm tra:**")
-    _goal = st.radio('', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_goal')
-    _sug = suggest_cols_by_goal(DF_FULL, _goal)
-    with st.expander('Gợi ý theo mục tiêu', expanded=False):
-        if _goal in ['Doanh thu','Giảm giá','Số lượng']:
-            st.write('- Dùng **Numeric tests** (Median vs Mean, Tail %>p95/%>p99, Zero-ratio).')
-        if _goal in ['Khách hàng','Sản phẩm']:
-            st.write('- Dùng **Categorical tests** (HHI/Pareto, Rare category, Chi-square GoF).')
-        if _goal in ['Thời điểm']:
-            st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
+    try:
+            require_full_data()
+            require_full_data()
+            st.subheader('🧮 Sales Activity — Guided Tests')
+            st.markdown("**Chọn mục tiêu kiểm tra:**")
+            _goal = st.radio('', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_goal')
+            _sug = suggest_cols_by_goal(DF_FULL, _goal)
+            with st.expander('Gợi ý theo mục tiêu', expanded=False):
+                if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+                    st.write('- Dùng **Numeric tests** (Median vs Mean, Tail %>p95/%>p99, Zero-ratio).')
+                if _goal in ['Khách hàng','Sản phẩm']:
+                    st.write('- Dùng **Categorical tests** (HHI/Pareto, Rare category, Chi-square GoF).')
+                if _goal in ['Thời điểm']:
+                    st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
     
-        with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
-            ch = []
-            if _goal in ['Doanh thu','Giảm giá','Số lượng']:
-                ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
-            if _goal in ['Khách hàng','Sản phẩm']:
-                ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
-            if _goal in ['Thời điểm']:
-                ch += ['Rolling mean/variance','Run-test approx']
-            checked = {}
-            cols = st.columns(2) if len(ch) > 4 else [st]
-            for i, name in enumerate(ch):
-                container = cols[i % len(cols)]
-                with container:
-                    checked[name] = st.checkbox(name, key=f"chk_{i}")
-            if any(checked.values()):
-                st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
-            else:
-                st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
+                with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+                    ch = []
+                    if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+                        ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
+                    if _goal in ['Khách hàng','Sản phẩm']:
+                        ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
+                    if _goal in ['Thời điểm']:
+                        ch += ['Rolling mean/variance','Run-test approx']
+                    checked = {}
+                    cols = st.columns(2) if len(ch) > 4 else [st]
+                    for i, name in enumerate(ch):
+                        container = cols[i % len(cols)]
+                        with st.container():
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
+                    if any(checked.values()):
+                        st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
+                    else:
+                        st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
         
-        st.markdown('---')
-        with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
-            ch = []
-            if _goal in ['Doanh thu','Giảm giá','Số lượng']:
-                ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
-            if _goal in ['Khách hàng','Sản phẩm']:
-                ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
-            if _goal in ['Thời điểm']:
-                ch += ['Rolling mean/variance','Run-test approx']
-            checked = {}
-            cols = st.columns(2) if len(ch) > 4 else [st]
-            for i, name in enumerate(ch):
-                container = cols[i % len(cols)]
-                with container:
-                    checked[name] = st.checkbox(name, key=f"chk_{i}")
-            # Summarize selection
-            if any(checked.values()):
-                st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
-            else:
-                st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
+                st.markdown('---')
+                with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+                    ch = []
+                    if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+                        ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
+                    if _goal in ['Khách hàng','Sản phẩm']:
+                        ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
+                    if _goal in ['Thời điểm']:
+                        ch += ['Rolling mean/variance','Run-test approx']
+                    checked = {}
+                    cols = st.columns(2) if len(ch) > 4 else [st]
+                    for i, name in enumerate(ch):
+                        container = cols[i % len(cols)]
+                        with st.container():
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
+                    # Summarize selection
+                    if any(checked.values()):
+                        st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
+                    else:
+                        st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
         
-    st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
-    # Gate: require FULL data for this tab
-    if SS.get('df') is None:
-        st.info('Hãy **Load full data** để xem Data Quality .')
-    st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
+            st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
+            # Gate: require FULL data for this tab
+            if SS.get('df') is None:
+                st.info('Hãy **Load full data** để xem Data Quality .')
+            st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
-    def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
-    def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
+            def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
+            def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
 
-    navL, navR = st.columns([2,3])
-    with navL:
-        selected_col = st.selectbox('Chọn cột để test', ALL_COLS, key='t4_col')
-        s0 = DF_FULL[selected_col]
-        dtype = ('Datetime' if (selected_col in DT_COLS or is_datetime_like(selected_col, s0)) else
-                 'Numeric' if is_numeric_series(s0) else 'Categorical')
-        st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
-        st.markdown('**Gợi ý test ưu tiên**')
-        if dtype=='Numeric':
-            st.write('- Benford 1D/2D (giá trị > 0)')
-            st.write('- Normality/Outlier: Ecdf/Box/QQ (xem Tab 1)')
-        elif dtype=='Categorical':
-            st.write('- Top‑N + HHI'); st.write('- Chi‑square GoF vs Uniform'); st.write('- χ² độc lập với biến trạng thái (nếu có)')
-        else:
-            st.write('- DOW/Hour distribution, Seasonality (xem Tab 1)'); st.write('- Gap/Sequence test (khoảng cách thời gian)')
-    with navR:
-        st.markdown('**Điều khiển chạy test**')
-        use_full = True
-        run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
-        run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
-        run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
-        go = st.button('Chạy các test đã chọn', type='primary', key='t4_run_btn')
-
-        if 't4_results' not in SS: SS['t4_results']={}
-        if go:
-            out={}
-            data_src = DF_FULL if SS.get('df') is not None else DF_FULL
-            out = SS.get('t4_results', {})
-    if not out:
-        st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
-    else:
-            # Rule Engine expander for this tab
-        st.divider()
-    # --- Phân tích theo thời gian cho Tests ---
-    if DT_COLS:
-        tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
-        gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='t4_time_gran')
-        data_src2 = DF_FULL if (SS.get('df') is not None and use_full) else DF_FULL
-        if dtype == 'Numeric':
-            with st.expander('Outlier (IQR) theo giai đoạn', expanded=False):
-                df_out = outlier_iqr_by_period(data_src2, selected_col, tcol, gran)
-                if df_out.empty:
-                    st.info('Không đủ dữ liệu.')
+            navL, navR = st.columns([2,3])
+            with navL:
+                selected_col = st.selectbox('Chọn cột để test', ALL_COLS, key='t4_col')
+                s0 = DF_FULL[selected_col]
+                dtype = ('Datetime' if (selected_col in DT_COLS or is_datetime_like(selected_col, s0)) else
+                         'Numeric' if is_numeric_series(s0) else 'Categorical')
+                st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
+                st.markdown('**Gợi ý test ưu tiên**')
+                if dtype=='Numeric':
+                    st.write('- Benford 1D/2D (giá trị > 0)')
+                    st.write('- Normality/Outlier: Ecdf/Box/QQ (xem Tab 1)')
+                elif dtype=='Categorical':
+                    st.write('- Top‑N + HHI'); st.write('- Chi‑square GoF vs Uniform'); st.write('- χ² độc lập với biến trạng thái (nếu có)')
                 else:
-                    st_df(df_out, use_container_width=True, height=min(360, 60+24*min(len(df_out),12)))
-                    if HAS_PLOTLY:
-                        fig = px.bar(df_out, x='period', y='outlier_share', title='Outlier share theo giai đoạn')
-                        st_plotly(fig)
-        elif dtype == 'Categorical':
-            colL2, colR2 = st.columns(2)
-            with colL2:
-                with st.expander('HHI theo giai đoạn', expanded=True):
-                    df_h = hhi_by_period(data_src2, selected_col, tcol, gran)
-                    if df_h.empty:
-                        st.info('Không đủ dữ liệu.')
-                    else:
-                        st_df(df_h, use_container_width=True, height=min(320, 60+24*min(len(df_h),10)))
-                        if HAS_PLOTLY:
-                            figh = px.bar(df_h, x='period', y='HHI', title='HHI theo giai đoạn')
-                            st_plotly(figh)
-            with colR2:
-                with st.expander('Chi-square GoF vs Uniform theo giai đoạn', expanded=True):
-                    df_c = cgof_by_period(data_src2, selected_col, tcol, gran)
-                    if df_c.empty:
-                        st.info('Không đủ dữ liệu.')
-                    else:
-                        st_df(df_c, use_container_width=True, height=min(320, 60+24*min(len(df_c),10)))
-                        if HAS_PLOTLY:
-                            try:
-                                figc = px.bar(df_c, x='period', y='p', title='p-value theo giai đoạn (CGOF)'); st_plotly(figc)
-                            except Exception:
-                                pass
-    else:
-        st.caption('Không phát hiện cột thời gian — bỏ qua phân tích theo giai đoạn.')
+                    st.write('- DOW/Hour distribution, Seasonality (xem Tab 1)'); st.write('- Gap/Sequence test (khoảng cách thời gian)')
+            with navR:
+                st.markdown('**Điều khiển chạy test**')
+                use_full = True
+                run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
+                run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
+                run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
+                go = st.button('Chạy các test đã chọn', type='primary', key='t4_run_btn')
+
+                if 't4_results' not in SS: SS['t4_results']={}
+                if go:
+                    out={}
+                    data_src = DF_FULL if SS.get('df') is not None else DF_FULL
+                    out = SS.get('t4_results', {})
+            if not out:
+                st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
+            else:
+                    # Rule Engine expander for this tab
+                st.divider()
+            # --- Phân tích theo thời gian cho Tests ---
+            if DT_COLS:
+                tcol = st.selectbox('Cột thời gian để phân tích theo giai đoạn', DT_COLS, key='t4_time_dt')
+                gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='t4_time_gran')
+                data_src2 = DF_FULL if (SS.get('df') is not None and use_full) else DF_FULL
+                if dtype == 'Numeric':
+                    with st.expander('Outlier (IQR) theo giai đoạn', expanded=False):
+                        df_out = outlier_iqr_by_period(data_src2, selected_col, tcol, gran)
+                        if df_out.empty:
+                            st.info('Không đủ dữ liệu.')
+                        else:
+                            st_df(df_out, use_container_width=True, height=min(360, 60+24*min(len(df_out),12)))
+                            if HAS_PLOTLY:
+                                fig = px.bar(df_out, x='period', y='outlier_share', title='Outlier share theo giai đoạn')
+                                st_plotly(fig)
+                elif dtype == 'Categorical':
+                    colL2, colR2 = st.columns(2)
+                    with colL2:
+                        with st.expander('HHI theo giai đoạn', expanded=True):
+                            df_h = hhi_by_period(data_src2, selected_col, tcol, gran)
+                            if df_h.empty:
+                                st.info('Không đủ dữ liệu.')
+                            else:
+                                st_df(df_h, use_container_width=True, height=min(320, 60+24*min(len(df_h),10)))
+                                if HAS_PLOTLY:
+                                    figh = px.bar(df_h, x='period', y='HHI', title='HHI theo giai đoạn')
+                                    st_plotly(figh)
+                    with colR2:
+                        with st.expander('Chi-square GoF vs Uniform theo giai đoạn', expanded=True):
+                            df_c = cgof_by_period(data_src2, selected_col, tcol, gran)
+                            if df_c.empty:
+                                st.info('Không đủ dữ liệu.')
+                            else:
+                                st_df(df_c, use_container_width=True, height=min(320, 60+24*min(len(df_c),10)))
+                                if HAS_PLOTLY:
+                                    try:
+                                        figc = px.bar(df_c, x='period', y='p', title='p-value theo giai đoạn (CGOF)'); st_plotly(figc)
+                                    except Exception:
+                                        pass
+            else:
+                st.caption('Không phát hiện cột thời gian — bỏ qua phân tích theo giai đoạn.')
     
-    with st.expander('🧠 Rule Engine (Tests) — Insights'):
-        ctx = build_rule_context()
-        df_r = evaluate_rules(ctx, scope='tests')
-        if not df_r.empty:
-            st_df(df_r, use_container_width=True)
-        else:
-            st.info('Không có rule nào khớp.')
-# ------------------------------ TAB 5: Regression -----------------------------
+            with st.expander('🧠 Rule Engine (Tests) — Insights'):
+                ctx = build_rule_context()
+                df_r = evaluate_rules(ctx, scope='tests')
+                if not df_r.empty:
+                    st_df(df_r, use_container_width=True)
+                else:
+                    st.info('Không có rule nào khớp.')
+        # ------------------------------ TAB 5: Regression -----------------------------
+    except Exception as e:
+        st.error(f'Lỗi khi chạy Tests: {e}')
+
+# ---------------- v2_7: Quick-nav (lọc cột & auto-suggest + push Flags) ----------------
+with st.expander('⚙️ Quick-nav (v2_7) — lọc cột & auto-suggest', expanded=False):
+    _df_v27 = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
+    if _df_v27 is None:
+        st.info('Chưa có dữ liệu. Vui lòng Load full data.')
+    else:
+        _goal_v27 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_v27_goal')
+        _sug_v27 = suggest_cols_by_goal(_df_v27, _goal_v27)
+        _only_v27 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t4_v27_only')
+        def _filter_v27(cols, key):
+            if not _only_v27 or not _sug_v27.get(key): return cols
+            tok = _sug_v27[key].lower()
+            return [c for c in cols if tok in c.lower()] or cols
+        _num = [c for c in _df_v27.columns if pd.api.types.is_numeric_dtype(_df_v27[c])]
+        _cat = [c for c in _df_v27.columns if (not pd.api.types.is_numeric_dtype(_df_v27[c])) and (not pd.api.types.is_datetime64_any_dtype(_df_v27[c]))]
+        _dt  = [c for c in _df_v27.columns if pd.api.types.is_datetime64_any_dtype(_df_v27[c])]
+        _num = _filter_v27(_num,'num'); _cat = _filter_v27(_cat,'cat'); _dt = _filter_v27(_dt,'dt')
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            _cn = st.selectbox('Cột numeric', _num, index=(_num.index(_sug_v27['num']) if (_sug_v27['num'] in _num) else 0), key='t4_v27_num')
+        with c2:
+            _cc = st.selectbox('Cột categorical', _cat, index=(_cat.index(_sug_v27['cat']) if (_sug_v27['cat'] in _cat) else 0), key='t4_v27_cat')
+        with c3:
+            _td = st.selectbox('Cột thời gian', _dt, index=(_dt.index(_sug_v27['dt']) if (_sug_v27['dt'] in _dt) else 0), key='t4_v27_dt')
+
+        _s = pd.to_numeric(_df_v27[_cn], errors='coerce')
+        _desc = _s.describe(percentiles=[.5,.95,.99]).to_dict()
+        _zero = float((_s==0).mean())
+        _tail99 = float((_s > _s.quantile(.99)).mean())
+        _gap = float(abs(_s.median() - _s.mean()))
+        st.json({'col':_cn,'median':_desc.get('50%'),'mean':_desc.get('mean'),'p95':_desc.get('95%'),'p99':_desc.get('99%'),'zero_ratio':_zero,'tail_gt_p99':_tail99,'median_mean_gap':_gap})
+
+        if st.button('➕ Đẩy gợi ý sang Tab Flags', key='t4_v27_push'):
+            _flags = SS.get('fraud_flags') or []
+            _flags += [
+                {'flag':'Median-Mean gap','column': _cn, 'value': _gap, 'threshold': float(_s.std() or 0)*0.5, 'note': 'Chênh lớn ⇒ kiểm tra outliers/log transform'},
+                {'flag':'Tail > P99','column': _cn, 'value': _tail99, 'threshold': 0.01, 'note': 'Đuôi quá dày ⇒ rà soát giao dịch tail'},
+                {'flag':'Zero ratio','column': _cn, 'value': _zero, 'threshold': 0.20, 'note': 'Nhiều 0 ⇒ kiểm tra quy trình ghi nhận'}
+            ]
+            SS['fraud_flags'] = _flags
+            st.success('Đã đẩy 3 gợi ý cờ sang Tab Flags (v2_7)')
+
 with TAB5:
+    require_full_data()
     require_full_data()
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
@@ -2264,6 +2483,7 @@ with TAB5:
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
     require_full_data()
+    require_full_data()
     st.subheader('🚩 Fraud Flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
@@ -2426,6 +2646,7 @@ with TAB6:
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
     require_full_data()
+    require_full_data()
     left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
@@ -2497,3 +2718,44 @@ with TAB7:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
 
 # End of file
+
+    # ---- Drill-down for abnormal Benford digits ----
+    with st.expander('🔍 Drill-down các chỉ số Benford bất thường', expanded=False):
+        df = DF_FULL.copy()
+        cols = df.columns.str.lower()
+        # heuristics
+        amt_col = None
+        for c in DF_FULL.columns:
+            if pd.api.types.is_numeric_dtype(DF_FULL[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
+                amt_col = c; break
+        date_col = None
+        for c in DF_FULL.columns:
+            if str(DF_FULL[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
+                date_col = c; break
+        if date_col and not str(df[date_col].dtype).startswith('datetime'):
+            try: df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            except Exception: pass
+
+        digit = st.selectbox('Chọn chữ số (leading) muốn drill‑down', list(range(1,10)), index=0, key='bf_digit')
+        # Filter rows by leading digit of absolute amount
+        if amt_col:
+            vals = pd.to_numeric(df[amt_col], errors='coerce').abs()
+            lead = vals.astype(str).str.replace(r'[^0-9]', '', regex=True).str.lstrip('0').str[0]
+            mask = lead == str(digit)
+            sub = df.loc[mask].copy()
+            st.write(f'Số dòng có leading digit = {digit}: {len(sub):,}')
+            # Period filter
+            if date_col:
+                rng = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_period')
+                if rng=='Tháng':
+                    sub['__per'] = sub[date_col].dt.to_period('M').astype(str)
+                elif rng=='Quý':
+                    sub['__per'] = sub[date_col].dt.to_period('Q').astype(str)
+                else:
+                    sub['__per'] = sub[date_col].dt.to_period('Y').astype(str)
+                agg = sub.groupby('__per')[amt_col].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
+                st.dataframe(agg, use_container_width=True)
+            st.dataframe(sub.head(500), use_container_width=True)
+        else:
+            st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
+    
