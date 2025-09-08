@@ -2427,9 +2427,8 @@ with TAB2:
             fig.update_layout(legend=dict(orientation='h'))
     except Exception as _e:
         st.caption('Rolling mean không khả dụng: %s' % _e)
-    
-                fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
-                st_plotly(fig)
+        fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
+        st_plotly(fig)
 
     # Datetime – Categorical
     elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
