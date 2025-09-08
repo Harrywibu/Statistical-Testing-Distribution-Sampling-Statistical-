@@ -303,6 +303,47 @@ except Exception:
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
 
+# --- Safe dataframe accessors ---
+
+def _df_base():
+    import pandas as pd
+    try:
+        if 'df' in globals() and isinstance(df, pd.DataFrame):
+            return df
+    except Exception:
+        pass
+    _d = SS.get('df')
+    if isinstance(_d, pd.DataFrame):
+        return _d
+    try:
+        if isinstance(DF_FULL, pd.DataFrame):
+            return DF_FULL
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+def _df_full_safe():
+    import pandas as pd
+    try:
+        if isinstance(DF_FULL, pd.DataFrame):
+            return DF_FULL
+    except Exception:
+        pass
+    return _df_base()
+
+def _df_copy_safe(x):
+    import pandas as pd
+    try:
+        if isinstance(x, pd.DataFrame):
+            return x.copy()
+    except Exception:
+        pass
+    try:
+        return _df_full_safe().copy()
+    except Exception:
+        return pd.DataFrame()
+
+
 # ---- Safe DataFrame accessor ----
 def _get_df_base():
     try:
@@ -348,7 +389,7 @@ for k, v in DEFAULTS.items():
 
 
 def require_full_data():
-    has_df = (SS.get('df') is not None) or ('DF_FULL' in globals()) or ('DF_FULL' in SS)
+    has_df = (SS.get('df') is not None) or ('DF_FULL' in globals() and isinstance(DF_FULL, pd.DataFrame)) or ('DF_FULL' in SS)
     if not has_df:
         st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy Tabs.')
         return False
@@ -1060,28 +1101,18 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
 
 
 # ---------------------- Safe DF accessors ----------------------
-def _df_base():
-    # prioritize current working df in Session State, else DF_FULL, else empty
+
     import pandas as pd
     try:
-        if 'df' in globals() and isinstance(df, pd.DataFrame):
-            return df
+        if isinstance(x, pd.DataFrame):
+            return x.copy()
     except Exception:
         pass
-    _d = SS.get('df')
-    if _d is not None:
-        return _d
     try:
-        return DF_FULL if isinstance(DF_FULL, pd.DataFrame) else pd.DataFrame()
+        # fallback to _df_full_safe or _df_base if available
+        return _df_full_safe().copy()
     except Exception:
         return pd.DataFrame()
-
-def _df_full_safe():
-    import pandas as pd
-    try:
-        return DF_FULL if isinstance(DF_FULL, pd.DataFrame) else _df_base()
-    except Exception:
-        return _df_base()
 
 # ---------------------------------- Main Gate ---------------------------------
 
@@ -1655,7 +1686,7 @@ with TAB1:
         try:
             _df_base = df
         except NameError:
-            _df_base = SS.get('df') if SS.get('df') is not None else (DF_FULL.copy() if 'DF_FULL' in globals() else pd.DataFrame())
+            _df_base = SS.get('df') if SS.get('df') is not None else (_df_copy_safe(DF_FULL) if 'DF_FULL' in globals() else pd.DataFrame())
         df = _df_base
         # Suggest types
         _num_cols = list(_df_base.select_dtypes(include=['number']).columns) if hasattr(_df_base, 'select_dtypes') else []
@@ -1698,7 +1729,7 @@ with TAB1:
             except Exception as e:
                 st.caption(f'Không thể tổng hợp phân loại: {e}')
 
-    df = DF_FULL.copy()
+    df = _df_copy_safe(DF_FULL)
     # Heuristic column mapping
     cols = df.columns.str.lower()
     def pick(patterns, prefer_numeric=False, prefer_datetime=False):
@@ -2359,7 +2390,7 @@ with TAB3:
 
 # ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
 with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
-    _dfb = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
+    _dfb = _df_copy_safe(DF_FULL) if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
     if _dfb is None:
         st.info('Chưa có dữ liệu.')
     else:
@@ -2687,7 +2718,7 @@ with TAB4:
 
 # ---------------- : Quick‑nav (lọc cột & auto-suggest + push Flags) ----------------
 with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
-    _df_v27 = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
+    _df_v27 = _df_copy_safe(DF_FULL) if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
     if _df_v27 is None:
         st.info('Chưa có dữ liệu. Vui lòng Load full data.')
     else:
@@ -3172,7 +3203,7 @@ with TAB7:
 
     # ---- Drill-down for abnormal Benford digits ----
     with st.expander('🔍 Drill-down (Benford)', expanded=False):
-        df = DF_FULL.copy()
+        df = _df_copy_safe(DF_FULL)
         cols = df.columns.str.lower()
         # heuristics
         amt_col = None
