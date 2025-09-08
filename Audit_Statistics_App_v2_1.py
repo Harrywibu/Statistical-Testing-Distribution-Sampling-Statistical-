@@ -2427,7 +2427,7 @@ with TAB2:
                 st_plotly(fig)
 
     # Datetime – Categorical
-                elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
+    elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
                     dt_col = var_x if tX=='Datetime' else var_y
                     cat_col = var_y if tY=='Categorical' else var_x
                     dt_col = var_x if tX=='Datetime' else var_y
