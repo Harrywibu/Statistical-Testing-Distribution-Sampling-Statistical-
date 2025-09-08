@@ -22,7 +22,7 @@ def _safe_loc_bool(df, mask):
     elif not isinstance(mask, (pd.Series,)):
         # not a boolean index; return empty slice to be safe
         return df.iloc[0:0].copy()
-    return df.loc[mask].copy()
+    return df= _safe_loc_bool(_dfb, mask)
 
 
 # ------------------------------ Unified Reader/Caster ------------------------------
@@ -1214,7 +1214,7 @@ ALL_COLS = list(_df_full_safe().columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
 NUM_COLS = _df_full_safe().select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = _df_full_safe().select_dtypes(include=['object','category','bool']).columns.tolist()
-VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 # — Sales risk context on FULL dataset only
 try:
     _sales = compute_sales_flags(DF_FULL)
@@ -1985,7 +1985,7 @@ with TAB1:
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
                                 st.dataframe(var, use_container_width=True, height=220)
-                    if run_corr and other_num in DF_FULL.columns:
+                    if run_corr and other_num in _df_full_safe().columns:
                         sub = DF_FULL[[num_col, other_num]].dropna()
                         if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
                         else:
@@ -3127,7 +3127,7 @@ with TAB7:
                     info_df = pd.DataFrame([
                         {'key':'generated_by','value':'Audit Statistics '},
                         {'key':'rows','value':len(DF_FULL)},
-                        {'key':'cols','value':len(DF_FULL.columns)},
+                        {'key':'cols','value':len(_df_full_safe().columns)},
                         {'key':'template_cols','value': '|'.join(SS.get('v28_template_cols') or [])}
                     ])
                     info_df.to_excel(writer, index=False, sheet_name='INFO')
@@ -3176,11 +3176,11 @@ with TAB7:
         cols = df.columns.str.lower()
         # heuristics
         amt_col = None
-        for c in DF_FULL.columns:
+        for c in _df_full_safe().columns:
             if pd.api.types.is_numeric_dtype(DF_FULL[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
                 amt_col = c; break
         date_col = None
-        for c in DF_FULL.columns:
+        for c in _df_full_safe().columns:
             if str(DF_FULL[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
                 date_col = c; break
         if date_col and not str(df[date_col].dtype).startswith('datetime'):
