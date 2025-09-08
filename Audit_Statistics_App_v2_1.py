@@ -1731,7 +1731,12 @@ with TAB1:
 
     df = _df_copy_safe(DF_FULL)
     # Heuristic column mapping
-    cols = df.columns.str.lower()
+    tmp_df = _df_base()
+    if tmp_df is None or getattr(tmp_df, 'empty', False):
+        tmp_df = _df_full_safe()
+    df = tmp_df
+    import pandas as pd
+    cols = pd.Index([str(c) for c in df.columns]).str.lower()
     def pick(patterns, prefer_numeric=False, prefer_datetime=False):
         idx = -1
         for i,c in enumerate(cols):
@@ -3204,7 +3209,12 @@ with TAB7:
     # ---- Drill-down for abnormal Benford digits ----
     with st.expander('🔍 Drill-down (Benford)', expanded=False):
         df = _df_copy_safe(DF_FULL)
-        cols = df.columns.str.lower()
+        tmp_df = _df_base()
+        if tmp_df is None or getattr(tmp_df, 'empty', False):
+            tmp_df = _df_full_safe()
+        df = tmp_df
+        import pandas as pd
+        cols = pd.Index([str(c) for c in df.columns]).str.lower()
         # heuristics
         amt_col = None
         for c in _df_full_safe().columns:
@@ -3212,7 +3222,7 @@ with TAB7:
                 amt_col = c; break
         date_col = None
         for c in _df_full_safe().columns:
-            if str(DF_FULL[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
+            if str(_df_full_safe()[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
                 date_col = c; break
         if date_col and not str(df[date_col].dtype).startswith('datetime'):
             try: df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
