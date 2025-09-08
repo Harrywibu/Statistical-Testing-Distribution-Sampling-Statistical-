@@ -1551,8 +1551,13 @@ with TAB1:
                 st.dataframe(_tplot, use_container_width=True)
         except Exception as e:
             st.warning(f'Không thể vẽ biểu đồ: {e}')
+        # Always show normalized table with unique columns
+        try:
+            st.dataframe(_tplot, use_container_width=True)
+        except Exception:
+            pass
 
-        st.dataframe(tdf, use_container_width=True)
+        st.dataframe(_tplot, use_container_width=True)
 
     # Advanced plots optional
     if show_adv and 'px.ecdf' in dir(px):
