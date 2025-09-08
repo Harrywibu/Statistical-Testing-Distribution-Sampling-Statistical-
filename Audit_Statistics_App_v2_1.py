@@ -1879,7 +1879,7 @@ with TAB1:
     navL, navR = st.columns([2,3])
     with navL:
                 col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
-        _df = _df_full_safe()
+                _df = _df_full_safe()
         if col_nav not in _df.columns:
             st.warning(f"⚠️ Cột '{col_nav}' không tồn tại trong dữ liệu đã nạp. Vui lòng chọn cột khác hoặc kiểm tra header.")
             s_nav = _df.iloc[:, 0] if len(_df.columns) else pd.Series([], name='empty')
