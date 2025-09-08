@@ -2418,34 +2418,32 @@ with TAB2:
             if HAS_PLOTLY:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
-    # Rolling mean overlay (user‑selectable window)
-    win = c3.slider('Rolling mean window (kỳ)', min_value=2, max_value=52, value=6, help='Số kỳ lăn để làm mượt chuỗi thời gian.')
-    try:
-        df_roll = df.sort_values('t').assign(roll_mean = _pd.Series(df.sort_values('t')['y']).rolling(win, min_periods=max(2, win//2)).mean().values)
-        if HAS_PLOTLY:
-            fig.add_trace(go.Scatter(x=df_roll['t'], y=df_roll['roll_mean'], name=f'Rolling mean (window={win})'))
-            fig.update_layout(legend=dict(orientation='h'))
-    except Exception as _e:
-        st.caption('Rolling mean không khả dụng: %s' % _e)
-        fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
-        st_plotly(fig)
+                # --- Rolling mean overlay ---
+                win = st.slider('Rolling mean window (periods)', 2, 52, 4, key='t2_roll')
+                if win >= 2:
+                    roll = df['y'].rolling(win).mean()
+                    fig.add_trace(go.Scatter(x=df['t'], y=roll, name=f'Rolling mean (win={win})'))
+                fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
+                st_plotly(fig)
 
     # Datetime – Categorical
-        elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
-        dt_col = var_x if tX=='Datetime' else var_y
-        cat_col = var_y if tY=='Categorical' else var_x
-        gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='t2_dt_cat_g')
-        per = _derive_period(DF_FULL, dt_col, gran)
-        df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
-        if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
-            st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
-        else:
-            V, p, chi2 = _cramers_v(df['period'], df['cat'])
-            st.dataframe(_pd.DataFrame([{'Cramér’s V (period×cat)': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
-            if HAS_PLOTLY:
-                tbl = _pd.crosstab(df['period'], df['cat'])
-                fig = px.imshow(tbl, text_auto=False, aspect='auto', title=f'Contingency: period × {cat_col}')
-                st_plotly(fig)
+                elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
+                    dt_col = var_x if tX=='Datetime' else var_y
+                    cat_col = var_y if tY=='Categorical' else var_x
+                    dt_col = var_x if tX=='Datetime' else var_y
+                    cat_col = var_y if tY=='Categorical' else var_x
+                    gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='t2_dt_cat_g')
+                    per = _derive_period(DF_FULL, dt_col, gran)
+                    df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
+                    if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
+                        st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
+                    else:
+                        V, p, chi2 = _cramers_v(df['period'], df['cat'])
+                        st.dataframe(_pd.DataFrame([{'Cramér’s V (period×cat)': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
+                        if HAS_PLOTLY:
+                            tbl = _pd.crosstab(df['period'], df['cat'])
+                            fig = px.imshow(tbl, text_auto=False, aspect='auto', title=f'Contingency: period × {cat_col}')
+                            st_plotly(fig)
 
     st.divider()
     # Optional: Numeric-only heatmap kept under expander for a cleaner UI
