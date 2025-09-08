@@ -6,6 +6,35 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# --- Safe helper: robust_suggest_cols_by_goal ---
+def robust_suggest_cols_by_goal(df, goal):
+    import pandas as pd
+    try:
+        if df is None:
+            return []
+        if isinstance(df, pd.Series):
+            df = df.to_frame()
+        elif not isinstance(df, pd.DataFrame):
+            # Try convert common table-like
+            try:
+                df = pd.DataFrame(df)
+            except Exception:
+                return []
+        cols = list(df.columns)
+        if not cols:
+            return []
+        # very light heuristic based on goal string
+        g = (goal or '').lower()
+        if 'date' in g or 'time' in g:
+            pref = [c for c in cols if 'date' in c.lower() or 'time' in c.lower()]
+            return pref or cols[:5]
+        if 'amount' in g or 'value' in g or 'revenue' in g or 'price' in g:
+            pref = [c for c in cols if any(k in c.lower() for k in ['amt','amount','value','revenue','price','qty','quantity'])]
+            return pref or cols[:5]
+        return cols[:5]
+    except Exception:
+        return []
+
 # ---- Safe boolean indexer to avoid IndexingError ----
 def _safe_loc_bool(df, mask):
     import pandas as pd
@@ -32,7 +61,7 @@ def _match_any(name: str, patterns):
     n = (name or '').lower()
     return any(p in n for p in patterns)
 
-def suggest_cols_by_goal(df: pd.DataFrame, goal: str):
+def robust_suggest_cols_by_goal(df: pd.DataFrame, goal: str):
     cols = list(df.columns)
     num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
     dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
@@ -1878,7 +1907,7 @@ with TAB1:
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
     with navL:
-        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
+                col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
         _df = _df_full_safe()
         if col_nav not in _df.columns:
             st.warning(f"⚠️ Cột '{col_nav}' không tồn tại trong dữ liệu đã nạp. Vui lòng chọn cột khác hoặc kiểm tra header.")
@@ -2238,7 +2267,7 @@ with TAB2:
         _df_t2 = DF_FULL
         _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
                             horizontal=True, key='t2_goal')
-        _sug_t2 = suggest_cols_by_goal(_df_t2, _goal_t2)
+        _sug_t2 = robust_suggest_cols_by_goal(_df_t2, _goal_t2)
         _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
         def _filter_cols_goal(cols):
             if not _only_t2: return cols
@@ -2601,7 +2630,7 @@ with TAB4:
             st.subheader('🧮 Sales Activity — Guided Tests')
             st.markdown("**Chọn mục tiêu kiểm tra:**")
             _goal = st.radio('', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_goal')
-            _sug = suggest_cols_by_goal(DF_FULL, _goal)
+            _sug = robust_suggest_cols_by_goal(DF_FULL, _goal)
             with st.expander('Gợi ý theo mục tiêu', expanded=False):
                 if _goal in ['Doanh thu','Giảm giá','Số lượng']:
                     st.write('- Dùng **Numeric tests** (Median vs Mean, Tail %>p95/%>p99, Zero-ratio).')
@@ -2752,7 +2781,7 @@ with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=
         st.info('Chưa có dữ liệu. Vui lòng Load full data.')
     else:
         _goal_v27 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_v27_goal')
-        _sug_v27 = suggest_cols_by_goal(_df_v27, _goal_v27)
+        _sug_v27 = robust_suggest_cols_by_goal(_df_v27, _goal_v27)
         _only_v27 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t4_v27_only')
         def _filter_v27(cols, key):
             if not _only_v27 or not _sug_v27.get(key): return cols
