@@ -1534,7 +1534,24 @@ with TAB1:
         except Exception as e:
             st.warning(f'Không thể nhóm theo {col_type}: {e}')
             tdf = pd.DataFrame({col_type: [], col_amt: []})
-        if HAS_PLOTLY: st_plotly(px.bar(tdf, x=col_type, y=col_amt))
+        # Avoid narwhals DuplicateError by normalizing plot columns
+        _tplot = tdf.copy()
+        try:
+            # ensure exactly two distinct column names for plotting
+            cols = list(_tplot.columns)
+            if len(cols) >= 2:
+                # if duplicate names or ambiguous, force canonical names
+                if len(set(cols[:2])) < 2:
+                    cols[0], cols[1] = 'Category', 'Value'
+                    _tplot.columns = cols
+                _tplot = _tplot.rename(columns={cols[0]:'Category', cols[1]:'Value'})[['Category','Value']]
+                fig = px.bar(_tplot, x='Category', y='Value')
+                if HAS_PLOTLY: st_plotly(fig)
+            else:
+                st.dataframe(_tplot, use_container_width=True)
+        except Exception as e:
+            st.warning(f'Không thể vẽ biểu đồ: {e}')
+
         st.dataframe(tdf, use_container_width=True)
 
     # Advanced plots optional
