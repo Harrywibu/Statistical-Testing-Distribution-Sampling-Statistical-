@@ -300,7 +300,7 @@ except Exception:
     HAS_SK = False
 
 # --------------------------------- App Config ---------------------------------
-st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
 
 # --- Safe dataframe accessors ---
@@ -1200,7 +1200,7 @@ if fname.lower().endswith('.csv'):
 
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
-    \1    # If this returns ['<csv>'], it means the uploaded file is CSV mislabeled as XLSX.
+        # If this returns ['<csv>'], it means the uploaded file is CSV mislabeled as XLSX.
     if sheets == ['<csv>']:
         st.info('Nhận diện là CSV. Vui lòng xử lý theo luồng CSV ở trên.');
     with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
