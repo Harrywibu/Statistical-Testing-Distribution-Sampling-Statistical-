@@ -348,9 +348,11 @@ for k, v in DEFAULTS.items():
 
 
 def require_full_data():
-    if SS.get('df') is None:
+    has_df = (SS.get('df') is not None) or ('DF_FULL' in globals()) or ('DF_FULL' in SS)
+    if not has_df:
         st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy Tabs.')
-        st.stop()
+        return False
+    return True
 
 
 # ------------------------------- Small Utilities ------------------------------
@@ -810,6 +812,19 @@ with st.sidebar.expander('0) Ingest data', expanded=True):
 
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=True):
+    SS.setdefault('preserve_results', True)
+    SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
+                                       help='Nếu bật, các kết quả/khung dữ liệu tạm sẽ được giữ trong Session State để không phải chạy lại khi chuyển tab.')
+    
+    # Risk/Test thresholds (can be referenced across tabs)
+    SS.setdefault('risk_params', {})
+    rp = SS['risk_params']
+    rp['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(rp.get('alpha', 0.05)), 0.001, help='Mặc định 0.05')
+    rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1, help='Z-score cao → bất thường')
+    rp['zero_ratio_thr'] = st.slider('Ngưỡng tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
+    rp['benford_dev_thr'] = st.slider('Ngưỡng lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5, help='Phần trăm điểm lệch so với kỳ vọng Benford')
+    st.caption('Gợi ý tham khảo chuẩn nghề (ví dụ Cassarino – Data Analytics for Internal Auditors), điều chỉnh tùy rủi ro.')
+    
     st.caption('Gợi ý: Bins ảnh hưởng độ mịn histogram; Log scale phù hợp khi phân phối lệch phải. KDE chỉ bật khi n không quá lớn để giữ hiệu năng. ')
     SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins',50), 5)
     SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
@@ -850,6 +865,199 @@ def v28_validate_headers(df_in):
     except Exception as e:
         return False, f"Lỗi kiểm tra TEMPLATE: {e}"
 
+
+# ======================= Distribution & Shape Dashboard Helpers =======================
+def _series_numeric(df, col):
+    import numpy as np, pandas as pd
+    s = pd.to_numeric(df[col], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+    return s
+
+def _summary_stats(s):
+    import numpy as np, pandas as pd
+    mode_val = s.mode().iloc[0] if not s.mode().empty else np.nan
+    desc = {
+        "Mean": float(s.mean()) if len(s) else np.nan,
+        "Median": float(s.median()) if len(s) else np.nan,
+        "Mode": float(mode_val) if mode_val==mode_val else np.nan,
+        "Std": float(s.std(ddof=1)) if len(s)>1 else np.nan,
+        "Variance": float(s.var(ddof=1)) if len(s)>1 else np.nan,
+        "Skewness": float(stats.skew(s)) if len(s)>2 else np.nan,
+        "Kurtosis": float(stats.kurtosis(s, fisher=True)) if len(s)>3 else np.nan,
+        "Min": float(s.min()) if len(s) else np.nan,
+        "Q1": float(s.quantile(0.25)) if len(s) else np.nan,
+        "Q3": float(s.quantile(0.75)) if len(s) else np.nan,
+        "Max": float(s.max()) if len(s) else np.nan,
+    }
+    return pd.DataFrame(desc, index=[0]).T.rename(columns={0:"Value"})
+
+def _normality_tests(s):
+    try:
+        if len(s) <= 5000:
+            stat, p = stats.shapiro(s)
+            method = "Shapiro-Wilk"
+        else:
+            stat, p = stats.normaltest(s)
+            method = "D’Agostino K²"
+    except Exception:
+        stat, p, method = float("nan"), float("nan"), "N/A"
+    return method, float(stat) if stat==stat else float("nan"), float(p) if p==p else float("nan")
+
+
+def _interpret_distribution(s, alpha, method, p, stats_df):
+    import numpy as np, pandas as pd
+    msgs = []
+    # Extract stats
+    def g(name):
+        try:
+            return float(stats_df.loc[name, "Value"])
+        except Exception:
+            return np.nan
+    mean = g("Mean"); median = g("Median"); mode = g("Mode")
+    std = g("Std"); var = g("Variance")
+    skew = g("Skewness"); kurt = g("Kurtosis")
+    q1 = g("Q1"); q3 = g("Q3"); vmin = g("Min"); vmax = g("Max")
+    iqr = q3 - q1 if (q3==q3 and q1==q1) else np.nan
+
+    # Central tendency
+    if np.isfinite(mean) and np.isfinite(median) and np.isfinite(std) and std > 0:
+        diff = abs(mean - median)
+        if diff <= 0.1*std:
+            msgs.append("Trung tâm: Mean ≈ Median (phân phối khá cân đối).")
+        elif mean > median:
+            msgs.append("Trung tâm: Mean > Median → có xu hướng lệch phải.")
+        else:
+            msgs.append("Trung tâm: Mean < Median → có xu hướng lệch trái.")
+    else:
+        msgs.append("Trung tâm: Không đủ thông tin để so sánh mean/median.")
+
+    # Skewness
+    if np.isfinite(skew):
+        if abs(skew) < 0.5:
+            msgs.append("Độ lệch (skewness) nhỏ → gần đối xứng.")
+        elif abs(skew) < 1.0:
+            msgs.append(f"Độ lệch (skewness) {skew:.2f} → lệch mức vừa ({'phải' if skew>0 else 'trái'}).")
+        else:
+            msgs.append(f"Độ lệch (skewness) {skew:.2f} → lệch mạnh ({'phải' if skew>0 else 'trái'}).")
+    else:
+        msgs.append("Độ lệch: chưa xác định.")
+
+    # Kurtosis (excess)
+    if np.isfinite(kurt):
+        if kurt > 1.0:
+            msgs.append(f"Độ nhọn (kurtosis) {kurt:.2f} → **đuôi dày** (heavy tails), rủi ro ngoại lệ cao.")
+        elif kurt < -1.0:
+            msgs.append(f"Độ nhọn (kurtosis) {kurt:.2f} → **đuôi mỏng** (light tails).")
+        else:
+            msgs.append(f"Độ nhọn (kurtosis) {kurt:.2f} → gần mức trung bình.")
+    else:
+        msgs.append("Độ nhọn: chưa xác định.")
+
+    # Outliers via IQR
+    try:
+        if np.isfinite(iqr) and iqr > 0:
+            lower = q1 - 1.5*iqr
+            upper = q3 + 1.5*iqr
+            out_ratio = float(((s < lower) | (s > upper)).mean())*100.0
+            if out_ratio >= 5:
+                msgs.append(f"Outliers (IQR): ~{out_ratio:.1f}% quan sát là ngoại lệ (≥5% là đáng chú ý).")
+            else:
+                msgs.append(f"Outliers (IQR): ~{out_ratio:.1f}% (thấp).")
+        else:
+            msgs.append("Outliers (IQR): không tính được do IQR không xác định.")
+    except Exception:
+        msgs.append("Outliers (IQR): không tính được.")
+
+    # Normality
+    if p == p:  # not NaN
+        if p < alpha:
+            msgs.append(f"Normality ({method}): p={p:.4f} < α={alpha} → **không chuẩn**.")
+        else:
+            msgs.append(f"Normality ({method}): p={p:.4f} ≥ α={alpha} → **không bác bỏ chuẩn tính**.")
+    else:
+        msgs.append(f"Normality ({method}): p không xác định.")
+
+    return msgs
+
+def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False, sigma_band=1.0):
+    import numpy as np, pandas as pd, plotly.graph_objects as go, plotly.express as px
+    import streamlit as st
+    s = _series_numeric(df, col)
+    if s.empty:
+        st.info("Cột được chọn không có dữ liệu số hợp lệ.")
+        return
+    st.markdown("**Descriptive statistics**")
+    stats_df = _summary_stats(s)
+    st.dataframe(stats_df, use_container_width=True)
+    method, stat, p = _normality_tests(s)
+    norm_msg = "KHÔNG bác bỏ H0 (gần chuẩn)" if (p==p and p>=alpha) else "Bác bỏ H0 (không chuẩn)"
+    st.caption(f"Normality test: {method} • statistic={stat:.3f} • p={p:.4f} • α={alpha} → {norm_msg}")
+    # Automatic interpretation
+    _notes = _interpret_distribution(s, alpha, method, p, stats_df)
+    if _notes:
+        st.markdown('**Gợi ý diễn giải tự động:**')
+        st.markdown('\n'.join(['- '+m for m in _notes]))
+
+    c1, c2 = st.columns(2); c3, c4 = st.columns(2)
+
+    # Fig1: Histogram + KDE + mean ± kσ
+    with c1:
+        mu, sd = float(s.mean()), float(s.std(ddof=1)) if len(s)>1 else 0.0
+        fig1 = px.histogram(s, nbins=int(bins), histnorm='probability density')
+        try:
+            kde_x = np.linspace(s.min(), s.max(), 200)
+            from scipy.stats import gaussian_kde
+            kde = gaussian_kde(s)
+            kde_y = kde.evaluate(kde_x)
+            fig1.add_trace(go.Scatter(x=kde_x, y=kde_y, mode='lines', name='KDE'))
+        except Exception:
+            pass
+        fig1.add_vline(x=mu, line_dash="dash", annotation_text="Mean", annotation_position="top")
+        if sd and sigma_band>0:
+            fig1.add_vline(x=mu+sigma_band*sd, line_dash="dot", annotation_text=f"+{sigma_band}σ")
+            fig1.add_vline(x=mu-sigma_band*sd, line_dash="dot", annotation_text=f"-{sigma_band}σ")
+        if log_scale:
+            fig1.update_xaxes(type="log")
+        fig1.update_layout(margin=dict(l=10,r=10,t=10,b=10))
+        st_plotly(fig1)
+        st.caption("Histogram + KDE: trung tâm (mean) và dải ±kσ; KDE giúp quan sát hình dạng đường cong.")
+
+    # Fig2: Box/Violin
+    with c2:
+        show_violin = st.toggle("Hiển thị Violin (thay Box)", value=False, key=f"violin_{col}")
+        if show_violin:
+            fig2 = px.violin(s, points=False, box=True)
+        else:
+            fig2 = go.Figure()
+            fig2.add_trace(go.Box(x=s, boxmean='sd', name=col, orientation='h'))
+        fig2.update_layout(margin=dict(l=10,r=10,t=10,b=10))
+        st_plotly(fig2)
+        st.caption("Box/Violin: Median, IQR và ngoại lệ (outliers).")
+
+    # Fig3: QQ-plot
+    with c3:
+        try:
+            osm, osr = stats.probplot(s, dist="norm", sparams=(), fit=False)
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(x=osm[0], y=osr, mode='markers', name='Data'))
+            slope, intercept = np.polyfit(osm[0], osr, 1)
+            line_x = np.array([min(osm[0]), max(osm[0])])
+            fig3.add_trace(go.Scatter(x=line_x, y=slope*line_x+intercept, mode='lines', name='Reference'))
+            fig3.update_layout(margin=dict(l=10,r=10,t=10,b=10))
+            st_plotly(fig3)
+        except Exception:
+            st.info("Không tạo được QQ-plot cho dữ liệu này.")
+        st.caption("QQ-plot: nếu điểm gần đường chéo → gần chuẩn; cong/đuôi lệch → không chuẩn.")
+
+    # Fig4: ECDF
+    with c4:
+        xs = np.sort(s.values)
+        ys = np.arange(1, len(xs)+1)/len(xs)
+        fig4 = go.Figure()
+        fig4.add_trace(go.Scatter(x=xs, y=ys, mode='markers', name='ECDF'))
+        fig4.update_layout(margin=dict(l=10,r=10,t=10,b=10), xaxis_title="Value", yaxis_title="ECDF")
+        st_plotly(fig4)
+        st.caption("ECDF: phân phối tích lũy thực nghiệm — giúp nhìn tail và phần trăm.")
+
 # ---------------------------------- Main Gate ---------------------------------
 
 # --------------------------- : Template & Validation ---------------------------
@@ -882,7 +1090,7 @@ with st.sidebar.expander('4) Template & Validation', expanded=False):
 
 st.title('📊 Audit Statistics')
 if SS['file_bytes'] is None:
-    st.info('Upload a file để bắt đầu.'); st.stop()
+    st.info('Upload a file để bắt đầu.'); # soft gate removed to avoid jumping tabs
 
 fname=SS['uploaded_name']; fb=SS['file_bytes']; sha=SS['sha12']
 colL, colR = st.columns([3,2])
@@ -920,7 +1128,8 @@ if fname.lower().endswith('.csv'):
                 _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
-                    st.stop()
+                    st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
+                    pass
 
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
@@ -962,17 +1171,19 @@ else:
                 _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
-                    st.stop()
+                    st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
+                    pass
 
             st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 
 if SS['df'] is None and SS['df_preview'] is None:
-    st.stop()
+    st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
+    pass
 
 # Source & typing
 DF_FULL = SS.get('df')
 if DF_FULL is None:
-    st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); st.stop()
+    st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); # soft gate removed to avoid jumping tabs
 
 ALL_COLS = list(DF_FULL.columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
@@ -1335,10 +1546,10 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Distribution', 'Trend & Corr', 'Benford', 'Tests', 'Regression', 'Flags', 'Risk & Export'])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Tests', 'Regression', 'Flags', 'Risk & Export'])
 
-# ---- TAB 0: Data Quality  ----
-with TAB0:
+# ---- (moved) Data Quality ----
+with TAB4:
     st.subheader('🧪 Data Quality — FULL dataset')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -1407,8 +1618,8 @@ with TAB0:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB0:
-
     st.subheader('📊 Overview — Sales activity')
+    st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
 
 with TAB1:
 
@@ -1937,8 +2148,8 @@ with TAB2:
             return _np.nan, _np.nan, _np.nan
 
     # —— UI ——
-    # ---- v2_7 Quick-nav inside Trend & Corr ----
-    with st.expander('⚙️ Quick-nav (v2_7) — lọc cột & auto-suggest', expanded=False):
+    # ----  Quick‑nav inside Trend & Corr ----
+    with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
         _df_t2 = DF_FULL
         _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
                             horizontal=True, key='t2_goal')
@@ -1964,7 +2175,7 @@ with TAB2:
         sX = DF_FULL[var_x]
         sY = DF_FULL[var_y]
     except Exception as e:
-        st.error(f'Lỗi chọn biến X/Y: {e}'); st.stop()
+        st.error(f'Lỗi chọn biến X/Y: {e}'); # soft gate removed to avoid jumping tabs
 
     tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
     tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
@@ -2121,8 +2332,8 @@ with TAB3:
     require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
 
-# ---------------- v2_7: Benford (combined 1D+2D) & Drill-down ----------------
-with st.expander('📦 Benford — 1D, 2D & Drill‑down', expanded=False):
+# ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
+with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
     _dfb = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
     if _dfb is None:
         st.info('Chưa có dữ liệu.')
@@ -2449,8 +2660,8 @@ with TAB4:
     except Exception as e:
         st.error(f'Lỗi khi chạy Tests: {e}')
 
-# ---------------- v2_7: Quick-nav (lọc cột & auto-suggest + push Flags) ----------------
-with st.expander('⚙️ Quick-nav (v2_7) — lọc cột & auto-suggest', expanded=False):
+# ---------------- : Quick‑nav (lọc cột & auto-suggest + push Flags) ----------------
+with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
     _df_v27 = DF_FULL.copy() if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
     if _df_v27 is None:
         st.info('Chưa có dữ liệu. Vui lòng Load full data.')
@@ -2489,7 +2700,7 @@ with st.expander('⚙️ Quick-nav (v2_7) — lọc cột & auto-suggest', expan
                 {'flag':'Zero ratio','column': _cn, 'value': _zero, 'threshold': 0.20, 'note': 'Nhiều 0 ⇒ kiểm tra quy trình ghi nhận'}
             ]
             SS['fraud_flags'] = _flags
-            st.success('Đã đẩy 3 gợi ý cờ sang Tab Flags (v2_7)')
+            st.success('Đã đẩy 3 gợi ý cờ sang Tab Flags ')
 
 with TAB5:
     require_full_data()
