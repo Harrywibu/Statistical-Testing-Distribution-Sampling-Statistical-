@@ -6,6 +6,178 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# ------------------------------ Unified Reader/Caster ------------------------------
+
+# ------------------------------ Goal-based column suggestions ------------------------------
+def _match_any(name: str, patterns):
+    n = (name or '').lower()
+    return any(p in n for p in patterns)
+
+def suggest_cols_by_goal(df: pd.DataFrame, goal: str):
+    cols = list(df.columns)
+    num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+    dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
+    cat_cols = [c for c in cols if (not pd.api.types.is_numeric_dtype(df[c])) and (not pd.api.types.is_datetime64_any_dtype(df[c]))]
+
+    # name-based patterns
+    pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net']
+    pat_discount = ['discount','giam','disc','rebate','promo']
+    pat_qty      = ['qty','quantity','so_luong','soluong','units','unit','volume']
+    pat_customer = ['customer','cust','khach','client','buyer','account','party']
+    pat_product  = ['product','sku','item','hang','ma_hang','mat_hang','goods','code','product_id']
+    pat_time     = ['date','time','ngay','thoi_gian','period','posting','invoice_date','doc_date','posting_date']
+
+    sug_num = None; sug_cat = None; sug_dt = None
+
+    if goal in ('Doanh thu','Giảm giá'):
+        # prefer amount-like numeric
+        for c in num_cols:
+            if _match_any(c, pat_amount + (pat_discount if goal=='Giảm giá' else [])):
+                sug_num = c; break
+    if goal == 'Số lượng':
+        for c in num_cols:
+            if _match_any(c, pat_qty):
+                sug_num = c; break
+    if goal in ('Khách hàng','Sản phẩm'):
+        base = pat_customer if goal=='Khách hàng' else pat_product
+        for c in cat_cols:
+            if _match_any(c, base):
+                sug_cat = c; break
+    if goal == 'Thời điểm':
+        for c in dt_cols:
+            if _match_any(c, pat_time):
+                sug_dt = c; break
+
+    # Fallbacks
+    if sug_num is None and num_cols: sug_num = num_cols[0]
+    if sug_cat is None and cat_cols: sug_cat = cat_cols[0]
+    if sug_dt  is None and dt_cols:  sug_dt  = dt_cols[0]
+
+    return {'num': sug_num, 'cat': sug_cat, 'dt': sug_dt}
+
+
+NA_VALUES = ['', 'nan', 'na', 'null', 'none', 'N/A', 'NaN', 'NA', 'NULL', None]
+
+def _detect_locale_pattern(sample_list):
+    """Detect decimal/thousands separators from strings; return (thousands, decimal)."""
+    import re
+    dot_as_decimal = 0; comma_as_decimal = 0
+    for x in sample_list[:500]:
+        s = str(x).strip()
+        if not s or not re.search(r"[0-9]", s): continue
+        if ',' in s and '.' in s:
+            if s.rfind(',') > s.rfind('.'): comma_as_decimal += 1
+            else: dot_as_decimal += 1
+        elif ',' in s:
+            parts = s.split(',')
+            if len(parts)==2 and len(parts[1]) in (1,2): comma_as_decimal += 1
+        elif '.' in s:
+            parts = s.split('.')
+            if len(parts)==2 and len(parts[1]) in (1,2): dot_as_decimal += 1
+    return ('.', ',') if comma_as_decimal > dot_as_decimal else (',', '.')
+
+def _normalize_numeric_text_series(s):
+    import pandas as _pd
+    if getattr(s,'dtype',None) != object: return s
+    sample = _pd.Series(s.dropna().astype(str).head(200)).tolist()
+    thousands, decimal = _detect_locale_pattern(sample)
+    ss = s.astype(str).str.replace(r"\s", "", regex=True)
+    if thousands: ss = ss.str.replace(thousands, "", regex=False)
+    if decimal and decimal!='.': ss = ss.str.replace(decimal, ".", regex=False)
+    return ss
+
+def _coerce_numeric_series(s):
+    if getattr(s,'dtype',None) == object:
+        s = _normalize_numeric_text_series(s)
+    return pd.to_numeric(s, errors='coerce')
+
+def cast_frame(df: pd.DataFrame, dayfirst=True, datetime_like_cols=None):
+    datetime_like_cols = set(datetime_like_cols or [])
+    for c in df.columns:
+        s = df[c]
+        if (c in datetime_like_cols) or (s.dtype==object and s.astype(str).str.contains(r"\d{4}-\d{1,2}-\d{1,2}|\/").mean()>0.3):
+            try:
+                df[c] = pd.to_datetime(s, errors='coerce', dayfirst=dayfirst, infer_datetime_format=True)
+            except Exception:
+                df[c] = pd.to_datetime(s, errors='coerce')
+        elif pd.api.types.is_numeric_dtype(s):
+            df[c] = pd.to_numeric(s, errors='coerce')
+        else:
+            s_num = _coerce_numeric_series(s)
+            if s_num.notna().mean()>0.6:
+                df[c] = s_num
+    return df
+
+def read_any(file_bytes: bytes, ext: str, header=0, sheet_name=None, usecols=None, dayfirst=True):
+    """Unified loader for CSV/XLSX/Parquet/Feather with NA map and type casting."""
+    import io
+    bio = io.BytesIO(file_bytes)
+    ext = (ext or '').lower().strip('.')
+    if ext in ('csv','txt'):
+        df = read_any(SS['file_bytes'], Path(SS['uploaded_name']).suffix, header=SS.get('header_row',1)-1, sheet_name=SS.get('xlsx_sheet','') or None)
+    elif ext in ('xlsx','xls'):
+        try:
+            df = pd.read_excel(bio, na_values=NA_VALUES, header=header if header is not None else 0, sheet_name=sheet_name, engine='openpyxl')
+        except Exception:
+            df = pd.read_excel(bio, na_values=NA_VALUES, header=header if header is not None else 0, sheet_name=sheet_name)
+    elif ext in ('parquet','pq'):
+        df = pd.read_parquet(bio)
+    elif ext in ('feather','ft'):
+        try:
+            import pyarrow.feather as _feather
+            tbl = _feather.read_table(bio)
+            df = tbl.to_pandas()
+        except Exception:
+            df = pd.read_feather(bio)
+    else:
+        try:
+            df = pd.read_parquet(bio)
+        except Exception as e:
+            raise ValueError(f'Unsupported file extension: {ext}') from e
+    if usecols is not None:
+        try: df = df[usecols]
+        except Exception: pass
+    return cast_frame(df, dayfirst=dayfirst)
+
+
+# ------------------------------ Goal-based column suggestions ------------------------------
+def suggest_goal_columns(df: pd.DataFrame):
+    """Return heuristic suggestions for business goals.
+    Keys: revenue, discount, quantity, customer, product, time
+    """
+    cols = list(df.columns)
+    low = {c: c.lower() for c in cols}
+    def find_any(keys, dtype=None):
+        cand = []
+        for c in cols:
+            lc = low[c]
+            if any(k in lc for k in keys):
+                if dtype == 'num' and pd.api.types.is_numeric_dtype(df[c]): cand.append(c)
+                elif dtype == 'cat' and (not pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_datetime64_any_dtype(df[c])): cand.append(c)
+                elif dtype == 'dt' and pd.api.types.is_datetime64_any_dtype(df[c]): cand.append(c)
+                elif dtype is None: cand.append(c)
+        return cand
+    sug = {
+        'revenue':   find_any(['amount','revenue','sales','gross','net','total','thu','tien'], dtype='num'),
+        'discount':  find_any(['discount','giam','chiết khấu','ck'], dtype='num'),
+        'quantity':  find_any(['qty','quantity','số lượng','soluong','q\'ty'], dtype='num'),
+        'customer':  find_any(['customer','client','khach','cust','buyer'], dtype=None),
+        'product':   find_any(['product','item','sku','material','hàng','hang','sp','mã'], dtype=None),
+        'time':      find_any(['date','ngày','ngay','time','datetime','created','posted','invoice'], dtype='dt'),
+    }
+    # fallbacks: choose some reasonable defaults
+    if not sug['time']:
+        # try castable datetime columns
+        try:
+            cands = [c for c in cols if df[c].dtype==object and pd.to_datetime(df[c], errors='coerce').notna().mean()>0.5]
+            sug['time'] = cands[:1]
+        except Exception:
+            pass
+    return sug
+
+
+
+
 from inspect import signature
 
 # ---- Arrow sanitization ----
@@ -139,6 +311,13 @@ DEFAULTS = {
 }
 for k, v in DEFAULTS.items():
     SS.setdefault(k, v)
+
+
+def require_full_data():
+    if SS.get('df') is None:
+        st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy Tabs.')
+        st.stop()
+
 
 # ------------------------------- Small Utilities ------------------------------
 def file_sha12(b: bytes) -> str:
@@ -708,63 +887,6 @@ except Exception:
 
 
 
-# — Sales risk context computed on currently active dataset (FULL if available else PREVIEW)
-try:
-    _BASE_DF = DF_FULL if SS.get('df') is not None else DF_FULL
-    _sales = compute_sales_flags(_BASE_DF)
-    SS['sales_summary'] = _sales.get('summary', {})
-    # Merge with any existing flags (e.g., off-hours) if present
-    SS['fraud_flags'] = (_sales.get('flags', []) or [])
-except Exception:
-    pass
-
-
-@st.cache_data(ttl=900, show_spinner=False, max_entries=64)
-def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
-    try:
-        if df is None or not isinstance(df, pd.DataFrame):
-            return False
-    except Exception:
-        return False
-
-    for c in (cols or [])[:20]:
-        if c not in df.columns:
-            continue
-
-        s = pd.to_numeric(df[c], errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
-        if len(s) < 50:
-            continue
-
-        sk, ku, tail, p_norm = 0.0, 0.0, 0.0, 1.0  # defaults
-
-        try:
-            if len(s) > 2:
-                sk = float(stats.skew(s))
-        except Exception:
-            pass
-
-        try:
-            if len(s) > 3:
-                ku = float(stats.kurtosis(s, fisher=True))
-        except Exception:
-            pass
-
-        try:
-            p99 = s.quantile(0.99)
-            if pd.notna(p99):
-                tail = float((s > p99).mean())
-        except Exception:
-            pass
-
-        try:
-            if len(s) > 20:
-                p_norm = float(stats.normaltest(s)[1])
-        except Exception:
-            pass
-
-        if (abs(sk) > 1) or (abs(ku) > 3) or (tail > 0.02) or (p_norm < 0.05):
-            return True
-    return False
 
 # ------------------------------ Rule Engine Core ------------------------------
 
@@ -1184,6 +1306,7 @@ with TAB0:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
+    require_full_data()
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
     with navL:
@@ -1267,6 +1390,8 @@ with TAB1:
                     with gC:
                         try:
                             fig3 = px.ecdf(s, title=f'{num_col} — ECDF'); st_plotly(fig3)
+                            st.caption(f"**Diễn giải:** ECDF của **{num_col}**: tỷ lệ tích luỹ; đuôi dốc/nhảy bậc ⇒ có cụm giá trị/ghi nhận lạ.")
+                            st.caption(f"**Diễn giải:** ECDF của **{num_col}** cho thấy tỷ lệ tích luỹ; đuôi dốc/nhảy bậc bất thường ⇒ có cụm giá trị/ghi nhận bất thường.")
                         except Exception: st.caption('ECDF yêu cầu plotly phiên bản hỗ trợ px.ecdf.')
                     with gD:
                         try:
@@ -1276,12 +1401,16 @@ with TAB1:
                             lim=[min(xq.min(),yq.min()), max(xq.max(),yq.max())]
                             fig4.add_trace(go.Scatter(x=lim, y=lim, mode='lines', line=dict(dash='dash')))
                             fig4.update_layout(title=f'{num_col} — QQ Normal', height=320); st_plotly(fig4)
+                            st.caption(f"**Diễn giải:** QQ‑plot của **{num_col}**: lệch khỏi đường chéo ⇒ đuôi lệch/không chuẩn; cân nhắc winsorize/biến đổi log.")
+                            st.caption(f"**Diễn giải:** QQ‑plot của **{num_col}**: điểm lệch xa đường chéo ⇒ đuôi lệch/không chuẩn; cân nhắc winsorize/biến đổi log.")
                         except Exception: st.caption('Cần SciPy cho QQ plot.')
                     if SS['advanced_visuals']:
                         gE,gF = st.columns(2)
                         with gE:
                             figv = px.violin(pd.DataFrame({num_col:s}), x=num_col, points='outliers', box=True, title=f'{num_col} — Violin')
                             st_plotly(figv)
+                            st.caption(f"**Diễn giải:** Violin của **{num_col}**: mật độ & outlier; nếu có 2 đỉnh ⇒ cần tách nhóm/soi nguyên nhân.")
+                            st.caption(f"**Diễn giải:** Violin của **{num_col}** cho thấy mật độ & outlier; phân bố 2 đỉnh ⇒ cần tách nhóm/soi nguyên nhân.")
                         with gF:
                             v=np.sort(s.values)
                             if len(v)>0 and v.sum()!=0:
@@ -1291,6 +1420,8 @@ with TAB1:
                                 figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
                                 figL.update_layout(title=f'{num_col} — Lorenz (Gini={gini:.3f})', height=320)
                                 st_plotly(figL)
+                                st.caption(f"**Diễn giải:** Lorenz/Gini của **{num_col}**: Gini↑ ⇒ giá trị tập trung vào ít đối tượng; khoanh vùng để kiểm tra.")
+                                st.caption(f"**Diễn giải:** Lorenz/Gini của **{num_col}**: Gini↑ ⇒ giá trị tập trung vào ít đối tượng; khoanh vùng để kiểm tra.")
                             else:
                                 st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
 
@@ -1385,7 +1516,16 @@ with TAB1:
                     else:
                         st_df(df_r, use_container_width=True, height=240)
 
-    # ---------- Categorical ----------
+    
+    with st.expander('📌 Ghi chú chi tiết (Numeric plots)', expanded=False):
+        st.markdown(
+            f"- **Histogram/KDE ({'{'}SS.get('last_numeric_profile', {{}}).get('column','col'){'}'} )**: xem đỉnh/đuôi, đa đỉnh → kiểm tra outlier/quy trình.\n"
+            f"- **ECDF**: tỷ lệ tích luỹ; đuôi dốc/nhảy bậc bất thường ⇒ có cụm giá trị/ghi nhận lạ.\n"
+            f"- **QQ**: điểm xa đường chéo ⇒ đuôi lệch/không chuẩn; cân nhắc winsorize/biến đổi log.\n"
+            f"- **Violin**: mật độ & outlier; phân phối 2 đỉnh ⇒ cần tách nhóm để phân tích.\n"
+            f"- **Lorenz/Gini**: Gini↑ ⇒ tập trung vào ít đối tượng; khoanh vùng & điều tra."
+        )
+# ---------- Categorical ----------
     with sub_cat:
         if not CAT_COLS:
             st.info('Không phát hiện cột categorical.')
@@ -1436,6 +1576,7 @@ with TAB1:
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
+    require_full_data()
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -1684,6 +1825,7 @@ with TAB2:
         else:
             st_df(df_corr, use_container_width=True, height=200)
 with TAB3:
+    require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
@@ -1796,6 +1938,60 @@ with TAB3:
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
 with TAB4:
+
+    require_full_data()
+    st.subheader('🧮 Sales Activity — Guided Tests')
+    st.markdown("**Chọn mục tiêu kiểm tra:**")
+    _goal = st.radio('', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_goal')
+    _sug = suggest_cols_by_goal(DF_FULL, _goal)
+    with st.expander('Gợi ý theo mục tiêu', expanded=False):
+        if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+            st.write('- Dùng **Numeric tests** (Median vs Mean, Tail %>p95/%>p99, Zero-ratio).')
+        if _goal in ['Khách hàng','Sản phẩm']:
+            st.write('- Dùng **Categorical tests** (HHI/Pareto, Rare category, Chi-square GoF).')
+        if _goal in ['Thời điểm']:
+            st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
+    
+        with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+            ch = []
+            if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+                ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
+            if _goal in ['Khách hàng','Sản phẩm']:
+                ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
+            if _goal in ['Thời điểm']:
+                ch += ['Rolling mean/variance','Run-test approx']
+            checked = {}
+            cols = st.columns(2) if len(ch) > 4 else [st]
+            for i, name in enumerate(ch):
+                container = cols[i % len(cols)]
+                with container:
+                    checked[name] = st.checkbox(name, key=f"chk_{i}")
+            if any(checked.values()):
+                st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
+            else:
+                st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
+        
+        st.markdown('---')
+        with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+            ch = []
+            if _goal in ['Doanh thu','Giảm giá','Số lượng']:
+                ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
+            if _goal in ['Khách hàng','Sản phẩm']:
+                ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
+            if _goal in ['Thời điểm']:
+                ch += ['Rolling mean/variance','Run-test approx']
+            checked = {}
+            cols = st.columns(2) if len(ch) > 4 else [st]
+            for i, name in enumerate(ch):
+                container = cols[i % len(cols)]
+                with container:
+                    checked[name] = st.checkbox(name, key=f"chk_{i}")
+            # Summarize selection
+            if any(checked.values()):
+                st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
+            else:
+                st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
+        
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
@@ -1889,6 +2085,7 @@ with TAB4:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB5:
+    require_full_data()
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
@@ -2066,6 +2263,7 @@ with TAB5:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
+    require_full_data()
     st.subheader('🚩 Fraud Flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
@@ -2227,6 +2425,7 @@ with TAB6:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
+    require_full_data()
     left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
@@ -2297,3 +2496,4 @@ with TAB7:
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
 
+# End of file
