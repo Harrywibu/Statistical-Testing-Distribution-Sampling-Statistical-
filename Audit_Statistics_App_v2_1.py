@@ -2873,7 +2873,19 @@ with TAB6:
             if FLAG_DF is DF_FULL and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
-    group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
+    _base_df = FLAG_DF if isinstance(globals().get('FLAG_DF'), pd.DataFrame) else _df_full_safe()
+    _cols = list(_base_df.columns) if isinstance(_base_df, pd.DataFrame) else []
+    
+    # Áp whitelist (nếu có & là list/tuple/set)
+    wl = SS.get('col_whitelist')
+    if isinstance(wl, (list, tuple, set)) and wl:
+        _cols = [c for c in _cols if c in wl]
+    
+    group_cols = st.multiselect(
+        'Composite key để dò trùng (tuỳ chọn)',
+        options=_cols,
+        key='ff_groups'
+    )
 
     with st.expander('⚙️ Tham số quét cờ (điều chỉnh được)'):
         c1,c2,c3 = st.columns(3)
