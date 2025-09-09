@@ -1,7 +1,6 @@
 from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
 
-
 # ## GLOBAL HELPERS: dtype checks (always available)
 try:
     _GLOBAL_HELPERS_READY
@@ -67,15 +66,12 @@ def _safe_loc_bool(df, mask):
         return df.iloc[0:0].copy()
     return df.loc[mask].copy()
 
-
 # ------------------------------ Unified Reader/Caster ------------------------------
 
 # ------------------------------ Goal-based column suggestions ------------------------------
 def _match_any(name: str, patterns):
     n = (name or '').lower()
     return any(p in n for p in patterns)
-
-
 
 def robust_suggest_cols_by_goal(df, goal):
     """
@@ -191,7 +187,6 @@ def read_any(file_bytes: bytes, ext: str, header=0, sheet_name=None, usecols=Non
         except Exception: pass
     return cast_frame(df, dayfirst=dayfirst)
 
-
 # ------------------------------ Goal-based column suggestions ------------------------------
 def suggest_goal_columns(df: pd.DataFrame):
     """Return heuristic suggestions for business goals.
@@ -226,9 +221,6 @@ def suggest_goal_columns(df: pd.DataFrame):
         except Exception:
             pass
     return sug
-
-
-
 
 from inspect import signature
 
@@ -276,7 +268,7 @@ try:
     _df_supports_width = 'width' in _df_params
 except Exception:
     _df_supports_width = False
-    
+
 def st_df(data=None, **kwargs):
     if _df_supports_width:
         if kwargs.pop('use_container_width', None) is True:
@@ -286,7 +278,6 @@ def st_df(data=None, **kwargs):
     else:
         kwargs.setdefault('use_container_width', True)
     return st.dataframe(data, **kwargs)  # Không gọi lại st_df
-
 
 from scipy import stats
 
@@ -335,10 +326,10 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
+SS.setdefault('alpha', 0.05)
 SS.setdefault('dtype_choice','')
 
 SS.setdefault('signals', {})
-
 
 def _is_df(x):
     import pandas as pd
@@ -400,7 +391,6 @@ def _df_copy_safe(x):
     except Exception:
         return pd.DataFrame()
 
-
 # ---- Safe DataFrame accessor ----
 def _get_df_base():
     try:
@@ -416,10 +406,8 @@ def _get_df_base():
         import pandas as pd
         return pd.DataFrame()
 
-
-
 # ——— Preview banner helper ———
-        
+
 DEFAULTS = {
     'bins': 50,
     'log_scale': False,
@@ -444,7 +432,6 @@ DEFAULTS = {
 for k, v in DEFAULTS.items():
     SS.setdefault(k, v)
 
-
 def require_full_data():
     has_df = (SS.get('df') is not None) or ('DF_FULL' in globals() and isinstance(DF_FULL, pd.DataFrame)) or ('DF_FULL' in SS)
     if not has_df:
@@ -454,7 +441,6 @@ def require_full_data():
 
         return False
     return True
-
 
 # ------------------------------- Small Utilities ------------------------------
 def file_sha12(b: bytes) -> str:
@@ -489,7 +475,6 @@ def _downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
         df[c] = pd.to_numeric(df[c], downcast='integer')
     return df
 
-
 # --- Ensure unique column names to avoid Plotly/Narwhals DuplicateError ---
 def ensure_unique_columns(df):
     try:
@@ -518,7 +503,6 @@ def ensure_unique_columns(df):
         return df
     except Exception:
         return df
-
 
 def to_float(x) -> Optional[float]:
     from numbers import Real
@@ -628,30 +612,30 @@ def cat_freq(series: pd.Series) -> pd.DataFrame:
 def gof_models(series: pd.Series):
     s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
     if s.empty:
-        return pd.DataFrame(columns=['model','AIC']), 'Normal', 'Không đủ dữ liệu để ước lượng.'
+        return pd.DataFrame(columns=['model',' ']), 'Normal', 'Không đủ dữ liệu để ước lượng.'
     out=[]
     mu=float(s.mean()); sigma=float(s.std(ddof=0)); sigma=sigma if sigma>0 else 1e-9
     logL_norm=float(np.sum(stats.norm.logpdf(s, loc=mu, scale=sigma)))
-    AIC_norm=2*2-2*logL_norm; out.append({'model':'Normal','AIC':AIC_norm})
+    AIC_norm=2*2-2*logL_norm; out.append({'model':'Normal',' ':AIC_norm})
     s_pos=s[s>0]; lam=None
     if len(s_pos)>=5:
         try:
             shape_ln, loc_ln, scale_ln = stats.lognorm.fit(s_pos, floc=0)
             logL_ln=float(np.sum(stats.lognorm.logpdf(s_pos, shape_ln, loc=loc_ln, scale=scale_ln)))
-            AIC_ln=2*3-2*logL_ln; out.append({'model':'Lognormal','AIC':AIC_ln})
+            AIC_ln=2*3-2*logL_ln; out.append({'model':' ',' ':AIC_ln})
         except Exception: pass
         try:
             a_g, loc_g, scale_g = stats.gamma.fit(s_pos, floc=0)
             logL_g=float(np.sum(stats.gamma.logpdf(s_pos, a_g, loc=loc_g, scale=scale_g)))
-            AIC_g=2*3-2*logL_g; out.append({'model':'Gamma','AIC':AIC_g})
+            AIC_g=2*3-2*logL_g; out.append({'model':' ',' ':AIC_g})
         except Exception: pass
         try:
             lam=float(stats.boxcox_normmax(s_pos))
         except Exception: lam=None
-    gof=pd.DataFrame(out).sort_values('AIC').reset_index(drop=True)
+    gof=pd.DataFrame(out).sort_values(' ').reset_index(drop=True)
     best=gof.iloc[0]['model'] if not gof.empty else 'Normal'
-    if best=='Lognormal': suggest='Log-transform trước test tham số; cân nhắc Median/IQR.'
-    elif best=='Gamma':
+    if best==' ': suggest='Log-transform trước test tham số; cân nhắc Median/IQR.'
+    elif best==' ':
         suggest=f'Box-Cox (λ≈{lam:.2f}) hoặc log-transform; sau đó test tham số.' if lam is not None else 'Box-Cox hoặc log-transform; sau đó test tham số.'
     else:
         suggest='Không cần biến đổi (gần Normal).'
@@ -933,13 +917,7 @@ with st.expander('0) Ingest data', expanded=False):
     SS.setdefault('risk_params', {})
     rp = SS.get('risk_params')
 
-
-
-
-
 # [Removed sidebar '2) Risk & Advanced']
-
-
 
 # --------------------------- : Template validator ---------------------------
 def v28_validate_headers(df_in):
@@ -964,7 +942,6 @@ def v28_validate_headers(df_in):
         return True, f"OK. Dữ liệu có {len(df_in):,} dòng, {len(df_in.columns)} cột."
     except Exception as e:
         return False, f"Lỗi kiểm tra TEMPLATE: {e}"
-
 
 # ======================= Distribution & Shape Dashboard Helpers =======================
 def _series_numeric(df, col):
@@ -1001,7 +978,6 @@ def _normality_tests(s):
     except Exception:
         stat, p, method = float("nan"), float("nan"), "N/A"
     return method, float(stat) if stat==stat else float("nan"), float(p) if p==p else float("nan")
-
 
 def _interpret_distribution(s, alpha, method, p, stats_df):
     import numpy as np, pandas as pd
@@ -1119,7 +1095,7 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
             fig1.update_xaxes(type="log")
         fig1.update_layout(margin=dict(l=10,r=10,t=10,b=10))
         st_plotly(fig1)
-        
+
         try:
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num) > 0:
@@ -1168,7 +1144,6 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
         fig4.update_layout(margin=dict(l=10,r=10,t=10,b=10), xaxis_title="Value", yaxis_title="ECDF")
         st_plotly(fig4)
         st.caption("ECDF: phân phối tích lũy thực nghiệm — giúp nhìn tail và phần trăm.")
-
 
 # ---------------------- Safe DF accessors ----------------------
 
@@ -1341,9 +1316,6 @@ try:
     SS['fraud_flags'] = existing_flags + (_sales.get('flags', []) or [])
 except Exception:
     pass
-
-
-
 
 # ------------------------------ Rule Engine Core ------------------------------
 
@@ -1539,59 +1511,10 @@ def rules_catalog() -> List[Rule]:
         action='Benford 1D/2D; xem cut‑off cuối kỳ; rà soát outliers/drill‑down.',
         rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
     ))
-    # GoF suggests transform
-    R.append(Rule(
-        id='GOF_TRANSFORM', name='Nên biến đổi (log/Box‑Cox)', scope='profiling', severity='Info',
-        condition=lambda c: bool(_get(c,'gof','suggest')) and _get(c,'gof','best') in {'Lognormal','Gamma'},
-        action='Áp dụng log/Box‑Cox trước các test tham số hoặc dùng phi tham số.',
-        rationale='Phân phối lệch/không chuẩn — biến đổi giúp thỏa giả định tham số.'
-    ))
-    # Benford 1D
-    R.append(Rule(
-        id='BENFORD_1D_SEV', name='Benford 1D lệch', scope='benford', severity='High',
-        condition=lambda c: (_get(c,'benford','r1') is not None) and \
-            ((_get(c,'benford','r1','p', default=1.0) < 0.05) or (_get(c,'benford','r1','MAD', default=0) > 0.012) or \
-             (_get(c,'benford','r1_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
-        action='Drill‑down nhóm digit chênh nhiều; đối chiếu nhà CC/kỳ; kiểm tra cut‑off.',
-        rationale='Lệch Benford gợi ý thresholding/làm tròn/chia nhỏ hóa đơn.'
-    ))
-    # Benford 2D
-    R.append(Rule(
-        id='BENFORD_2D_SEV', name='Benford 2D lệch', scope='benford', severity='Medium',
-        condition=lambda c: (_get(c,'benford','r2') is not None) and \
-            ((_get(c,'benford','r2','p', default=1.0) < 0.05) or (_get(c,'benford','r2','MAD', default=0) > 0.012) or \
-             (_get(c,'benford','r2_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
-        action='Xem hot‑pair (19/29/…); đối chiếu chính sách giá; không mặc định là gian lận.',
-        rationale='Mẫu cặp chữ số đầu bất thường có thể phản ánh hành vi định giá.'
-    ))
-    # Categorical — HHI high
-    R.append(Rule(
-        id='HHI_HIGH', name='Tập trung nhóm cao (HHI)', scope='tests', severity='Medium',
-        condition=lambda c: _get(c,'t4','hhi','hhi', default=0) > _get(c,'thr','hhi'),
-        action='Đánh giá rủi ro phụ thuộc nhà cung cấp/GL; kiểm soát phê duyệt.',
-        rationale='HHI cao cho thấy rủi ro tập trung vào ít nhóm.'
-    ))
-    # Categorical — Chi-square significant
-    R.append(Rule(
-        id='CGOF_SIG', name='Chi‑square GoF khác Uniform', scope='tests', severity='Medium',
-        condition=lambda c: _get(c,'t4','cgof','p', default=1.0) < 0.05,
-        action='Drill‑down residual lớn; xem data quality/policy phân loại.',
-        rationale='Sai khác mạnh so với uniform gợi ý phân phối lệch có chủ đích.'
-    ))
-    # Time — Gap large
-    R.append(Rule(
-        id='TIME_GAP_LARGE', name='Khoảng cách thời gian lớn (p95)', scope='tests', severity='Low',
-        condition=lambda c: to_float(_get(c,'t4','gap','gaps','gap_hours','describe','95%', default=np.nan)) or False,
-        action='Xem kịch bản bỏ sót/chèn nghiệp vụ; đối chiếu lịch chốt.',
-        rationale='Khoảng trống dài bất thường có thể do quy trình/ghi nhận không liên tục.'
-    ))
-    # Correlation — high multicollinearity
-    def _corr_high(c: Dict[str,Any]):
-        M = _get(c,'corr');
-        if not isinstance(M, pd.DataFrame) or M.empty: return False
-        thr = _get(c,'thr','corr_high', default=0.9)
-        tri = M.where(~np.eye(len(M), dtype=bool))
-        return np.nanmax(np.abs(tri.values)) >= thr
+    # [removed] GoF/  model comparison (not in trimmed spec)
+
+    tri = M.where(~np.eye(len(M), dtype=bool))
+    return np.nanmax(np.abs(tri.values)) >= thr
     R.append(Rule(
         id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
         condition=_corr_high,
@@ -1630,7 +1553,7 @@ def rules_catalog() -> List[Rule]:
         action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
         rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
     ))
-    
+
     # — Sales: negative margin share
     R.append(Rule(
         id='SALES_GM_NEG', name='GM% âm (tỷ lệ > 2%)', scope='flags', severity='High',
@@ -1774,8 +1697,6 @@ with TAB0:
         else:
             st.caption('Không có cột thời gian hoặc doanh thu để vẽ tổng quan theo thời gian.')
 
-
-
 # ---- (moved) Data Quality ----
 with TABQ:
     st.subheader('🧪 Data Quality')
@@ -1847,14 +1768,14 @@ with TABQ:
             # Local visuals options (no sidebar)
             adv_col1, adv_col2 = st.columns(2)
             with adv_col1:
-                SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False), key='_dist_adv')
+                SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin,  / )', value=SS.get('advanced_visuals', False), key='_dist_adv')
             with adv_col2:
                 pass
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
             else:
-         
+
                 # Descriptive & Normality
                 try:
                     stats_df = _summary_stats(s_num)
@@ -1886,22 +1807,16 @@ with TABQ:
                 fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
                 st_plotly(fig1)
             if SS.get('advanced_visuals', False):
-
-                # Lorenz & Gini
-                v = np.sort(s_num.values)
-                if len(v)>0 and v.sum()!=0:
-                    cum=np.cumsum(v); lor=np.insert(cum,0,0)/cum.sum(); x=np.linspace(0,1,len(lor))
-                    gini = 1 - 2*np.trapz(lor, dx=1/len(v))
-                    try: _sig_set('gini', float(gini), severity=float(gini))
-                    except Exception: pass
-                    figL=go.Figure(); figL.add_trace(go.Scatter(x=x,y=lor,name='Lorenz',mode='lines'))
-                    figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
-                    figL.update_layout(title=f'{col} — Lorenz (Gini={gini:.3f})', height=320)
-                    st_plotly(figL)
-                else:
-                    st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
+                # Violin plot is available under Advanced visuals
+                try:
+                    figV = go.Figure()
+                    figV.add_trace(go.Violin(y=s_num, name=str(col), box_visible=True, meanline_visible=True))
+                    figV.update_layout(title=f'{col} — Violin', height=300)
+                    st_plotly(figV)
+                except Exception:
+                    st.caption('Không thể vẽ Violin do dữ liệu không phù hợp.')
             else:
-                st.caption('Bật Advanced visuals để xem Lorenz/Gini.')
+                st.caption('Bật Advanced visuals để xem Violin.')
                 # outlier_rate_z
                 _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
                 sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
@@ -1909,7 +1824,7 @@ with TABQ:
                 share_z = float((np.abs(zs) >= _thr).mean())
                 try: _sig_set('outlier_rate_z', share_z, note='|z|≥'+str(_thr))
                 except Exception: pass
-                st.caption('Chú giải: Histogram/KDE thể hiện phân phối; Lorenz & Gini đo mức độ tập trung; outlier_rate_z = tỷ lệ điểm có |z| ≥ ngưỡng.')
+                st.caption('Chú giải: Histogram/KDE thể hiện phân phối;   &   đo mức độ tập trung; outlier_rate_z = tỷ lệ điểm có |z| ≥ ngưỡng.')
 
         # Datetime
         if _is_dt(col, s):
@@ -1932,7 +1847,6 @@ with TABQ:
             fig = px.bar(vc[::-1], title=f'Top-{k} tần suất')
             st_plotly(fig)
             st.caption('Gợi ý: cân nhắc GoF/Uniform hoặc Pareto nếu có nhiều nhóm.')
-
 
 with TAB2:
     require_full_data()
@@ -2030,7 +1944,7 @@ with TAB2:
 
         st.markdown('''
 
-        **Mapping gợi ý**  
+        **Mapping gợi ý**
 
         - **Numeric – Numeric** → Pearson / Spearman / Kendall · *kèm* scatter + trendline (OLS)
 
@@ -2040,21 +1954,16 @@ with TAB2:
 
         - **Categorical – Categorical** → **Chi‑square of independence** · *kèm* heatmap bảng chéo
 
-    
+        **Gợi ý phân loại kiểu dữ liệu**
 
-        **Gợi ý phân loại kiểu dữ liệu**  
+        - Numeric: số liên tục/số đếm (doanh thu, số lượng, giá trị...).
 
-        - Numeric: số liên tục/số đếm (doanh thu, số lượng, giá trị...).  
-
-        - Datetime: ngày/giờ, tháng, quý, năm... (hãy đảm bảo cột đã convert `to_datetime`).  
+        - Datetime: ngày/giờ, tháng, quý, năm... (hãy đảm bảo cột đã convert `to_datetime`).
 
         - Categorical: mã KH, sản phẩm, kênh bán, nhóm phân loại...
 
         ''')
 
-    
-
-    
     with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
         _df_t2 = DF_FULL
         _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
@@ -2086,12 +1995,6 @@ with TAB2:
             return [c for c in cols if any(t in str(c).lower() for t in tokens)] or cols
         ALL_COLS_T2 = _filter_cols_goal(ALL_COLS)
 
-
-
-
-
-
-
     c1, c2, c3 = st.columns([2, 2, 1.5])
     var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
     pool_y = (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)
@@ -2106,7 +2009,6 @@ with TAB2:
     except Exception as e:
         sX, sY = None, None
         st.warning(f'Lỗi chọn biến X/Y: {e}')
-
 
     tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
     tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
@@ -2213,14 +2115,6 @@ with TAB2:
             except Exception:
                 pass
 
-
-
-
-
-
-
-
-
             if HAS_PLOTLY:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
@@ -2306,7 +2200,7 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
 
 # ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
-# ------------------------------- 
+# -------------------------------
     # --- Benford by Time (Month/Quarter/Year) ---
     st.divider()
     with st.expander('⏱️ Benford theo thời gian (M/Q/Y) — so sánh & heatmap', expanded=False):
@@ -2373,9 +2267,9 @@ with TAB4:
                     st.write('- Dùng **Categorical tests** (HHI/Pareto, Rare category, Chi-square GoF).')
                 if _goal in ['Thời điểm']:
                     st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
-    
+
                 if not SS.get('_checklist_rendered', False):
-    
+
                     SS['_checklist_rendered'] = True
             with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
                     ch = []
@@ -2416,7 +2310,7 @@ with TAB4:
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
                     else:
                         st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
-        
+
             st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
             # Gate: require FULL data for this tab
             if SS.get('df') is None:
@@ -2500,7 +2394,7 @@ with TAB4:
                                         pass
             else:
                 st.caption('Không phát hiện cột thời gian — bỏ qua phân tích theo giai đoạn.')
-    
+
             with st.expander('🧠 Rule Engine (Tests) — Insights'):
                 ctx = build_rule_context()
                 df_r = evaluate_rules(ctx, scope='tests')
@@ -2753,12 +2647,12 @@ with TAB6:
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     _base_df = FLAG_DF if isinstance(globals().get('FLAG_DF'), pd.DataFrame) else _df_full_safe()
     _cols = list(_base_df.columns) if isinstance(_base_df, pd.DataFrame) else []
-    
+
     # Áp whitelist (nếu có & là list/tuple/set)
     wl = SS.get('col_whitelist')
     if isinstance(wl, (list, tuple, set)) and wl:
         _cols = [c for c in _cols if c in wl]
-    
+
     group_cols = st.multiselect(
         'Composite key để dò trùng (tuỳ chọn)',
         options=_cols,
