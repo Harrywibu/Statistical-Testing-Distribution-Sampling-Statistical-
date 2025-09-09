@@ -1842,7 +1842,6 @@ with TABQ:
                         fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
-\1
             # Local visuals options (no sidebar)
             adv_col1, adv_col2 = st.columns(2)
             with adv_col1:
@@ -2211,14 +2210,6 @@ with TAB2:
                 _sig_set('trend_SpearmanTime_p', float(p_rho), severity=(1.0 if (p_rho is not None and p_rho < _alpha) else 0.0), note='Spearman(time-index)')
             except Exception:
                 pass
-
-
-
-
-
-
-
-
 
             if HAS_PLOTLY:
                 fig = go.Figure()
