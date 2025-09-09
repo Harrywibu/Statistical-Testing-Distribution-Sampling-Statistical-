@@ -2367,8 +2367,7 @@ with TAB4:
                 if not SS.get('_checklist_rendered', False):
     
                     SS['_checklist_rendered'] = True
-    
-                    with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+            with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
                     ch = []
                     if _goal in ['Doanh thu','Giảm giá','Số lượng']:
                         ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
