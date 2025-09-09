@@ -447,7 +447,10 @@ for k, v in DEFAULTS.items():
 def require_full_data():
     has_df = (SS.get('df') is not None) or ('DF_FULL' in globals() and isinstance(DF_FULL, pd.DataFrame)) or ('DF_FULL' in SS)
     if not has_df:
-        st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy Tabs.')
+        if not SS.get('_no_data_banner_shown', False):
+            st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy Tabs.')
+            SS['_no_data_banner_shown'] = True
+
         return False
     return True
 
@@ -2293,138 +2296,6 @@ with TAB3:
     st.subheader('🔢 Benford Law — 1D & 2D')
 
 # ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
-with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
-    _dfb = _df_copy_safe(DF_FULL) if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
-    if _dfb is None:
-        st.info('Chưa có dữ liệu.')
-    else:
-        # Guess amount/date columns
-        amt_col = None
-        for c in _dfb.columns:
-            if pd.api.types.is_numeric_dtype(_dfb[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
-                amt_col = c; break
-        dt_col = None
-        for c in _dfb.columns:
-            if pd.api.types.is_datetime64_any_dtype(_dfb[c]) or any(k in c.lower() for k in ['date','pstg','post','invoice']):
-                dt_col = c; break
-        if amt_col is None:
-            st.warning('Không tìm thấy cột số tiền.')
-        else:
-            vals = pd.to_numeric(_dfb[amt_col], errors='coerce').dropna().abs()
-            clean = vals.astype(str).str.replace(r'[^0-9]','', regex=True).str.lstrip('0')
-            # 1D
-            l1 = clean.str[0]
-            obs1 = l1[l1.isin(list('123456789'))].value_counts().reindex(list('123456789'), fill_value=0)
-            n1 = obs1.sum(); obs1_p = obs1/n1 if n1>0 else obs1*0
-            exp1_p = np.log10(1 + 1/np.arange(1,10))
-            df1 = pd.DataFrame({'digit': list('123456789'),
-                                'obs': obs1.values,
-                                'obs_pct': (obs1_p*100).round(2),
-                                'exp_pct': (exp1_p*100).round(2),
-                                'diff_pct': ((obs1_p-exp1_p)*100).round(2)})
-            # 2D
-            l2 = clean.str[:2]
-            idx2 = [f'{i:02d}' for i in range(10,100)]
-            obs2 = l2[l2.str.len()==2].value_counts().reindex(idx2, fill_value=0)
-            n2 = obs2.sum(); obs2_p = obs2/n2 if n2>0 else obs2*0
-            exp2_p = np.log10(1 + 1/np.arange(10,100))
-            df2 = pd.DataFrame({'digit': idx2,
-                                'obs': obs2.values,
-                                'obs_pct': (obs2_p*100).round(2),
-                                'exp_pct': (exp2_p*100).round(2),
-                                'diff_pct': ((obs2_p-exp2_p)*100).round(2)})
-            try:
-                diff1 = float(np.max(np.abs(obs1_p - exp1_p))) if n1>0 else 0.0
-                diff2 = float(np.max(np.abs(obs2_p - exp2_p))) if n2>0 else 0.0
-                diff_max = max(diff1, diff2)
-                thr = float(SS.get('risk_diff_threshold', 0.05)) if 'risk_diff_threshold' in SS else 0.05
-                _sig_set('benford_diffmax', diff_max, severity=(1.0 if diff_max>=thr else 0.0), note='max(|obs-exp|) 1D/2D')
-            except Exception:
-                pass
-            st.write('**Benford 1D**'); st.dataframe(df1, use_container_width=True)
-            st.write('**Benford 2D**'); st.dataframe(df2.head(90), use_container_width=True)
-
-            st.markdown('---')
-            st.write('**🔍 Drill‑down**')
-            mode = st.radio('Kiểu digit', ['1D','2D'], horizontal=True, key='bf_v27_mode')
-            digit = st.selectbox('Chọn (1D: 1–9, 2D: 10–99)', list(range(1,10)) if mode=='1D' else list(range(10,100)), index=0, key='bf_v27_digit')
-            if mode=='1D':
-                mask = l1 == str(digit)
-            else:
-                mask = l2 == f'{digit:02d}'
-            sub = _safe_loc_bool(_dfb, mask)
-            st.write(f'Số dòng match: {len(sub):,}')
-            if dt_col:
-                if not str(sub[dt_col].dtype).startswith('datetime'):
-                    sub[dt_col] = pd.to_datetime(sub[dt_col], errors='coerce')
-                gran = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_v27_period')
-                if gran=='Tháng': sub['__per'] = sub[dt_col].dt.to_period('M').astype(str)
-                elif gran=='Quý': sub['__per'] = sub[dt_col].dt.to_period('Q').astype(str)
-                else: sub['__per'] = sub[dt_col].dt.to_period('Y').astype(str)
-                agg = sub.groupby('__per')[amt_col].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
-                st.dataframe(agg, use_container_width=True)
-            st.dataframe(sub.head(500), use_container_width=True)
-            st.download_button('Tải CSV (toàn bộ kết quả)', data=sub.to_csv(index=False).encode('utf-8'),
-                               file_name=f'benford_drilldown_{mode}_{digit}.csv', mime='text/csv')
-    # Gate: require FULL data for this tab
-    if SS.get('df') is None:
-        pass
-    if not NUM_COLS:
-        st.info('Không có cột numeric để chạy Benford.')
-    else:
-        data_for_benford = DF_FULL
-        c1,c2 = st.columns(2)
-        with c1:
-            amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
-            if st.button('Run Benford 1D', key='btn_bf1'):
-                ok,msg = _benford_ready(data_for_benford[amt1])
-                if not ok: st.warning(msg)
-                else: SS['bf1_res']=_benford_1d(data_for_benford[amt1])
-        with c2:
-            default_idx = 1 if len(NUM_COLS)>1 else 0
-            amt2 = st.selectbox('Amount (2D)', NUM_COLS, index=default_idx, key='bf2_col')
-            if st.button('Run Benford 2D', key='btn_bf2'):
-                ok,msg = _benford_ready(data_for_benford[amt2])
-                if not ok: st.warning(msg)
-                else: SS['bf2_res']=_benford_2d(data_for_benford[amt2])
-        g1,g2 = st.columns(2)
-        with g1:
-            if SS.get('bf1_res'):
-                r=SS['bf1_res']; tb, var, p, MAD = r['table'], r['variance'], r['p'], r['MAD']
-                if HAS_PLOTLY:
-                    fig1 = go.Figure(); fig1.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                    fig1.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    src_tag = 'FULL'
-                    fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
-                    st_plotly(fig1)
-                st.dataframe(var, use_container_width=True, height=220)
-                thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
-                msg = '🟢 Green'
-                if maxdiff >= 2*thr: msg='🚨 Red'
-                elif maxdiff >= thr: msg='🟡 Yellow'
-                sev = '🟢 Green'
-                if (p<0.01) or (MAD>0.015): sev='🚨 Red'
-                elif (p<0.05) or (MAD>0.012): sev='🟡 Yellow'
-                st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
-        with g2:
-            if SS.get('bf2_res'):
-                r2=SS['bf2_res']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
-                if HAS_PLOTLY:
-                    fig2 = go.Figure(); fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
-                    fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    src_tag = 'FULL'
-                    fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
-                    st_plotly(fig2)
-                st.dataframe(var2, use_container_width=True, height=220)
-                thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
-                msg2 = '🟢 Green'
-                if maxdiff2 >= 2*thr: msg2='🚨 Red'
-                elif maxdiff2 >= thr: msg2='🟡 Yellow'
-                sev2 = '🟢 Green'
-                if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
-                elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
-                st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
-
 # ------------------------------- 
     # --- Benford by Time (Month/Quarter/Year) ---
     st.divider()
@@ -2493,7 +2364,11 @@ with TAB4:
                 if _goal in ['Thời điểm']:
                     st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
     
-                with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+                if not SS.get('_checklist_rendered', False):
+    
+                    SS['_checklist_rendered'] = True
+    
+                    with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
                     ch = []
                     if _goal in ['Doanh thu','Giảm giá','Số lượng']:
                         ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
@@ -2506,14 +2381,15 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f"chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"tests_chk_{i}")
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
                     else:
                         st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
         
                 st.markdown('---')
-                with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
+                if not SS.get('_checklist_rendered', False):
+                    SS['_checklist_rendered'] = True
                     ch = []
                     if _goal in ['Doanh thu','Giảm giá','Số lượng']:
                         ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
@@ -2526,7 +2402,7 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f"chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"tests_chk_{i}")
                     # Summarize selection
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
@@ -3183,4 +3059,3 @@ with TAB7:
             st.dataframe(sub.head(500), use_container_width=True)
         else:
             st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
-
