@@ -27,22 +27,7 @@ except NameError:
         except Exception:
             return False
     _GLOBAL_HELPERS_READY = True
-# --- Signal documentation mapping for TAB7 explanations ---
-SIGNAL_DOC = {
-    'trend_MK_p': 'Mann–Kendall p-value (xu hướng theo thời gian cho Y). p < alpha ⇒ xu hướng đáng kể.',
-    'trend_SpearmanTime_r': 'Hệ số Spearman giữa index thời gian và Y (độ mạnh xu hướng, [-1..1]).',
-    'trend_SpearmanTime_p': 'Spearman p-value cho xu hướng. p < alpha ⇒ xu hướng đáng kể.',
-    'corr_pearson_r': 'Tương quan Pearson r (linear) giữa hai biến numeric.',
-    'corr_spearman_r': 'Tương quan Spearman r (rank) giữa hai biến numeric.',
-    'corr_kendall_tau': 'Kendall tau giữa hai biến numeric (robust cho outlier).',
-    'anova_p': 'p-value của ANOVA (khác biệt trung bình giữa ≥3 nhóm).',
-    'ttest_p': 'p-value của t-test (khác biệt trung bình giữa 2 nhóm).',
-    'chi2_p': 'p-value Chi-square độc lập (categorical×categorical).',
-    'chi2_time_p': 'p-value Chi-square period×group (so sánh phân phối nhóm theo thời gian).',
-    'benford_diffmax': 'Max |obs−exp| Benford 1/2-digit (độ lệch phân phối chữ số đầu).',
-    'gini': 'Gini (mức độ tập trung) cho phân phối giá trị (0: đều, 1: tập trung).',
-    'outlier_rate_z': 'Tỷ lệ quan sát có |z| ≥ z-threshold (outlier theo z-score).'
-}
+    
 from datetime import datetime
 from typing import Optional, List, Callable, Dict, Any
 import numpy as np
@@ -3198,6 +3183,3 @@ with TAB7:
             st.dataframe(sub.head(500), use_container_width=True)
         else:
             st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
-    
-            # attach explanations
-            _dfsig['explain'] = _dfsig['signal'].map(SIGNAL_DOC).fillna('')
