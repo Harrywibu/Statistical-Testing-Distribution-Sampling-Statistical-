@@ -51,16 +51,16 @@ def _match_any(name: str, patterns):
     return any(p in n for p in patterns)
 
 
+
 def robust_suggest_cols_by_goal(df, goal):
     """
-    Robust column suggestion by goal.
-    - Accepts None / Series / array-like and converts safely to DataFrame.
-    - Falls back to session state's DF if df is None.
-    - Returns list of suggested column names (may be empty).
+    Return a DICT with best-guess columns for each type:
+      {'num': <numeric col or ''>, 'dt': <datetime col or ''>, 'cat': <categorical/text col or ''>}
+    Robust to df=None / Series / array-like; fallback to SS['DF_FULL'] / SS['df'].
     """
     import pandas as pd
-    # Resolve df safely
     try:
+        # Resolve DataFrame safely
         if df is None:
             try:
                 from streamlit import session_state as _SS
@@ -68,54 +68,55 @@ def robust_suggest_cols_by_goal(df, goal):
             except Exception:
                 df = None
         if df is None:
-            return []
+            return {'num':'', 'dt':'', 'cat':''}
         if isinstance(df, pd.Series):
             df = df.to_frame()
         elif not isinstance(df, pd.DataFrame):
             try:
                 df = pd.DataFrame(df)
             except Exception:
-                return []
+                return {'num':'', 'dt':'', 'cat':''}
+
         cols = list(df.columns)
         if not cols:
-            return []
-        # Split by type
+            return {'num':'', 'dt':'', 'cat':''}
+
+        # Split by dtype
         num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
         dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
         cat_cols = [c for c in cols if (c not in num_cols) and (c not in dt_cols)]
-        # Name-based hints
+
         goal_s = (goal or '').lower()
         def contains_any(name, patterns):
             n = (name or '').lower()
             return any(p in n for p in patterns)
 
-        pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net','amt','payment','pay']
+        pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net','amt','payment','pay','total']
         pat_discount = ['discount','giam','disc','rebate','promo']
         pat_qty      = ['qty','quantity','so_luong','soluong','units','unit','volume','qtty']
         pat_customer = ['customer','cust','khach','client','buyer','account','party']
         pat_product  = ['product','sku','item','hang','ma_hang','mat_hang','goods','code','product_id']
         pat_time     = ['date','time','ngay','thoi_gian','period','posting','invoice_date','doc_date','posting_date']
 
-        # Prioritize relevant list by goal keyword
-        pref = []
-        if any(k in goal_s for k in ['doanh','thu','revenue','sales','amount','value','gia','price','gross','net']):
-            pref = [c for c in cols if contains_any(c, pat_amount)]
-        elif any(k in goal_s for k in ['giam','disc','rebate','promo']):
-            pref = [c for c in cols if contains_any(c, pat_discount)]
-        elif any(k in goal_s for k in ['qty','soluong','quantity','units','unit','volume']):
-            pref = [c for c in cols if contains_any(c, pat_qty)]
-        elif any(k in goal_s for k in ['time','date','ngay','thoi_gian','period','posting']):
-            pref = [c for c in cols if contains_any(c, pat_time)]
-        elif any(k in goal_s for k in ['product','sku','hang','mat_hang','goods','code']):
-            pref = [c for c in cols if contains_any(c, pat_product)]
-        elif any(k in goal_s for k in ['customer','client','khach','buyer','account']):
-            pref = [c for c in cols if contains_any(c, pat_customer)]
+        # Pick best numeric
+        num_pref = [c for c in num_cols if contains_any(c, pat_amount + pat_qty)]
+        num_best = (num_pref[0] if num_pref else (num_cols[0] if num_cols else ''))
 
-        # Compose suggestion order: preferred > numeric > datetime > categorical
-        ordered = list(dict.fromkeys(pref + num_cols + dt_cols + cat_cols))
-        return ordered
+        # Pick best datetime
+        dt_pref = [c for c in dt_cols if contains_any(c, pat_time)]
+        dt_best = (dt_pref[0] if dt_pref else (dt_cols[0] if dt_cols else ''))
+
+        # Pick best categorical
+        cat_pref = []
+        if any(k in goal_s for k in ['product','sku','hang','mat_hang','goods','code']):
+            cat_pref = [c for c in cat_cols if contains_any(c, pat_product)]
+        elif any(k in goal_s for k in ['customer','client','khach','buyer','account']):
+            cat_pref = [c for c in cat_cols if contains_any(c, pat_customer)]
+        cat_best = (cat_pref[0] if cat_pref else (cat_cols[0] if cat_cols else ''))
+
+        return {'num': num_best, 'dt': dt_best, 'cat': cat_best}
     except Exception:
-        return []
+        return {'num':'', 'dt':'', 'cat':''}
 
 def cast_frame(df: pd.DataFrame, dayfirst=True, datetime_like_cols=None):
     datetime_like_cols = set(datetime_like_cols or [])
@@ -890,20 +891,20 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
 
         st.rerun()
 with st.sidebar.expander('1) Display & Performance', expanded=False):
+    st.caption('Đã tinh gọn — tham số chính nằm trong các tab liên quan (Histogram bins, Alpha, Benford diff...).')
     SS.setdefault('preserve_results', True)
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
                                        help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
     rp = SS['risk_params']
-    rp['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(rp.get('alpha', 0.05)), 0.001)
+    st.caption('Alpha đã được dời vào tab Hypothesis Tests.')
     rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1)
     rp['zero_ratio_thr'] = st.slider('Tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
     rp['benford_dev_thr'] = st.slider('Lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5)
-    SS['bins'] = st.slider('Histogram bins', 10, 200, SS.get('bins', 50), 5)
-    SS['log_scale'] = st.checkbox('Log scale (X)', value=SS.get('log_scale', False))
+    st.caption('Đã tinh gọn — tham số chính nằm trong tab Distribution & Shape.')
     SS['kde_threshold'] = st.number_input('KDE max n', 1000, 300000, SS.get('kde_threshold', 150000), 1000)
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
-    SS['risk_diff_threshold'] = st.slider('Benford diff% threshold', 0.01, 0.10, SS.get('risk_diff_threshold',0.05), 0.01)
+    st.caption('Đã tinh gọn — tham số chính nằm trong tab Benford.')
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
 with st.sidebar.expander('3) Cache', expanded=False):
     if not HAS_PYARROW:
@@ -1653,6 +1654,7 @@ TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Distribut
 
 # ---- (moved) Data Quality ----
 with TAB4:
+    SS['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(SS.get('alpha', 0.05)), 0.001, help='Dùng cho t-test/ANOVA/Chi-square. (Riêng Overview/hiển thị không bị ảnh hưởng)')
     st.subheader('🧪 Data Quality — FULL dataset')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -1730,8 +1732,9 @@ with TAB1:
     # Sub-tabs for Distribution & Shape
     _t1_tab_num, _t1_tab_dt, _t1_tab_cat = st.tabs(['Numeric', 'Datetime', 'Categorical'])
     with _t1_tab_num:
+        SS['bins'] = st.slider('Histogram bins', 10, 200, int(SS.get('bins', 50)), 5)
+        SS['log_scale'] = st.checkbox('Log scale (X)', value=bool(SS.get('log_scale', False)))
         st.caption('Numeric: dùng Histogram/KDE, Lorenz & Gini ở bên dưới. Các log: outlier_rate_z, gini.')
-    with _t1_tab_dt:
         try:
             _df = _df_full_safe()
             # pick a datetime column
@@ -1950,7 +1953,6 @@ with TAB1:
         # Expect existing advanced block below uses num_col & s; we keep a minimal safe demo
         st.info('Biểu đồ nâng cao hiển thị theo cột numeric bạn chọn ở phần Numeric.')
     
-    require_full_data()
     require_full_data()
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
@@ -2224,7 +2226,6 @@ with TAB1:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB2:
     require_full_data()
-    require_full_data()
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality .')
@@ -2352,12 +2353,26 @@ with TAB2:
         _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
         def _filter_cols_goal(cols):
             if not _only_t2: return cols
-            tokens = [(_sug_t2.get(k) or '').lower() for k in ['num','cat','dt']]
-            tokens = [t for t in tokens if t]
+            # _sug_t2 may be dict/list/tuple/str; normalize into tokens
+            _tok = []
+            try:
+                if isinstance(_sug_t2, dict):
+                    _tok = [(_sug_t2.get(k) or '').lower() for k in ['num','cat','dt']]
+                elif isinstance(_sug_t2, (list, tuple)):
+                    _tok = [str(x).lower() for x in _sug_t2 if x is not None]
+                else:
+                    _tok = [str(_sug_t2).lower()]
+            except Exception:
+                _tok = []
+            tokens = [t for t in _tok if t]
             if not tokens: return cols
-            return [c for c in cols if any(t in c.lower() for t in tokens)] or cols
+            return [c for c in cols if any(t in str(c).lower() for t in tokens)] or cols
         ALL_COLS_T2 = _filter_cols_goal(ALL_COLS)
-        st.caption('Gợi ý cột: num=%s · cat=%s · dt=%s' % (_sug_t2.get('num'), _sug_t2.get('cat'), _sug_t2.get('dt')))
+        try:
+            if isinstance(_sug_t2, dict):
+                st.caption('Gợi ý cột: num=%s · cat=%s · dt=%s' % (_sug_t2.get('num'), _sug_t2.get('cat'), _sug_t2.get('dt')))
+        except Exception:
+            pass
 
     c1, c2, c3 = st.columns([2, 2, 1.5])
     var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
@@ -2565,7 +2580,7 @@ with TAB2:
         else:
             st.dataframe(df_corr, use_container_width=True, height=200)
 with TAB3:
-    require_full_data()
+    SS['risk_diff_threshold'] = st.slider('Ngưỡng lệch Benford (diff%)', 0.01, 0.10, float(SS.get('risk_diff_threshold', 0.05)), 0.01, help='Dùng để đánh dấu mức lệch Benford đáng chú ý.')
     require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
 
@@ -2949,7 +2964,6 @@ with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=
 
 with TAB5:
     require_full_data()
-    require_full_data()
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
@@ -3128,7 +3142,6 @@ with TAB5:
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
     require_full_data()
-    require_full_data()
     st.subheader('🚩 Fraud Flags')
     use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
     FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
@@ -3306,7 +3319,6 @@ with TAB7:
             st.info('Chưa có tín hiệu nào — chạy các test để tổng hợp rủi ro.')
     except Exception:
         pass
-    require_full_data()
     require_full_data()
     left, right = st.columns([3,2])
     with left:
