@@ -352,6 +352,15 @@ st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar
 SS = st.session_state
 
 SS.setdefault('signals', {})
+
+
+def _is_df(x):
+    import pandas as pd
+    return isinstance(x, pd.DataFrame) and not x.empty
+
+def _k(tab, name):
+    """Generate unique Streamlit widget keys by tab prefix to avoid cross-tab collisions."""
+    return f"{tab}__{name}"
 def _sig_set(key, value, severity=None, note=None):
     try:
         sig = SS.get('signals', {})
@@ -3058,7 +3067,8 @@ with TAB7:
                                  'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
             dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
-        rep_df, n_dupes = _quality_report(DF_FULL)
+        (_src := _df_full_safe());
+    rep_df, n_dupes = _quality_report(_src) if _is_df(_src) else (pd.DataFrame(), 0)
         signals=[]
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
