@@ -890,8 +890,6 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
                 SS[rk] = None
 
         st.rerun()
-with st.sidebar.expander('Workflow', expanded=True):
-    SS.setdefault('preserve_results', True)
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
     help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
@@ -2372,27 +2370,35 @@ with TAB2:
         _sug_t2 = robust_suggest_cols_by_goal(_df_t2, _goal_t2)
         _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
         def _filter_cols_goal(cols):
-            if not _only_t2: return cols
-            # _sug_t2 may be dict/list/tuple/str; normalize into tokens
-            _tok = []
+            if not _only_t2:
+                return cols
+            # _sug_t2 can be dict/list/tuple/str: normalize
+            tokens = []
             try:
                 if isinstance(_sug_t2, dict):
-                    _tok = [(_sug_t2.get(k) or '').lower() for k in ['num','cat','dt']]
+                    tokens = [(_sug_t2.get(k) or '').lower() for k in ['num','cat','dt']]
                 elif isinstance(_sug_t2, (list, tuple)):
-                    _tok = [str(x).lower() for x in _sug_t2 if x is not None]
+                    tokens = [str(x).lower() for x in _sug_t2 if x]
                 else:
-                    _tok = [str(_sug_t2).lower()]
+                    tokens = [str(_sug_t2).lower()]
             except Exception:
-                _tok = []
-            tokens = [t for t in _tok if t]
-            if not tokens: return cols
+                tokens = []
+            tokens = [t for t in tokens if t]
+            if not tokens:
+                return cols
+            try:
+                if isinstance(_sug_t2, dict):
+                    st.caption('Gợi ý cột: num=%s · cat=%s · dt=%s' % (_sug_t2.get('num'), _sug_t2.get('cat'), _sug_t2.get('dt')))
+            except Exception:
+                pass
             return [c for c in cols if any(t in str(c).lower() for t in tokens)] or cols
         ALL_COLS_T2 = _filter_cols_goal(ALL_COLS)
-        try:
-            if isinstance(_sug_t2, dict):
-                st.caption('Gợi ý cột: num=%s · cat=%s · dt=%s' % (_sug_t2.get('num'), _sug_t2.get('cat'), _sug_t2.get('dt')))
-        except Exception:
-            pass
+
+
+
+
+
+
 
     c1, c2, c3 = st.columns([2, 2, 1.5])
     var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
