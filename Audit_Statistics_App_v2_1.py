@@ -2512,7 +2512,7 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f'tests_chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
                     else:
@@ -2532,7 +2532,7 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f'tests_chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
                     # Summarize selection
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
@@ -3083,9 +3083,40 @@ with TAB7:
                     st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
         # --- Consolidated drill-down (Benford) — Risk view
-        
-# [removed Risk Benford drill-down expander]
-
+        with st.expander('🔍 Drill‑down (Benford) — Risk view', expanded=False):
+            try:
+                df_ = _df_full_safe()
+                if df_ is None or getattr(df_, 'empty', False):
+                    st.info('Chưa có dữ liệu.')
+                else:
+                    import pandas as pd, numpy as np
+                    num_cols = [c for c in df_.columns if pd.api.types.is_numeric_dtype(df_[c])]
+                    dt_cols  = [c for c in df_.columns if str(df_[c].dtype).startswith('datetime')]
+                    amt = st.selectbox('Cột số tiền', ['(None)'] + num_cols, index=(0 if not num_cols else 1), key='risk_bfui_amt')
+                    dt  = st.selectbox('Cột thời gian (tuỳ chọn)', ['(None)'] + dt_cols, index=(0 if not dt_cols else 1), key='risk_bfui_dt')
+                    dig = st.selectbox('Chữ số đầu cần xem', list('123456789'), index=0, key='risk_bfui_dig')
+                    rng = st.selectbox('Chu kỳ tổng hợp', ['Tháng','Quý','Năm'], index=0, key='risk_bfui_rng')
+                    if amt != '(None)':
+                        s = pd.to_numeric(df_[amt], errors='coerce').abs().dropna()
+                        clean = s.astype('int64').astype('string')
+                        lead = clean.str[0]
+                        sub = df_[lead == dig].copy()
+                        if dt != '(None)':
+                            sub = sub.dropna(subset=[dt]).copy()
+                            sub[dt] = pd.to_datetime(sub[dt], errors='coerce')
+                            if rng=='Tháng':
+                                sub['__per'] = sub[dt].dt.to_period('M').astype(str)
+                            elif rng=='Quý':
+                                sub['__per'] = sub[dt].dt.to_period('Q').astype(str)
+                            else:
+                                sub['__per'] = sub[dt].dt.to_period('Y').astype(str)
+                            agg = sub.groupby('__per')[amt].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
+                            st.dataframe(agg, use_container_width=True)
+                        st.dataframe(sub.head(500), use_container_width=True)
+                    else:
+                        st.info('Chọn cột số tiền để drill‑down.')
+            except Exception as e:
+                st.warning(f'Drill‑down lỗi: {e}')
 
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
