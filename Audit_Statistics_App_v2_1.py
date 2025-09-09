@@ -1644,10 +1644,10 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
 
-# ----------------------------------- TABS -------------------------------------TAB0, TABQ, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7, TAB8 = (TAB0, TABQ, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
+(TAB0, TABQ, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 # ---- (moved) Data Quality ----
-with TAB4:
+with TABQ:
     SS['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(SS.get('alpha', 0.05)), 0.001, help='Dùng cho t-test/ANOVA/Chi-square. (Riêng Overview/hiển thị không bị ảnh hưởng)')
     st.subheader('🧪 Data Quality — FULL dataset')
     if SS.get('df') is None:
