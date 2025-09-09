@@ -27,7 +27,7 @@ except NameError:
         except Exception:
             return False
     _GLOBAL_HELPERS_READY = True
-    
+
 from datetime import datetime
 from typing import Optional, List, Callable, Dict, Any
 import numpy as np
@@ -2036,9 +2036,9 @@ with TAB2:
     with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
         _df_t2 = DF_FULL
         _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
-                            horizontal=True, key='qn_t2_goal')
+                            horizontal=True, key='t2_goal')
         _sug_t2 = robust_suggest_cols_by_goal(_df_t2, _goal_t2)
-        _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='qn_t2_only')
+        _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
         def _filter_cols_goal(cols):
             if not _only_t2:
                 return cols
@@ -2071,10 +2071,10 @@ with TAB2:
 
 
     c1, c2, c3 = st.columns([2, 2, 1.5])
-    var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='qn_t2_x')
+    var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
     pool_y = (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)
     cand_y = [c for c in pool_y if c != var_x] or pool_y
-    var_y = c2.selectbox('Variable Y', cand_y, index=(cand_y.index(SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt'))) if (SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt')) in cand_y) else 0), key='qn_t2_y')
+    var_y = c2.selectbox('Variable Y', cand_y, index=(cand_y.index(SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt'))) if (SS.get('t2_y', _sug_t2.get('cat') or _sug_t2.get('num') or _sug_t2.get('dt')) in cand_y) else 0), key='t2_y')
 
     # : safer selection
     try:
@@ -2093,7 +2093,7 @@ with TAB2:
 
     # Numeric – Numeric
     if tX=='Numeric' and tY=='Numeric':
-        method = c3.radio('Method', ['Pearson','Spearman','Kendall'], index=(1 if SS.get('spearman_recommended') else 0), horizontal=True, key='qn_t2_nn_m')
+        method = c3.radio('Method', ['Pearson','Spearman','Kendall'], index=(1 if SS.get('spearman_recommended') else 0), horizontal=True, key='t2_nn_m')
         x = _clean_num(sX)
         y = _clean_num(sY)
         sub = _pd.concat([x, y], axis=1).dropna()
@@ -2203,7 +2203,7 @@ with TAB2:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
                 # --- Rolling mean overlay ---
-                win = st.slider('Rolling mean window (periods)', 2, 52, 4, key='qn_t2_roll')
+                win = st.slider('Rolling mean window (periods)', 2, 52, 4, key='t2_roll')
                 if win >= 2:
                     roll = df['y'].rolling(win).mean()
                     fig.add_trace(go.Scatter(x=df['t'], y=roll, name=f'Rolling mean (win={win})'))
@@ -2215,7 +2215,7 @@ with TAB2:
                     cat_col = var_y if tY=='Categorical' else var_x
                     dt_col = var_x if tX=='Datetime' else var_y
                     cat_col = var_y if tY=='Categorical' else var_x
-                    gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='qn_t2_dt_cat_g')
+                    gran = c3.radio('Period', ['M','Q','Y'], index=0, horizontal=True, key='t2_dt_cat_g')
                     per = _derive_period(DF_FULL, dt_col, gran)
                     df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
                     if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
@@ -2228,7 +2228,7 @@ with TAB2:
                             fig = px.imshow(tbl, text_auto=False, aspect='auto', title=f'Contingency: period × {cat_col}')
                             st_plotly(fig)
                             # Time-sliced group comparison (Top-K) — line chart + chi2
-                            topk = st.slider('Top-K nhóm (time×group)', 2, 20, 5, key='qn_t2_dtcat_topk')
+                            topk = st.slider('Top-K nhóm (time×group)', 2, 20, 5, key='t2_dtcat_topk')
                             keep = df['cat'].value_counts().head(int(topk)).index
                             df2 = df[df['cat'].isin(keep)]
                             pv = df2.pivot_table(index='period', columns='cat', aggfunc='size', fill_value=0)
@@ -2254,8 +2254,8 @@ with TAB2:
         if len(NUM_COLS) < 2:
             st.info('Cần ≥2 cột numeric để tính tương quan.')
         else:
-            mth = st.radio('Method', ['Pearson','Spearman','Kendall'], index=1 if SS.get('spearman_recommended') else 0, horizontal=True, key='qn_t2_heat_m')
-            sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='qn_t2_heat_cols')
+            mth = st.radio('Method', ['Pearson','Spearman','Kendall'], index=1 if SS.get('spearman_recommended') else 0, horizontal=True, key='t2_heat_m')
+            sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='t2_heat_cols')
             if len(sel) >= 2:
                 if mth=='Kendall':
                     sub = _df_full_safe()[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
@@ -2337,8 +2337,8 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
 
             st.markdown('---')
             st.write('**🔍 Drill‑down**')
-            mode = st.radio('Kiểu digit', ['1D','2D'], horizontal=True, key='bfui_v27_mode')
-            digit = st.selectbox('Chọn (1D: 1–9, 2D: 10–99)', list(range(1,10)) if mode=='1D' else list(range(10,100)), index=0, key='bfui_v27_digit')
+            mode = st.radio('Kiểu digit', ['1D','2D'], horizontal=True, key='bf_v27_mode')
+            digit = st.selectbox('Chọn (1D: 1–9, 2D: 10–99)', list(range(1,10)) if mode=='1D' else list(range(10,100)), index=0, key='bf_v27_digit')
             if mode=='1D':
                 mask = l1 == str(digit)
             else:
@@ -2348,7 +2348,7 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
             if dt_col:
                 if not str(sub[dt_col].dtype).startswith('datetime'):
                     sub[dt_col] = pd.to_datetime(sub[dt_col], errors='coerce')
-                gran = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bfui_v27_period')
+                gran = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_v27_period')
                 if gran=='Tháng': sub['__per'] = sub[dt_col].dt.to_period('M').astype(str)
                 elif gran=='Quý': sub['__per'] = sub[dt_col].dt.to_period('Q').astype(str)
                 else: sub['__per'] = sub[dt_col].dt.to_period('Y').astype(str)
@@ -2423,10 +2423,10 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
         if not DT_COLS:
             st.info('Không có cột thời gian. Hãy chọn file có cột thời gian để dùng tính năng này.')
         else:
-            dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bfui_time_dt')
-            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bfui_time_gran')
+            dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bf_time_dt')
+            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bf_time_gran')
             src_df = DF_FULL if (SS.get('df') is not None and True) else DF_FULL
-            val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bfui_time_val')
+            val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bf_time_val')
             res = benford_by_period(src_df, val_col, dtc, gran)
             if res.empty:
                 st.warning('Không đủ dữ liệu hợp lệ để tính Benford theo thời gian.')
@@ -2445,9 +2445,9 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
                 if len(res) >= 2:
                     p1, p2 = st.columns(2)
                     with p1:
-                        a = st.selectbox('Chọn giai đoạn A', res['period'], key='bfui_time_a')
+                        a = st.selectbox('Chọn giai đoạn A', res['period'], key='bf_time_a')
                     with p2:
-                        b = st.selectbox('Chọn giai đoạn B', res['period'], index=min(1, len(res)-1), key='bfui_time_b')
+                        b = st.selectbox('Chọn giai đoạn B', res['period'], index=min(1, len(res)-1), key='bf_time_b')
                     if a and b and a != b:
                         per_series = _derive_period(src_df, dtc, gran)
                         ids_a = per_series[per_series == a].index
@@ -2497,7 +2497,7 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f"tests_chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
                     else:
@@ -2517,7 +2517,7 @@ with TAB4:
                     for i, name in enumerate(ch):
                         container = cols[i % len(cols)]
                         with st.container():
-                            checked[name] = st.checkbox(name, key=f"tests_chk_{i}")
+                            checked[name] = st.checkbox(name, key=f"chk_{i}")
                     # Summarize selection
                     if any(checked.values()):
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
@@ -3067,10 +3067,6 @@ with TAB7:
                 for _,row in df_r.iterrows():
                     st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
-        # --- Consolidated drill-down (Benford) — Risk view
-        
-
-
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
 
@@ -3155,7 +3151,7 @@ with TAB7:
             try: df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             except Exception: pass
 
-        digit = st.selectbox('Chọn chữ số (leading) muốn drill‑down', list(range(1,10)), index=0, key='bfui_digit')
+        digit = st.selectbox('Chọn chữ số (leading) muốn drill‑down', list(range(1,10)), index=0, key='bf_digit')
         # Filter rows by leading digit of absolute amount
         if amt_col:
             vals = pd.to_numeric(df[amt_col], errors='coerce').abs()
@@ -3165,7 +3161,7 @@ with TAB7:
             st.write(f'Số dòng có leading digit = {digit}: {len(sub):,}')
             # Period filter
             if date_col:
-                rng = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bfui_period')
+                rng = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_period')
                 if rng=='Tháng':
                     sub['__per'] = sub[date_col].dt.to_period('M').astype(str)
                 elif rng=='Quý':
