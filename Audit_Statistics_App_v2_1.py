@@ -2385,8 +2385,7 @@ with TAB4:
                         st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
                     else:
                         st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
-        
-                st.markdown('---')
+                        st.markdown('---')
                 if not SS.get('_checklist_rendered', False):
                     SS['_checklist_rendered'] = True
                     ch = []
