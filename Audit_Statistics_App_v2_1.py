@@ -332,6 +332,20 @@ except Exception:
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
 
+SS.setdefault('signals', {})
+def _sig_set(key, value, severity=None, note=None):
+    try:
+        sig = SS.get('signals', {})
+        item = {'value': value}
+        if severity is not None:
+            try: item['severity'] = float(severity)
+            except Exception: item['severity'] = severity
+        if note is not None:
+            item['note'] = str(note)
+        sig[key] = item
+        SS['signals'] = sig
+    except Exception:
+        pass
 # --- Safe dataframe accessors ---
 
 def _df_base():
@@ -1984,6 +1998,27 @@ with TAB1:
                         if SS['log_scale'] and (s>0).all(): fig1.update_xaxes(type='log')
                         fig1.update_layout(title=f'{num_col} — Histogram+KDE', height=320)
                         st_plotly(fig1)
+
+                        try:
+
+                            s_num = pd.to_numeric(s, errors='coerce').dropna()
+
+                            if len(s_num) > 0:
+
+                                _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
+
+                                sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
+
+                                zs = (s_num - float(s_num.mean()))/sd if sd>0 else (s_num*0)
+
+                                share_z = float((zs.abs() >= _thr).mean())
+
+                                _sig_set('outlier_rate_z', share_z, note='|z|≥'+str(_thr))
+
+                        except Exception:
+
+                            pass
+
                     with gB:
                         fig2 = px.box(pd.DataFrame({num_col:s}), x=num_col, points='outliers', title=f'{num_col} — Box')
                         st_plotly(fig2)
@@ -2011,6 +2046,10 @@ with TAB1:
                             if len(v)>0 and v.sum()!=0:
                                 cum=np.cumsum(v); lor=np.insert(cum,0,0)/cum.sum(); x=np.linspace(0,1,len(lor))
                                 gini = 1 - 2*np.trapz(lor, dx=1/len(v))
+                                try:
+                                    _sig_set('gini', float(gini), severity=float(gini))
+                                except Exception:
+                                    pass
                                 figL=go.Figure(); figL.add_trace(go.Scatter(x=x,y=lor,name='Lorenz',mode='lines'))
                                 figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
                                 figL.update_layout(title=f'{num_col} — Lorenz (Gini={gini:.3f})', height=320)
@@ -2437,7 +2476,27 @@ with TAB2:
                     df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
                     if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
                         st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
-                    else:
+                    
+                    if not df.empty and df['period'].nunique()>=2 and df['cat'].nunique()>=2:
+                        _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
+                        topk = st.slider('Top-K nhóm (time×group)', 2, 20, 5, key='t2_dtcat_topk')
+                        keep = df['cat'].value_counts().head(int(topk)).index
+                        df2 = df[df['cat'].isin(keep)]
+                        pv = df2.pivot_table(index='period', columns='cat', aggfunc='size', fill_value=0)
+                        if not pv.empty:
+                            figG = go.Figure()
+                            for c in pv.columns:
+                                figG.add_trace(go.Scatter(x=pv.index, y=pv[c], mode='lines+markers', name=str(c)))
+                            figG.update_layout(title='Counts theo thời gian (Top-K nhóm)', xaxis_title='Period', yaxis_title='Count')
+                            st_plotly(figG)
+                            from scipy.stats import chi2_contingency
+                            try:
+                                chi2t, pvalt, doft, _ = chi2_contingency(pv.values)
+                                st.caption(f'Chi-square (time×group): chi2={chi2t:.2f}, dof={doft}, p={pvalt:.3g}')
+                                _sig_set('chi2_time_p', float(pvalt), severity=(1.0 if pvalt < _alpha else 0.0), note='time×group Top-K')
+                            except Exception:
+                                pass
+
                         V, p, chi2 = _cramers_v(df['period'], df['cat'])
                         st.dataframe(_pd.DataFrame([{'Cramér’s V (period×cat)': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
                         if HAS_PLOTLY:
@@ -2521,6 +2580,14 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
                                 'obs_pct': (obs2_p*100).round(2),
                                 'exp_pct': (exp2_p*100).round(2),
                                 'diff_pct': ((obs2_p-exp2_p)*100).round(2)})
+            try:
+                diff1 = float(np.max(np.abs(obs1_p - exp1_p))) if n1>0 else 0.0
+                diff2 = float(np.max(np.abs(obs2_p - exp2_p))) if n2>0 else 0.0
+                diff_max = max(diff1, diff2)
+                thr = float(SS.get('risk_diff_threshold', 0.05)) if 'risk_diff_threshold' in SS else 0.05
+                _sig_set('benford_diffmax', diff_max, severity=(1.0 if diff_max>=thr else 0.0), note='max(|obs-exp|) 1D/2D')
+            except Exception:
+                pass
             st.write('**Benford 1D**'); st.dataframe(df1, use_container_width=True)
             st.write('**Benford 2D**'); st.dataframe(df2.head(90), use_container_width=True)
 
@@ -3193,6 +3260,22 @@ with TAB6:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
+    st.markdown('---')
+    st.subheader('🧭 Evidence → Risk (from signals)')
+    try:
+        _sig = SS.get('signals', {})
+        import pandas as _pd
+        if _sig:
+            rows = [{'signal':k, 'value':v.get('value'), 'severity':v.get('severity'), 'note':v.get('note')} for k,v in _sig.items()]
+            _dfsig = _pd.DataFrame(rows).sort_values(['severity','signal'], ascending=[False, True], na_position='last')
+            st.dataframe(_dfsig, use_container_width=True)
+            sev = _dfsig['severity'].fillna(0.0)
+            risk_score = float((sev.clip(0,1)).mean()) if len(sev)>0 else 0.0
+            st.metric('Estimated Risk (0–1)', f'{risk_score:.2f}')
+        else:
+            st.info('Chưa có tín hiệu nào — chạy các test để tổng hợp rủi ro.')
+    except Exception:
+        pass
     require_full_data()
     require_full_data()
     left, right = st.columns([3,2])
