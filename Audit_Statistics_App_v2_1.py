@@ -49,6 +49,20 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+def _safe_xy_df(sX, sY):
+    import pandas as pd, numpy as np
+    def _to_series(s):
+        if s is None: return None
+        try:
+            return s.astype('object') if hasattr(s, 'astype') else pd.Series(s, dtype='object')
+        except Exception:
+            try: return pd.Series(s)
+            except Exception: return None
+    sx, sy = _to_series(sX), _to_series(sY)
+    if sx is None or sy is None: return None
+    df = pd.DataFrame({'x': sx, 'y': sy}).replace([np.inf, -np.inf], np.nan).dropna()
+    return None if df.empty else df
+
 # --- Safe helper: robust_suggest_cols_by_goal ---
 
 def _safe_loc_bool(df, mask):
@@ -2154,7 +2168,7 @@ with TAB2:
 
     # Categorical – Categorical
     elif tX=='Categorical' and tY=='Categorical':
-        df = _pd.DataFrame({'x': sX.astype('object'), 'y': sY.astype('object')}).dropna()
+        df = _safe_xy_df(sX, sY)
         if df['x'].nunique()<2 or df['y'].nunique()<2:
             st.warning('Cần mỗi biến có ≥2 nhóm.')
         else:
