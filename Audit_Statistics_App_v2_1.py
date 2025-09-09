@@ -898,8 +898,8 @@ def cgof_by_period(df: pd.DataFrame, cat_col: str, dt_col: str, gran: str) -> pd
     return res
 
 # -------------------------- Sidebar: Workflow & perf ---------------------------
-st.sidebar.title('Workflow')
-with st.sidebar.expander('0) Ingest data', expanded=False):
+st.title('Workflow')
+with st.expander('0) Ingest data', expanded=False):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
     if up is not None:
         fb = up.read()
@@ -936,15 +936,8 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
 
 
 
-with st.sidebar.expander('2) Risk & Advanced', expanded=False):
-        SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
-with st.sidebar.expander('3) Cache', expanded=False):
-    if not HAS_PYARROW:
-        st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
-        SS['use_parquet_cache'] = False
-    SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and HAS_PYARROW)
-    if st.button('🧹 Clear cache'):
-        st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
+# [Removed sidebar '2) Risk & Advanced']
+
 
 
 # --------------------------- : Template validator ---------------------------
@@ -1193,7 +1186,7 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
 # ---------------------------------- Main Gate ---------------------------------
 
 # --------------------------- : Template & Validation ---------------------------
-with st.sidebar.expander('4) Template & Validation', expanded=False):
+with st.expander('4) Template & Validation', expanded=False):
     st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
     # default template columns inferred from preview/full data if available
     _template_cols_default = (list(SS.get('df_preview').columns) if SS.get('df_preview') is not None else (list(SS.get('df').columns) if SS.get('df') is not None else [
@@ -1220,7 +1213,21 @@ with st.sidebar.expander('4) Template & Validation', expanded=False):
     SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False), help='Nếu bật, khi Load full data, hệ thống sẽ kiểm tra cột có khớp TEMPLATE.')
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
 
-st.title('📊 Audit Statistics')
+\1
+# -- Local compact settings (no sidebar) --
+with st.expander('⚙️ Cache & Settings', expanded=False):
+    if not HAS_PYARROW:
+        st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
+        SS['use_parquet_cache'] = False
+    SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) cho lần nạp kế tiếp', value=SS.get('use_parquet_cache', False) and HAS_PYARROW, key='_cfg_cache')
+    col_cs1, col_cs2 = st.columns([1,1])
+    with col_cs1:
+        if st.button('🧹 Clear cache', key='_btn_clear_cache_top'):
+            st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
+    with col_cs2:
+        SS.setdefault('preserve_results', True)
+        SS['preserve_results'] = st.checkbox('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True), key='_cfg_preserve')
+
 if SS['file_bytes'] is None:
     st.info('Upload a file để bắt đầu.'); # soft gate removed to avoid jumping tabs
 
@@ -1837,35 +1844,36 @@ with TABQ:
                         fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
-# --------------------------- TAB 1: Distribution ------------------------------
-
-
-
-
-
-
-with TAB1:
-    st.subheader('📊 Distribution & Shape')
-    _df = _df_full_safe()
-    if _df is None or _df.empty:
-        st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy tab này.')
-    else:
-        import pandas as pd, numpy as np, plotly.express as px, plotly.graph_objects as go
-        col = st.selectbox('Chọn cột', list(_df.columns))
-        s = _df[col]
-        # Numeric
-        if _is_num(s):
-            c1,c2 = st.columns(2)
-            with c1:
-                SS['bins'] = st.slider('Histogram bins', 10, 200, int(SS.get('bins', 50)), 5)
-                SS['log_scale'] = st.checkbox('Log scale (X)', value=bool(SS.get('log_scale', False)))
-            with c2:
-                kde_on = st.checkbox('KDE', value=True)
+\1
+            # Local visuals options (no sidebar)
+            adv_col1, adv_col2 = st.columns(2)
+            with adv_col1:
+                SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False), key='_dist_adv')
+            with adv_col2:
+                pass
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
             else:
-                fig1 = go.Figure()
+         
+            # Descriptive & Normality
+            try:
+                stats_df = _summary_stats(s_num)
+                st.markdown("**Descriptive statistics**")
+                st.dataframe(stats_df, use_container_width=True, height=220)
+            except Exception:
+                stats_df = None
+            try:
+                method, stat, p = _normality_tests(s_num)
+                _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
+                norm_msg = "KHÔNG bác bỏ H0 (gần chuẩn)" if (p==p and p>=_alpha) else "Bác bỏ H0 (không chuẩn)"
+                st.caption(f"Normality test: {method} • statistic={stat:.3f} • p={p:.4f} • α={_alpha} → {norm_msg}")
+                if stats_df is not None:
+                    _notes = _interpret_distribution(s_num, _alpha, method, p, stats_df)
+                    if _notes: st.markdown('**Gợi ý diễn giải tự động:**\n'+'\n'.join(['- '+m for m in _notes]))
+            except Exception:
+                pass
+       fig1 = go.Figure()
                 fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
                 if kde_on and (len(s_num)>10) and (s_num.var()>0):
                     try:
@@ -1878,6 +1886,7 @@ with TAB1:
                 if SS['log_scale'] and (s_num>0).all(): fig1.update_xaxes(type='log')
                 fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
                 st_plotly(fig1)
+            if SS.get('advanced_visuals', False):
 
                 # Lorenz & Gini
                 v = np.sort(s_num.values)
@@ -1892,6 +1901,8 @@ with TAB1:
                     st_plotly(figL)
                 else:
                     st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
+            else:
+                st.caption('Bật Advanced visuals để xem Lorenz/Gini.')
                 # outlier_rate_z
                 _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
                 sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
