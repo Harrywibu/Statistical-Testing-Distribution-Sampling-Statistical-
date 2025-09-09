@@ -1212,8 +1212,6 @@ with st.expander('4) Template & Validation', expanded=False):
     st.divider()
     SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False), help='Nếu bật, khi Load full data, hệ thống sẽ kiểm tra cột có khớp TEMPLATE.')
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
-
-\1
 # -- Local compact settings (no sidebar) --
 with st.expander('⚙️ Cache & Settings', expanded=False):
     if not HAS_PYARROW:
