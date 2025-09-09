@@ -2387,7 +2387,7 @@ with TAB4:
                         st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
                         st.markdown('---')
                     if not SS.get('_checklist_rendered', False):
-                    SS['_checklist_rendered'] = True
+                            SS['_checklist_rendered'] = True
                     ch = []
                     if _goal in ['Doanh thu','Giảm giá','Số lượng']:
                         ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
