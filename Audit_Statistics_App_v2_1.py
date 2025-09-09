@@ -2483,26 +2483,7 @@ with TAB4:
                     st.write('- Dùng **Categorical tests** (HHI/Pareto, Rare category, Chi-square GoF).')
                 if _goal in ['Thời điểm']:
                     st.write('- Dùng **Time series tests** (Rolling mean/variance, Run-test).')
-    
-                with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
-                    ch = []
-                    if _goal in ['Doanh thu','Giảm giá','Số lượng']:
-                        ch += ['Median vs Mean gap','Tail %>p95/%>p99','Zero-ratio','Seasonality (weekday/month)']
-                    if _goal in ['Khách hàng','Sản phẩm']:
-                        ch += ['HHI/Pareto top','Rare category flag','Chi-square GoF']
-                    if _goal in ['Thời điểm']:
-                        ch += ['Rolling mean/variance','Run-test approx']
-                    checked = {}
-                    cols = st.columns(2) if len(ch) > 4 else [st]
-                    for i, name in enumerate(ch):
-                        container = cols[i % len(cols)]
-                        with st.container():
-                            checked[name] = st.checkbox(name, key=f'tests_chk_{i}")
-                    if any(checked.values()):
-                        st.success('Mục đã tick: ' + ', '.join([k for k,v in checked.items() if v]))
-                    else:
-                        st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
-        
+                    
                 st.markdown('---')
                 with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', expanded=False):
                     ch = []
