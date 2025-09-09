@@ -3068,7 +3068,7 @@ with TAB7:
             dupes=int(df_in.duplicated().sum())
             return pd.DataFrame(rep_rows), dupes
         (_src := _df_full_safe());
-    rep_df, n_dupes = _quality_report(_src) if _is_df(_src) else (pd.DataFrame(), 0)
+        rep_df, n_dupes = _quality_report(_src) if _is_df(_src) else (pd.DataFrame(), 0)
         signals=[]
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
