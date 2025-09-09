@@ -1,6 +1,32 @@
 from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
 
+
+# ## GLOBAL HELPERS: dtype checks (always available)
+try:
+    _GLOBAL_HELPERS_READY
+except NameError:
+    def _is_num(s):
+        try:
+            import pandas as pd
+            return hasattr(s, 'dtype') and pd.api.types.is_numeric_dtype(s)
+        except Exception:
+            return False
+    def _is_dt(name_or_series, s=None):
+        try:
+            import pandas as pd
+            ser = s if s is not None else name_or_series
+            if ser is None: return False
+            if hasattr(ser, 'dtype') and pd.api.types.is_datetime64_any_dtype(ser):
+                return True
+            try:
+                tmp = pd.to_datetime(ser, errors='coerce')
+                return tmp.notna().any()
+            except Exception:
+                return False
+        except Exception:
+            return False
+    _GLOBAL_HELPERS_READY = True
 # --- Signal documentation mapping for TAB7 explanations ---
 SIGNAL_DOC = {
     'trend_MK_p': 'Mann–Kendall p-value (xu hướng theo thời gian cho Y). p < alpha ⇒ xu hướng đáng kể.',
@@ -1282,7 +1308,7 @@ if SS['df'] is None and SS['df_preview'] is None:
 # Source & typing
 DF_FULL = SS.get('df')
 if DF_FULL is None:
-    st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).'); # soft gate removed to avoid jumping tabs
+    pass
 
 ALL_COLS = list(_df_full_safe().columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, _df_full_safe()[c])]
@@ -1648,10 +1674,9 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
 
 # ---- (moved) Data Quality ----
 with TABQ:
-    SS['alpha'] = st.slider('Alpha (mức ý nghĩa)', 0.001, 0.2, float(SS.get('alpha', 0.05)), 0.001, help='Dùng cho t-test/ANOVA/Chi-square. (Riêng Overview/hiển thị không bị ảnh hưởng)')
-    st.subheader('🧪 Data Quality — FULL dataset')
+    st.subheader('🧪 Data Quality')
     if SS.get('df') is None:
-        st.info('Hãy **Load full data** để xem Data Quality .')
+        st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
     else:
         @st.cache_data(ttl=900, show_spinner=False, max_entries=16)
         def data_quality_table(df_in):
@@ -2245,7 +2270,7 @@ with TAB2:
     require_full_data()
     st.subheader('🔗 Correlation Studio & 📈 Trend')
     if SS.get('df') is None:
-        st.info('Hãy **Load full data** để xem Data Quality .')
+        pass
     # —— Helpers: metrics for mixed data-type pairs ——
     import numpy as _np
     import pandas as _pd
@@ -2685,7 +2710,7 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
                                file_name=f'benford_drilldown_{mode}_{digit}.csv', mime='text/csv')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('Hãy **Load full data** để xem Data Quality .')
+        pass
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
@@ -2853,7 +2878,7 @@ with TAB4:
             st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
             # Gate: require FULL data for this tab
             if SS.get('df') is None:
-                st.info('Hãy **Load full data** để xem Data Quality .')
+                pass
             st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
             def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
@@ -2992,7 +3017,7 @@ with TAB5:
     st.subheader('📘 Regression (Linear / Logistic)')
     # Gate: require FULL data for this tab
     if SS.get('df') is None:
-        st.info('Hãy **Load full data** để xem Data Quality .')
+        pass
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
