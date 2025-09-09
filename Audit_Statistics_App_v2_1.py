@@ -2169,8 +2169,8 @@ with TAB2:
     # Categorical – Categorical
     elif tX=='Categorical' and tY=='Categorical':
         df = _safe_xy_df(sX, sY)
-        if df['x'].nunique()<2 or df['y'].nunique()<2:
-            st.warning('Cần mỗi biến có ≥2 nhóm.')
+        if df is None:
+            st.info("Không đủ dữ liệu cho cặp X–Y.")
         else:
             V, p, chi2 = _cramers_v(df['x'], df['y'])
             st.dataframe(_pd.DataFrame([{'Cramér’s V': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
