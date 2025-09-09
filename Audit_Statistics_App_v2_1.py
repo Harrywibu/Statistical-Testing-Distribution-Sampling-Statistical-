@@ -1870,7 +1870,7 @@ with TABQ:
                     if _notes: st.markdown('**Gợi ý diễn giải tự động:**\n'+'\n'.join(['- '+m for m in _notes]))
             except Exception:
                 pass
-       fig1 = go.Figure()
+                fig1 = go.Figure()
                 fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
                 if kde_on and (len(s_num)>10) and (s_num.var()>0):
                     try:
