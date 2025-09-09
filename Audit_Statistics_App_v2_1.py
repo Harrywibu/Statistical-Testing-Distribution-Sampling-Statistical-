@@ -81,7 +81,7 @@ def robust_suggest_cols_by_goal(df, goal):
     """
     Return a DICT with best-guess columns for each type:
       {'num': <numeric col or ''>, 'dt': <datetime col or ''>, 'cat': <categorical/text col or ''>}
-    Robust to df=None / Series / array-like; fallback to SS['DF_FULL'] / SS['df'].
+    Robust to df=None / Series / array-like; fallback to SS.get('DF_FULL') / SS.get('df').
     """
     import pandas as pd
     try:
@@ -166,7 +166,7 @@ def read_any(file_bytes: bytes, ext: str, header=0, sheet_name=None, usecols=Non
     bio = io.BytesIO(file_bytes)
     ext = (ext or '').lower().strip('.')
     if ext in ('csv','txt'):
-        df = read_any(SS['file_bytes'], Path(SS['uploaded_name']).suffix, header=SS.get('header_row',1)-1, sheet_name=SS.get('xlsx_sheet','') or None)
+        df = read_any(SS.get('file_bytes'), Path(SS.get('uploaded_name')).suffix, header=SS.get('header_row',1)-1, sheet_name=SS.get('xlsx_sheet','') or None)
     elif ext in ('xlsx','xls'):
         try:
             df = pd.read_excel(bio, na_values=NA_VALUES, header=header if header is not None else 0, sheet_name=sheet_name, engine='openpyxl')
@@ -335,6 +335,7 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
+SS.setdefault('dtype_choice','')
 
 SS.setdefault('signals', {})
 
@@ -898,8 +899,8 @@ def cgof_by_period(df: pd.DataFrame, cat_col: str, dt_col: str, gran: str) -> pd
     return res
 
 # -------------------------- Sidebar: Workflow & perf ---------------------------
-st.title('Workflow')
-with st.expander('0) Ingest data', expanded=False):
+st.sidebar.title('Workflow')
+with st.sidebar.expander('0) Ingest data', expanded=False):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
     if up is not None:
         fb = up.read()
@@ -908,7 +909,7 @@ with st.expander('0) Ingest data', expanded=False):
         SS['sha12'] = file_sha12(fb)
         SS['df'] = None
         SS['df_preview'] = None
-        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+        st.caption(f"Đã nhận file: {up.name} • SHA12={SS.get('sha12')}")
 
     if st.button('Clear file', key='btn_clear_file'):
         base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
@@ -930,14 +931,21 @@ with st.expander('0) Ingest data', expanded=False):
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
     help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
-    rp = SS['risk_params']
+    rp = SS.get('risk_params')
 
 
 
 
 
-# [Removed sidebar '2) Risk & Advanced']
-
+with st.sidebar.expander('2) Risk & Advanced', expanded=False):
+        SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
+with st.sidebar.expander('3) Cache', expanded=False):
+    if not HAS_PYARROW:
+        st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
+        SS['use_parquet_cache'] = False
+    SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and HAS_PYARROW)
+    if st.button('🧹 Clear cache'):
+        st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
 
 # --------------------------- : Template validator ---------------------------
@@ -1186,7 +1194,7 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
 # ---------------------------------- Main Gate ---------------------------------
 
 # --------------------------- : Template & Validation ---------------------------
-with st.expander('4) Template & Validation', expanded=False):
+with st.sidebar.expander('4) Template & Validation', expanded=False):
     st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
     # default template columns inferred from preview/full data if available
     _template_cols_default = (list(SS.get('df_preview').columns) if SS.get('df_preview') is not None else (list(SS.get('df').columns) if SS.get('df') is not None else [
@@ -1201,11 +1209,11 @@ with st.expander('4) Template & Validation', expanded=False):
     if st.button('📄 Tạo & tải TEMPLATE.xlsx', key='v28_btn_tpl'):
         _bio = BytesIO()
         with _pd.ExcelWriter(_bio, engine='openpyxl') as w:
-            _pd.DataFrame(columns=SS['v28_template_cols']).to_excel(w, index=False, sheet_name='TEMPLATE')
+            _pd.DataFrame(columns=SS.get('v28_template_cols')).to_excel(w, index=False, sheet_name='TEMPLATE')
             # nhúng hướng dẫn
             _guide = _pd.DataFrame({
-                'Field': SS['v28_template_cols'],
-                'Type (gợi ý)': ['date','text','text','text','number','number','number','number','text','text','text','text'][:len(SS['v28_template_cols'])]
+                'Field': SS.get('v28_template_cols'),
+                'Type (gợi ý)': ['date','text','text','text','number','number','number','number','text','text','text','text'][:len(SS.get('v28_template_cols'))]
             })
             _guide.to_excel(w, index=False, sheet_name='GUIDE')
         st.download_button('⬇️ Download TEMPLATE.xlsx', data=_bio.getvalue(), file_name='TEMPLATE.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1213,24 +1221,11 @@ with st.expander('4) Template & Validation', expanded=False):
     SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False), help='Nếu bật, khi Load full data, hệ thống sẽ kiểm tra cột có khớp TEMPLATE.')
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
 
-# -- Local compact settings (no sidebar) --
-with st.expander('⚙️ Cache & Settings', expanded=False):
-    if not HAS_PYARROW:
-        st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
-        SS['use_parquet_cache'] = False
-    SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) cho lần nạp kế tiếp', value=SS.get('use_parquet_cache', False) and HAS_PYARROW, key='_cfg_cache')
-    col_cs1, col_cs2 = st.columns([1,1])
-    with col_cs1:
-        if st.button('🧹 Clear cache', key='_btn_clear_cache_top'):
-            st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
-    with col_cs2:
-        SS.setdefault('preserve_results', True)
-        SS['preserve_results'] = st.checkbox('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True), key='_cfg_preserve')
-
-if SS['file_bytes'] is None:
+st.title('📊 Audit Statistics')
+if SS.get('file_bytes') is None:
     st.info('Upload a file để bắt đầu.'); # soft gate removed to avoid jumping tabs
 
-fname=SS['uploaded_name']; fb=SS['file_bytes']; sha=SS['sha12']
+fname=SS.get('uploaded_name'); fb=SS.get('file_bytes'); sha=SS.get('sha12')
 colL, colR = st.columns([3,2])
 with colL:
     st.text_input('File', value=fname or '', disabled=True)
@@ -1240,36 +1235,36 @@ with colR:
 
 # Ingest flow
 if fname.lower().endswith('.csv'):
-    if do_preview or SS['df_preview'] is None:
+    if do_preview or SS.get('df_preview') is None:
         try:
-            SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS['pv_n']))
-            SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
+            SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS.get('pv_n')))
+            SS['last_good_preview'] = SS.get('df_preview'); SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
-    if SS['df_preview'] is not None:
-        st.dataframe(SS['df_preview'], use_container_width=True, height=260)
-        headers=list(SS['df_preview'].columns)
+    if SS.get('df_preview') is not None:
+        st.dataframe(SS.get('df_preview'), use_container_width=True, height=260)
+        headers=list(SS.get('df_preview').columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
         SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
-            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
+            df_cached = read_parquet_cache(sha, key) if SS.get('use_parquet_cache') else None
             if df_cached is None:
                 df_full = sanitize_for_arrow(read_csv_fast(fb, usecols=(selected or None)))
-                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
+                if SS.get('use_parquet_cache'): write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             # : optional header validation
             if SS.get('v28_validate_on_load'):
-                _ok, _msg = v28_validate_headers(SS['df'])
+                _ok, _msg = v28_validate_headers(SS.get('df'))
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
                     st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
                     pass
 
-            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
+            st.success(f"Loaded: {len(SS.get('df')):,} rows × {len(SS.get('df').columns)} cols • SHA12={sha}")
 else:
     # Detect sheets safely. This covers CSV disguised as XLSX.
     try:
@@ -1280,15 +1275,15 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
         c1,c2,c3 = st.columns([2,1,1])
         idx=0 if sheets else 0
         SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
-        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
-        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
+        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS.get('header_row'))
+        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS.get('skip_top'))
         SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
         dtype_map=None
-        if SS['dtype_choice'].strip():
-            try: dtype_map=json.loads(SS['dtype_choice'])
+        if str(SS.get('dtype_choice','')).strip():
+            try: dtype_map=json.loads(SS.get('dtype_choice'))
             except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
         try:
-            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
+            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS.get('xlsx_sheet'), usecols=None, header_row=SS.get('header_row'), skip_top=SS.get('skip_top'), dtype_map=dtype_map).head(SS.get('pv_n')))
             SS['df_preview']=prev; SS['last_good_preview']=prev  # chỉ để xem định dạng
         except Exception as e:
             st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
@@ -1296,29 +1291,29 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
         headers=list(prev.columns)
         st.caption(f'Columns: {len(headers)} • SHA12={sha}')
         SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
-        filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+        filtered = [h for h in headers if str(SS.get('col_filter','')).lower() in h.lower()] if SS.get('col_filter') else headers
         selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
         if st.button('📥 Load full data', key='btn_load_xlsx'):
-            key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
+            key_tuple=(SS.get('xlsx_sheet'), SS.get('header_row'), SS.get('skip_top'), tuple(selected) if selected else ('ALL',))
             key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
-            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
+            df_cached = read_parquet_cache(sha, key) if SS.get('use_parquet_cache') else None
             if df_cached is None:
-                df_full = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=(selected or None), header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map))
-                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
+                df_full = sanitize_for_arrow(read_xlsx_fast(fb, SS.get('xlsx_sheet'), usecols=(selected or None), header_row=SS.get('header_row'), skip_top=SS.get('skip_top'), dtype_map=dtype_map))
+                if SS.get('use_parquet_cache'): write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             # : optional header validation
             if SS.get('v28_validate_on_load'):
-                _ok, _msg = v28_validate_headers(SS['df'])
+                _ok, _msg = v28_validate_headers(SS.get('df'))
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
                     st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
                     pass
 
-            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
+            st.success(f"Loaded: {len(SS.get('df')):,} rows × {len(SS.get('df').columns)} cols • SHA12={sha}")
 
-if SS['df'] is None and SS['df_preview'] is None:
+if SS.get('df') is None and SS.get('df_preview') is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
     pass
 
@@ -1331,7 +1326,7 @@ ALL_COLS = list(_df_full_safe().columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, _df_full_safe()[c])]
 NUM_COLS = _df_full_safe().select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = _df_full_safe().select_dtypes(include=['object','category','bool']).columns.tolist()
-VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS.get('col_whitelist'))]
 # — Sales risk context on FULL dataset only
 try:
     _sales = compute_sales_flags(DF_FULL)
@@ -1828,7 +1823,7 @@ with TABQ:
             dq = dq[cols_order]
             return dq.sort_values(['type','column']).reset_index(drop=True)
         try:
-            dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_FULL)
+            dq = data_quality_table(SS.get('df') if SS.get('df') is not None else DF_FULL)
             st.dataframe(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             if DT_COLS:
@@ -1843,36 +1838,36 @@ with TABQ:
                         fig = px.bar(cnt, x='period', y='count', title='Số bản ghi theo giai đoạn')
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
-            # Local visuals options (no sidebar)
-            adv_col1, adv_col2 = st.columns(2)
-            with adv_col1:
-                SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False), key='_dist_adv')
-            with adv_col2:
-                pass
+# --------------------------- TAB 1: Distribution ------------------------------
+
+
+
+
+
+
+with TAB1:
+    st.subheader('📊 Distribution & Shape')
+    _df = _df_full_safe()
+    if _df is None or _df.empty:
+        st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy tab này.')
+    else:
+        import pandas as pd, numpy as np, plotly.express as px, plotly.graph_objects as go
+        col = st.selectbox('Chọn cột', list(_df.columns))
+        s = _df[col]
+        # Numeric
+        if _is_num(s):
+            c1,c2 = st.columns(2)
+            with c1:
+                SS['bins'] = st.slider('Histogram bins', 10, 200, int(SS.get('bins', 50)), 5)
+                SS['log_scale'] = st.checkbox('Log scale (X)', value=bool(SS.get('log_scale', False)))
+            with c2:
+                kde_on = st.checkbox('KDE', value=True)
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
             else:
-         
-                # Descriptive & Normality
-                try:
-                    stats_df = _summary_stats(s_num)
-                    st.markdown("**Descriptive statistics**")
-                    st.dataframe(stats_df, use_container_width=True, height=220)
-                except Exception:
-                    stats_df = None
-                try:
-                    method, stat, p = _normality_tests(s_num)
-                    _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
-                    norm_msg = "KHÔNG bác bỏ H0 (gần chuẩn)" if (p==p and p>=_alpha) else "Bác bỏ H0 (không chuẩn)"
-                    st.caption(f"Normality test: {method} • statistic={stat:.3f} • p={p:.4f} • α={_alpha} → {norm_msg}")
-                    if stats_df is not None:
-                        _notes = _interpret_distribution(s_num, _alpha, method, p, stats_df)
-                        if _notes: st.markdown('**Gợi ý diễn giải tự động:**\n'+'\n'.join(['- '+m for m in _notes]))
-                except Exception:
-                    pass
                 fig1 = go.Figure()
-                fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
+                fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS.get('bins'), name='Histogram', opacity=0.8))
                 if kde_on and (len(s_num)>10) and (s_num.var()>0):
                     try:
                         from scipy.stats import gaussian_kde
@@ -1881,10 +1876,9 @@ with TABQ:
                         ys_scaled = ys*len(s_num)*(xs[1]-xs[0])
                         fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE'))
                     except Exception: pass
-                if SS['log_scale'] and (s_num>0).all(): fig1.update_xaxes(type='log')
+                if SS.get('log_scale') and (s_num>0).all(): fig1.update_xaxes(type='log')
                 fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
                 st_plotly(fig1)
-            if SS.get('advanced_visuals', False):
 
                 # Lorenz & Gini
                 v = np.sort(s_num.values)
@@ -1899,8 +1893,6 @@ with TABQ:
                     st_plotly(figL)
                 else:
                     st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
-            else:
-                st.caption('Bật Advanced visuals để xem Lorenz/Gini.')
                 # outlier_rate_z
                 _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
                 sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
@@ -1911,7 +1903,7 @@ with TABQ:
                 st.caption('Chú giải: Histogram/KDE thể hiện phân phối; Lorenz & Gini đo mức độ tập trung; outlier_rate_z = tỷ lệ điểm có |z| ≥ ngưỡng.')
 
         # Datetime
-        if _is_dt(col, s):
+        elif _is_dt(col, s):
             gran = st.radio('Chu kỳ', ['D','W','M'], horizontal=True, index=2)
             try:
                 sdt = pd.to_datetime(s, errors='coerce')
@@ -2636,7 +2628,7 @@ with TAB5:
                                 with g1:
                                     fig1 = px.scatter(x=yhat, y=resid, labels={'x':'Fitted','y':'Residuals'}, title='Residuals vs Fitted'); st_plotly(fig1)
                                 with g2:
-                                    fig2 = px.histogram(resid, nbins=SS['bins'], title='Residuals distribution'); st_plotly(fig2)
+                                    fig2 = px.histogram(resid, nbins=SS.get('bins'), title='Residuals distribution'); st_plotly(fig2)
                                 try:
                                     if len(resid)>7:
                                         p_norm = float(stats.normaltest(resid)[1]); st.caption(f'Normality test (residuals) p-value: {p_norm:.4f}')
@@ -2734,8 +2726,8 @@ with TAB5:
 with TAB6:
     require_full_data()
     st.subheader('🚩 Fraud Flags')
-    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
-    FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
+    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS.get('df') is not None), key='ff_use_full')
+    FLAG_DF = DF_FULL if (use_full_flags and SS.get('df') is not None) else DF_FULL
     # Optional: filter FLAG_DF by selected period before scanning
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Fraud Flags (M/Q/Y)', expanded=False):
@@ -2747,7 +2739,7 @@ with TAB6:
             if pick != '(All)':
                 FLAG_DF = FLAG_DF.loc[per_ser == pick]
                 st.caption(f'Đang quét Fraud Flags trong giai đoạn: {pick} — {len(FLAG_DF):,} dòng')
-            if FLAG_DF is DF_FULL and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
+            if FLAG_DF is DF_FULL and SS.get('df') is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     _base_df = FLAG_DF if isinstance(globals().get('FLAG_DF'), pd.DataFrame) else _df_full_safe()
@@ -2941,7 +2933,7 @@ with TAB7:
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(_df_full_safe()[c] if SS['df'] is not None else _df_full_safe()[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(_df_full_safe()[c] if SS.get('df') is not None else _df_full_safe()[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
