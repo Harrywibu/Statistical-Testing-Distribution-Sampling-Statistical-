@@ -1,6 +1,41 @@
 from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
 
+def suggest_cols_by_goal(df, goal):
+    """Heuristic suggestion of columns based on common sales goals."""
+    import pandas as pd
+    if df is None or getattr(df, 'empty', True):
+        return []
+    cols = list(getattr(df, 'columns', []))
+    if not cols:
+        return []
+    g = (goal or '').lower()
+    buckets = {
+        'doanh thu': ['revenue', 'amount', 'sales', 'total', 'subtotal', 'net'],
+        'giảm giá': ['discount'],
+        'số lượng': ['qty', 'quantity', 'units', 'count'],
+        'khách hàng': ['customer', 'client', 'buyer'],
+        'sản phẩm': ['product', 'sku', 'item', 'material'],
+        'thời điểm': ['date', 'time', 'period', 'month', 'year', 'quarter']
+    }
+    hints = []
+    for k, keys in buckets.items():
+        if g in k:
+            hints += keys
+    # Fallback: if goal not matched, suggest numeric or datetime columns by simple dtype inference
+    try:
+        num_cols = [c for c in cols if str(getattr(df[c], 'dtype', '')).startswith(('int', 'float'))]
+        dt_cols = [c for c in cols if 'datetime' in str(getattr(df[c], 'dtype', '')).lower()]
+        cat_cols = [c for c in cols if c not in num_cols and c not in dt_cols]
+    except Exception:
+        num_cols, dt_cols, cat_cols = [], [], []
+    order = hints + num_cols + dt_cols + cat_cols
+    seen = set()
+    ordered = [c for c in order if not (c in seen or seen.add(c)) and c in cols]
+    return ordered or cols[:20]
+
+
+
 
 # ## GLOBAL HELPERS: dtype checks (always available)
 try:
@@ -2048,9 +2083,9 @@ with TAB2:
     with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
         _df_t2 = DF_FULL
         _goal_t2 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'],
-                            horizontal=True, key='t2_goal')
+                            horizontal=True, key=_k('TAB2','goal'))
         _sug_t2 = robust_suggest_cols_by_goal(_df_t2, _goal_t2)
-        _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t2_only')
+        _only_t2 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key=_k('TAB2','only'))
         def _filter_cols_goal(cols):
             if not _only_t2:
                 return cols
@@ -2502,47 +2537,6 @@ with TAB4:
     except Exception as e:
         st.error(f'Lỗi khi chạy Tests: {e}')
 
-# ---------------- : Quick‑nav (lọc cột & auto-suggest + push Flags) ----------------
-with st.expander('⚙️ Quick‑nav  — lọc cột & auto-suggest', expanded=False):
-    _df_v27 = _df_copy_safe(DF_FULL) if ('DF_FULL' in SS and SS.get('DF_FULL') is not None) else (SS.get('df') if 'df' in SS else None)
-    if _df_v27 is None:
-        st.info('Chưa có dữ liệu. Vui lòng Load full data.')
-    else:
-        _goal_v27 = st.radio('Mục tiêu', ['Doanh thu','Giảm giá','Số lượng','Khách hàng','Sản phẩm','Thời điểm'], horizontal=True, key='t4_v27_goal')
-        _sug_v27 = robust_suggest_cols_by_goal(_df_v27, _goal_v27)
-        _only_v27 = st.toggle('Chỉ hiện cột phù hợp (theo mục tiêu)', value=True, key='t4_v27_only')
-        def _filter_v27(cols, key):
-            if not _only_v27 or not _sug_v27.get(key): return cols
-            tok = _sug_v27[key].lower()
-            return [c for c in cols if tok in c.lower()] or cols
-        _num = [c for c in _df_v27.columns if pd.api.types.is_numeric_dtype(_df_v27[c])]
-        _cat = [c for c in _df_v27.columns if (not pd.api.types.is_numeric_dtype(_df_v27[c])) and (not pd.api.types.is_datetime64_any_dtype(_df_v27[c]))]
-        _dt  = [c for c in _df_v27.columns if pd.api.types.is_datetime64_any_dtype(_df_v27[c])]
-        _num = _filter_v27(_num,'num'); _cat = _filter_v27(_cat,'cat'); _dt = _filter_v27(_dt,'dt')
-        c1,c2,c3 = st.columns(3)
-        with c1:
-            _cn = st.selectbox('Cột numeric', _num, index=(_num.index(_sug_v27['num']) if (_sug_v27['num'] in _num) else 0), key='t4_v27_num')
-        with c2:
-            _cc = st.selectbox('Cột categorical', _cat, index=(_cat.index(_sug_v27['cat']) if (_sug_v27['cat'] in _cat) else 0), key='t4_v27_cat')
-        with c3:
-            _td = st.selectbox('Cột thời gian', _dt, index=(_dt.index(_sug_v27['dt']) if (_sug_v27['dt'] in _dt) else 0), key='t4_v27_dt')
-
-        _s = pd.to_numeric(_df_v27[_cn], errors='coerce')
-        _desc = _s.describe(percentiles=[.5,.95,.99]).to_dict()
-        _zero = float((_s==0).mean())
-        _tail99 = float((_s > _s.quantile(.99)).mean())
-        _gap = float(abs(_s.median() - _s.mean()))
-        st.json({'col':_cn,'median':_desc.get('50%'),'mean':_desc.get('mean'),'p95':_desc.get('95%'),'p99':_desc.get('99%'),'zero_ratio':_zero,'tail_gt_p99':_tail99,'median_mean_gap':_gap})
-
-        if st.button('➕ Đẩy gợi ý sang Tab Flags', key='t4_v27_push'):
-            _flags = SS.get('fraud_flags') or []
-            _flags += [
-                {'flag':'Median-Mean gap','column': _cn, 'value': _gap, 'threshold': float(_s.std() or 0)*0.5, 'note': 'Chênh lớn ⇒ kiểm tra outliers/log transform'},
-                {'flag':'Tail > P99','column': _cn, 'value': _tail99, 'threshold': 0.01, 'note': 'Đuôi quá dày ⇒ rà soát giao dịch tail'},
-                {'flag':'Zero ratio','column': _cn, 'value': _zero, 'threshold': 0.20, 'note': 'Nhiều 0 ⇒ kiểm tra quy trình ghi nhận'}
-            ]
-            SS['fraud_flags'] = _flags
-            st.success('Đã đẩy 3 gợi ý cờ sang Tab Flags ')
 
 with TAB5:
     require_full_data()
