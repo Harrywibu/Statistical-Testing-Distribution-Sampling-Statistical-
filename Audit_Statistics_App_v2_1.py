@@ -1851,7 +1851,7 @@ with TABQ:
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
-            else:
+        
          
             # Descriptive & Normality
             try:
