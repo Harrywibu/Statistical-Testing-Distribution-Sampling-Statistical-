@@ -337,6 +337,33 @@ except Exception:
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
 
+# --- Safe helper: build XY dataframe robustly (handles None/arrays/Series) ---
+def _safe_xy_df(sX, sY):
+    import pandas as pd, numpy as np
+    def _to_obj_series(_s):
+        if _s is None:
+            return None
+        try:
+            # Series with astype
+            return _s.astype('object') if hasattr(_s, 'astype') else pd.Series(_s, dtype='object')
+        except Exception:
+            try:
+                return pd.Series(_s)
+            except Exception:
+                return None
+    sx = _to_obj_series(sX)
+    sy = _to_obj_series(sY)
+    if sx is None or sy is None:
+        return None
+    try:
+        dfxy = pd.DataFrame({'x': sx, 'y': sy}).replace([np.inf, -np.inf], np.nan).dropna()
+        if dfxy.empty:
+            return None
+        return dfxy
+    except Exception:
+        return None
+
+
 SS.setdefault('signals', {})
 def _sig_set(key, value, severity=None, note=None):
     try:
@@ -1210,6 +1237,12 @@ with st.sidebar.expander('4) Template & Validation', expanded=False):
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
 
 st.title('📊 Audit Statistics')
+
+st.markdown("""<style>
+/* Hide inner tab header rows to declutter Distribution & Shape, keep logic intact */
+section div[data-testid='stTabs'] > div[role='tablist'] {display:none;}
+</style>""", unsafe_allow_html=True)
+
 if SS['file_bytes'] is None:
     st.info('Upload a file để bắt đầu.'); # soft gate removed to avoid jumping tabs
 
@@ -1747,6 +1780,7 @@ with TABQ:
 
 
 with TAB1:
+    pass
 
 
     # Sub-tabs for Distribution & Shape
@@ -1887,7 +1921,7 @@ with TAB1:
     # Period selector
     left, right = st.columns([2,1])
     with left:
-        period = st.selectbox('Chu kỳ so sánh', ['Tháng','Quý','Năm'], index=0, key='t1_period')
+        pass
     with right:
         show_adv = st.toggle('Hiện biểu đồ nâng cao (ECDF/QQ/Violin/Lorenz)', value=False, key='t1_adv')
 
@@ -1897,10 +1931,18 @@ with TAB1:
     n_tx = int(len(df))
     uniq_cust = int(df[col_cust].nunique()) if col_cust else 0
     uniq_prod = int(df[col_prod].nunique()) if col_prod else 0
-    with k1: st.metric('Tổng doanh thu', f"{total_amt:,.0f}")
-    with k2: st.metric('Số giao dịch', f"{n_tx:,}")
-    with k3: st.metric('Số KH', f"{uniq_cust:,}")
-    with k4: st.metric('Số SP', f"{uniq_prod:,}")
+    with k1: # removed metric Tổng doanh thu
+        pass
+# st.metric('Tổng doanh thu', f"{total_amt:,.0f}")
+    with k2: # removed metric Số giao dịch
+        pass
+# st.metric('Số giao dịch', f"{n_tx:,}")
+    with k3: # removed metric Số KH
+        pass
+# st.metric('Số KH', f"{uniq_cust:,}")
+    with k4: # removed metric Số SP
+        pass
+# st.metric('Số SP', f"{uniq_prod:,}")
 
     # Period group
     if col_date:
@@ -2338,6 +2380,7 @@ with TAB2:
     # —— UI ——
     # ----  Quick‑nav inside Trend & Corr ----
     with st.expander('🧭 Hướng dẫn chọn phương pháp (mapping kiểu dữ liệu → phương pháp)', expanded=False):
+        pass
 
         st.markdown('''
 
@@ -2486,7 +2529,7 @@ with TAB2:
 
     # Categorical – Categorical
     elif tX=='Categorical' and tY=='Categorical':
-        df = _pd.DataFrame({'x': sX.astype('object'), 'y': sY.astype('object')}).dropna()
+        df = _safe_xy_df(sX, sY)
         if df['x'].nunique()<2 or df['y'].nunique()<2:
             st.warning('Cần mỗi biến có ≥2 nhóm.')
         else:
@@ -2801,6 +2844,7 @@ with st.expander('🔢 Benford — 1D, 2D & Drill‑down', expanded=False):
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
 with TAB4:
+    pass
 
     try:
             require_full_data()
@@ -3086,6 +3130,7 @@ with TAB5:
                         st.error(f'Linear Regression error: {e}')
 
         with tab_log:
+            pass
             # binary-like target detection
             bin_candidates=[]
             for c in REG_DF.columns:
@@ -3399,6 +3444,7 @@ with TAB7:
                 from io import BytesIO
                 bio = BytesIO()
                 with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+                    pass
                     # DATA sheet (limited to keep file small)
                     DF_FULL.head(100000).to_excel(writer, index=False, sheet_name='DATA')
                     # TEMPLATE sheet
@@ -3497,3 +3543,12 @@ with TAB7:
     
             # attach explanations
             _dfsig['explain'] = _dfsig['signal'].map(SIGNAL_DOC).fillna('')
+
+
+
+def _df_is_empty_or_none(_d):
+    try:
+        import pandas as pd
+        return (_d is None) or (not isinstance(_d, pd.DataFrame)) or _d.empty
+    except Exception:
+        return True
