@@ -1741,31 +1741,10 @@ with TABQ:
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
-with TAB0:
 
-    # ----------------- Data Quality -----------------
-    with TABQ:
-        st.subheader("Data Quality")
-        try:
-            df = _df_full_safe()
-            if df is None or len(df) == 0:
-                st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
-            else:
-                # Basic profiling counts
-                st.write('Số dòng:', len(df), ' · Số cột:', len(df.columns))
-                miss = df.isna().mean().sort_values(ascending=False)
-                if len(miss)>0:
-                    st.write('Tỉ lệ thiếu dữ liệu theo cột (Top-10):')
-                    st.dataframe(miss.head(10).to_frame('missing_rate'))
-                # Zero/constant columns
-                import pandas as pd, numpy as np
-                const_cols = [c for c in df.columns if df[c].nunique(dropna=True)<=1]
-                if const_cols:
-                    st.warning('Các cột hằng số/1-mức: ' + ', '.join(map(str, const_cols[:20])) + (' ...' if len(const_cols)>20 else ''))
-        except Exception as _e:
-            st.debug(f'Data Quality error: {_e}')
-    st.subheader('📊 Overview — Sales activity')
-    st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
+
+
+
 
 with TAB1:
 
@@ -2432,10 +2411,13 @@ with TAB2:
 
     # : safer selection
     try:
-        sX = _df_full_safe()[var_x]
-        sY = _df_full_safe()[var_y]
+        _dfc = _df_full_safe()
+        sX = _dfc[var_x] if (_dfc is not None and isinstance(var_x, str) and var_x in _dfc.columns) else None
+        sY = _dfc[var_y] if (_dfc is not None and isinstance(var_y, str) and var_y in _dfc.columns) else None
     except Exception as e:
-        st.error(f'Lỗi chọn biến X/Y: {e}'); # soft gate removed to avoid jumping tabs
+        sX, sY = None, None
+        st.warning(f'Lỗi chọn biến X/Y: {e}')
+
 
     tX = 'Numeric' if _is_num(sX) else ('Datetime' if _is_dt(var_x, sX) else 'Categorical')
     tY = 'Numeric' if _is_num(sY) else ('Datetime' if _is_dt(var_y, sY) else 'Categorical')
