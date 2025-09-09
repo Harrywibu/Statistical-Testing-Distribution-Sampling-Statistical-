@@ -1851,8 +1851,6 @@ with TABQ:
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
-        
-         
             # Descriptive & Normality
             try:
                 stats_df = _summary_stats(s_num)
@@ -1910,7 +1908,7 @@ with TABQ:
                 st.caption('Chú giải: Histogram/KDE thể hiện phân phối; Lorenz & Gini đo mức độ tập trung; outlier_rate_z = tỷ lệ điểm có |z| ≥ ngưỡng.')
 
         # Datetime
-        elif _is_dt(col, s):
+        if _is_dt(col, s):
             gran = st.radio('Chu kỳ', ['D','W','M'], horizontal=True, index=2)
             try:
                 sdt = pd.to_datetime(s, errors='coerce')
