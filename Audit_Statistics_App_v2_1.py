@@ -1774,7 +1774,7 @@ with TAB0:
         st.warning(f'Comparison period controls gặp lỗi nhẹ: {_e}')
     # --- end comparison controls ---
 st.subheader('📊 Overview — Sales activity')
-    st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
+st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
 
 with TAB1:
 
