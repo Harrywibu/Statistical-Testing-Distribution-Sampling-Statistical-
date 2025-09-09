@@ -1495,109 +1495,6 @@ def build_rule_context() -> Dict[str,Any]:
             ctx['benford']['r2_maxdiff'] = None
     return ctx
 
-def rules_catalog() -> List[Rule]:
-    R: List[Rule] = []
-    # Profiling — zero heavy
-    R.append(Rule(
-        id='NUM_ZERO_HEAVY', name='Zero‑heavy numeric', scope='profiling', severity='Medium',
-        condition=lambda c: _get(c,'last_numeric','zero_ratio', default=0)<=1 and _get(c,'last_numeric','zero_ratio', default=0) > _get(c,'thr','zero_ratio'),
-        action='Kiểm tra policy/threshold; χ² tỷ lệ theo đơn vị/nhóm; cân nhắc data quality.',
-        rationale='Tỉ lệ 0 cao có thể do ngưỡng phê duyệt/không sử dụng trường/ETL.'
-    ))
-    # Profiling — heavy right tail
-    R.append(Rule(
-        id='NUM_TAIL_HEAVY', name='Đuôi phải dày (>P99)', scope='profiling', severity='High',
-        condition=lambda c: _get(c,'last_numeric','tail_gt_p99', default=0) > _get(c,'thr','tail_p99'),
-        action='Benford 1D/2D; xem cut‑off cuối kỳ; rà soát outliers/drill‑down.',
-        rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
-    ))
-    # [removed] GoF/  model comparison (not in trimmed spec)
-
-    tri = M.where(~np.eye(len(M), dtype=bool))
-    return np.nanmax(np.abs(tri.values)) >= thr
-    R.append(Rule(
-        id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
-        condition=_corr_high,
-        action='Kiểm tra đa cộng tuyến; cân nhắc loại bớt biến khi hồi quy.',
-        rationale='|r| cao gây bất ổn ước lượng tham số.'
-    ))
-    # Flags — duplicates
-    def _flags_dup(c: Dict[str,Any]):
-        return any((isinstance(x, dict) and 'Duplicate' in str(x.get('flag',''))) for x in _get(c,'flags', default=[]))
-    R.append(Rule(
-        id='DUP_KEYS', name='Trùng khóa/tổ hợp', scope='flags', severity='High',
-        condition=_flags_dup,
-        action='Rà soát entries trùng; kiểm soát nhập liệu/phê duyệt; root‑cause.',
-        rationale='Trùng lặp có thể là double posting/ghost entries.'
-    ))
-    # Flags — off hours/weekend
-    def _flags_off(c):
-        return any('off-hours' in str(x.get('flag','')).lower() for x in _get(c,'flags', default=[]))
-    R.append(Rule(
-        id='OFF_HOURS', name='Hoạt động off‑hours/ cuối tuần', scope='flags', severity='Medium',
-        condition=_flags_off,
-        action='Rà soát phân quyền/ca trực/automation; χ² theo khung giờ × status.',
-        rationale='Hoạt động bất thường ngoài giờ có thể là tín hiệu rủi ro.'
-    ))
-    # Regression — poor linear fit
-    R.append(Rule(
-        id='LIN_POOR', name='Linear Regression kém (R2 thấp)', scope='regression', severity='Info',
-        condition=lambda c: to_float(_get(c,'regression','linear','R2')) is not None and to_float(_get(c,'regression','linear','R2')) < 0.3,
-        action='Xem lại chọn biến/biến đổi/log/phi tuyến hoặc dùng mô hình khác.',
-        rationale='R2 thấp: mô hình chưa giải thích tốt biến thiên mục tiêu.'
-    ))
-    # Regression — logistic good AUC
-    R.append(Rule(
-        id='LOGIT_GOOD', name='Logistic phân biệt tốt (AUC ≥ 0.7)', scope='regression', severity='Info',
-        condition=lambda c: to_float(_get(c,'regression','logistic','ROC_AUC')) is not None and to_float(_get(c,'regression','logistic','ROC_AUC')) >= 0.7,
-        action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
-        rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
-    ))
-
-    # — Sales: negative margin share
-    R.append(Rule(
-        id='SALES_GM_NEG', name='GM% âm (tỷ lệ > 2%)', scope='flags', severity='High',
-        condition=lambda c: float(_get(c,'sales','gm_neg_share', default=0) or 0) > 0.02,
-        action='Khoanh vùng giao dịch GM âm theo sản phẩm/khách hàng; xác minh giá/COGS.',
-        rationale='GM âm có thể do sai sót giá/COGS hoặc chiết khấu vượt quy định.'
-    ))
-    # — Sales: discount share high
-    R.append(Rule(
-        id='SALES_DISC_HIGH', name='Chiết khấu chiếm tỷ trọng cao', scope='flags', severity='Medium',
-        condition=lambda c: float(_get(c,'sales','disc_share', default=0) or 0) > 0.05,
-        action='Rà soát điều kiện chiết khấu, phê duyệt, và thời điểm hạch toán.',
-        rationale='Chiết khấu cao bất thường làm xói mòn doanh thu và có thể bị lạm dụng.'
-    ))
-    # — Sales: price variance high by product
-    R.append(Rule(
-        id='SALES_PRICE_VAR', name='Biến động giá/đơn vị cao theo sản phẩm', scope='flags', severity='Medium',
-        condition=lambda c: float(_get(c,'sales','price_cv_max', default=0) or 0) > 0.35,
-        action='So sánh giá theo khu vực/khách hàng; kiểm tra phê duyệt ngoại lệ.',
-        rationale='CV giá cao gợi ý định giá thiếu nhất quán hoặc ngoại lệ không kiểm soát.'
-    ))
-    # — Sales: weight per bag mismatch
-    R.append(Rule(
-        id='SALES_W_MISMATCH', name='Sai lệch khối lượng/bao', scope='flags', severity='Medium',
-        condition=lambda c: int(_get(c,'sales','weight_mismatch', default=0) or 0) > 0,
-        action='Đối chiếu trọng lượng thực tế/bao (10kg/25kg) với số lượng xuất.',
-        rationale='Sai lệch định lượng có thể do lập chứng từ sai hoặc gian lận cân đo.'
-    ))
-    # — Sales: duplicates
-    R.append(Rule(
-        id='SALES_DUP_KEYS', name='Trùng chứng từ (Docno×Refdocno)', scope='flags', severity='High',
-        condition=lambda c: int(_get(c,'sales','dup_cnt', default=0) or 0) > 0,
-        action='Loại bỏ bút toán trùng/đảo; đối chiếu số chứng từ nguồn.',
-        rationale='Gây rủi ro double posting/doanh thu ảo.'
-    ))
-    # — Sales: weekend share high
-    R.append(Rule(
-        id='SALES_WEEKEND', name='Hạch toán cuối tuần cao', scope='flags', severity='Low',
-        condition=lambda c: float(_get(c,'sales','weekend_share', default=0) or 0) > 0.35,
-        action='Đánh giá quy trình bán hàng ngày nghỉ; phân quyền & lịch làm việc.',
-        rationale='Hạch toán ngoài ngày làm việc có thể là tín hiệu bất thường.'
-    ))
-
-    return R
 
 def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFrame:
     rows=[]
@@ -2961,3 +2858,79 @@ with TAB7:
             st.dataframe(sub.head(500), use_container_width=True)
         else:
             st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
+
+
+def rules_catalog() -> List[Rule]:
+    R: List[Rule] = []
+
+    # --- Profiling ---
+    R.append(Rule(
+        id='NUM_ZERO_HEAVY', name='Zero‑heavy numeric', scope='profiling', severity='Medium',
+        condition=lambda c: float(_get(c,'last_numeric','zero_ratio', default=0.0)) > float(_get(c,'thr','zero_ratio', default=0.2)),
+        action='Kiểm tra policy/threshold; χ² theo đơn vị/nhóm; cân nhắc data quality.',
+        rationale='Tỉ lệ 0 cao có thể do ngưỡng phê duyệt/không sử dụng trường/ETL.'
+    ))
+    R.append(Rule(
+        id='NUM_TAIL_HEAVY', name='Đuôi phải dày (>P99)', scope='profiling', severity='High',
+        condition=lambda c: float(_get(c,'last_numeric','tail_gt_p99', default=0.0)) > float(_get(c,'thr','tail_p99', default=0.01)),
+        action='Benford 1D/2D; xem cut‑off cuối kỳ; rà soát outliers/drill‑down.',
+        rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
+    ))
+
+    # --- Correlation ---
+    def _corr_high(c: Dict[str,Any]) -> bool:
+        import numpy as np
+        import pandas as pd
+        thr = float(_get(c,'thr','corr_abs', default=0.9))
+        # Try to use a precomputed correlation matrix if available
+        M = _get(c, 'correlation', 'matrix')
+        if M is None:
+            # fallback: compute from numeric DataFrame if provided
+            df = _get(c, 'df_numeric')
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                M = df.corr(method=_get(c,'corr','method', default='pearson'))
+        if M is None or not hasattr(M, 'values'):
+            return False
+        M = M.copy()
+        try:
+            np.fill_diagonal(M.values, np.nan)
+        except Exception:
+            pass
+        max_abs = float(np.nanmax(np.abs(M.values)))
+        return max_abs >= thr
+
+    R.append(Rule(
+        id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
+        condition=_corr_high,
+        action='Kiểm tra đa cộng tuyến; cân nhắc loại bớt biến khi hồi quy.',
+        rationale='|r| cao gây bất ổn ước lượng tham số.'
+    ))
+
+    # --- Flags ---
+    def _flags_dup(c: Dict[str,Any]) -> bool:
+        flags = _get(c,'flags', default=[])
+        try:
+            return any((isinstance(x, dict) and 'Duplicate' in str(x.get('flag',''))) for x in flags)
+        except Exception:
+            return False
+
+    R.append(Rule(
+        id='DUP_KEYS', name='Trùng khóa/tổ hợp', scope='flags', severity='High',
+        condition=_flags_dup,
+        action='Rà soát entries trùng; kiểm soát nhập liệu/phê duyệt; root‑cause.',
+        rationale='Trùng lặp có thể là double posting/ghost entries.'
+    ))
+
+    def _flags_off(c: Dict[str,Any]) -> bool:
+        flags = _get(c,'flags', default=[])
+        return any('off-hours' in str(x.get('flag','')).lower() or 'weekend' in str(x.get('flag','')).lower() for x in flags)
+
+    R.append(Rule(
+        id='OFF_HOURS', name='Giao dịch ngoài giờ/cuối tuần', scope='flags', severity='Medium',
+        condition=_flags_off,
+        action='Rà soát phê duyệt ngoài giờ; kiểm tra phân quyền; đối chiếu log.',
+        rationale='Nghi ngờ hành vi bất thường xảy ra ngoài giờ hành chính.'
+    ))
+
+    return R
+
