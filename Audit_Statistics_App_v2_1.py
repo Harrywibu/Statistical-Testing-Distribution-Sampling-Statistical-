@@ -1,52 +1,30 @@
 from __future__ import annotations
 import os, io, re, json, time, hashlib, contextlib, tempfile, warnings
+
+# --- Signal documentation mapping for TAB7 explanations ---
+SIGNAL_DOC = {
+    'trend_MK_p': 'Mann–Kendall p-value (xu hướng theo thời gian cho Y). p < alpha ⇒ xu hướng đáng kể.',
+    'trend_SpearmanTime_r': 'Hệ số Spearman giữa index thời gian và Y (độ mạnh xu hướng, [-1..1]).',
+    'trend_SpearmanTime_p': 'Spearman p-value cho xu hướng. p < alpha ⇒ xu hướng đáng kể.',
+    'corr_pearson_r': 'Tương quan Pearson r (linear) giữa hai biến numeric.',
+    'corr_spearman_r': 'Tương quan Spearman r (rank) giữa hai biến numeric.',
+    'corr_kendall_tau': 'Kendall tau giữa hai biến numeric (robust cho outlier).',
+    'anova_p': 'p-value của ANOVA (khác biệt trung bình giữa ≥3 nhóm).',
+    'ttest_p': 'p-value của t-test (khác biệt trung bình giữa 2 nhóm).',
+    'chi2_p': 'p-value Chi-square độc lập (categorical×categorical).',
+    'chi2_time_p': 'p-value Chi-square period×group (so sánh phân phối nhóm theo thời gian).',
+    'benford_diffmax': 'Max |obs−exp| Benford 1/2-digit (độ lệch phân phối chữ số đầu).',
+    'gini': 'Gini (mức độ tập trung) cho phân phối giá trị (0: đều, 1: tập trung).',
+    'outlier_rate_z': 'Tỷ lệ quan sát có |z| ≥ z-threshold (outlier theo z-score).'
+}
 from datetime import datetime
 from typing import Optional, List, Callable, Dict, Any
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-
-SS = st.session_state  # ensure SS alias early
-SS.setdefault('debug', False)
-
-def log(msg):
-    """Lightweight runtime logger. Toggle in sidebar: 'Debug logs'."""
-    try:
-        if SS.get('debug', False):
-            st.write(msg)
-    except Exception:
-        pass
 # --- Safe helper: robust_suggest_cols_by_goal ---
-def robust_suggest_cols_by_goal(df, goal):
-    import pandas as pd
-    try:
-        if df is None:
-            return []
-        if isinstance(df, pd.Series):
-            df = df.to_frame()
-        elif not isinstance(df, pd.DataFrame):
-            # Try convert common table-like
-            try:
-                df = pd.DataFrame(df)
-            except Exception:
-                return []
-        cols = list(df.columns)
-        if not cols:
-            return []
-        # very light heuristic based on goal string
-        g = (goal or '').lower()
-        if 'date' in g or 'time' in g:
-            pref = [c for c in cols if 'date' in c.lower() or 'time' in c.lower()]
-            return pref or cols[:5]
-        if 'amount' in g or 'value' in g or 'revenue' in g or 'price' in g:
-            pref = [c for c in cols if any(k in c.lower() for k in ['amt','amount','value','revenue','price','qty','quantity'])]
-            return pref or cols[:5]
-        return cols[:5]
-    except Exception:
-        return []
 
-# ---- Safe boolean indexer to avoid IndexingError ----
 def _safe_loc_bool(df, mask):
     import pandas as pd
     if isinstance(mask, pd.Series):
@@ -72,83 +50,72 @@ def _match_any(name: str, patterns):
     n = (name or '').lower()
     return any(p in n for p in patterns)
 
-def robust_suggest_cols_by_goal(df: pd.DataFrame, goal: str):
-    cols = list(df.columns)
-    num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
-    dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
-    cat_cols = [c for c in cols if (not pd.api.types.is_numeric_dtype(df[c])) and (not pd.api.types.is_datetime64_any_dtype(df[c]))]
 
-    # name-based patterns
-    pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net']
-    pat_discount = ['discount','giam','disc','rebate','promo']
-    pat_qty      = ['qty','quantity','so_luong','soluong','units','unit','volume']
-    pat_customer = ['customer','cust','khach','client','buyer','account','party']
-    pat_product  = ['product','sku','item','hang','ma_hang','mat_hang','goods','code','product_id']
-    pat_time     = ['date','time','ngay','thoi_gian','period','posting','invoice_date','doc_date','posting_date']
+def robust_suggest_cols_by_goal(df, goal):
+    """
+    Robust column suggestion by goal.
+    - Accepts None / Series / array-like and converts safely to DataFrame.
+    - Falls back to session state's DF if df is None.
+    - Returns list of suggested column names (may be empty).
+    """
+    import pandas as pd
+    # Resolve df safely
+    try:
+        if df is None:
+            try:
+                from streamlit import session_state as _SS
+                df = _SS.get('DF_FULL') or _SS.get('df')
+            except Exception:
+                df = None
+        if df is None:
+            return []
+        if isinstance(df, pd.Series):
+            df = df.to_frame()
+        elif not isinstance(df, pd.DataFrame):
+            try:
+                df = pd.DataFrame(df)
+            except Exception:
+                return []
+        cols = list(df.columns)
+        if not cols:
+            return []
+        # Split by type
+        num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+        dt_cols  = [c for c in cols if pd.api.types.is_datetime64_any_dtype(df[c])]
+        cat_cols = [c for c in cols if (c not in num_cols) and (c not in dt_cols)]
+        # Name-based hints
+        goal_s = (goal or '').lower()
+        def contains_any(name, patterns):
+            n = (name or '').lower()
+            return any(p in n for p in patterns)
 
-    sug_num = None; sug_cat = None; sug_dt = None
+        pat_amount   = ['amount','revenue','sales','doanh','thu','price','gia','value','gross','net','amt','payment','pay']
+        pat_discount = ['discount','giam','disc','rebate','promo']
+        pat_qty      = ['qty','quantity','so_luong','soluong','units','unit','volume','qtty']
+        pat_customer = ['customer','cust','khach','client','buyer','account','party']
+        pat_product  = ['product','sku','item','hang','ma_hang','mat_hang','goods','code','product_id']
+        pat_time     = ['date','time','ngay','thoi_gian','period','posting','invoice_date','doc_date','posting_date']
 
-    if goal in ('Doanh thu','Giảm giá'):
-        # prefer amount-like numeric
-        for c in num_cols:
-            if _match_any(c, pat_amount + (pat_discount if goal=='Giảm giá' else [])):
-                sug_num = c; break
-    if goal == 'Số lượng':
-        for c in num_cols:
-            if _match_any(c, pat_qty):
-                sug_num = c; break
-    if goal in ('Khách hàng','Sản phẩm'):
-        base = pat_customer if goal=='Khách hàng' else pat_product
-        for c in cat_cols:
-            if _match_any(c, base):
-                sug_cat = c; break
-    if goal == 'Thời điểm':
-        for c in dt_cols:
-            if _match_any(c, pat_time):
-                sug_dt = c; break
+        # Prioritize relevant list by goal keyword
+        pref = []
+        if any(k in goal_s for k in ['doanh','thu','revenue','sales','amount','value','gia','price','gross','net']):
+            pref = [c for c in cols if contains_any(c, pat_amount)]
+        elif any(k in goal_s for k in ['giam','disc','rebate','promo']):
+            pref = [c for c in cols if contains_any(c, pat_discount)]
+        elif any(k in goal_s for k in ['qty','soluong','quantity','units','unit','volume']):
+            pref = [c for c in cols if contains_any(c, pat_qty)]
+        elif any(k in goal_s for k in ['time','date','ngay','thoi_gian','period','posting']):
+            pref = [c for c in cols if contains_any(c, pat_time)]
+        elif any(k in goal_s for k in ['product','sku','hang','mat_hang','goods','code']):
+            pref = [c for c in cols if contains_any(c, pat_product)]
+        elif any(k in goal_s for k in ['customer','client','khach','buyer','account']):
+            pref = [c for c in cols if contains_any(c, pat_customer)]
 
-    # Fallbacks
-    if sug_num is None and num_cols: sug_num = num_cols[0]
-    if sug_cat is None and cat_cols: sug_cat = cat_cols[0]
-    if sug_dt  is None and dt_cols:  sug_dt  = dt_cols[0]
-
-    return {'num': sug_num, 'cat': sug_cat, 'dt': sug_dt}
-
-
-NA_VALUES = ['', 'nan', 'na', 'null', 'none', 'N/A', 'NaN', 'NA', 'NULL', None]
-
-def _detect_locale_pattern(sample_list):
-    """Detect decimal/thousands separators from strings; return (thousands, decimal)."""
-    import re
-    dot_as_decimal = 0; comma_as_decimal = 0
-    for x in sample_list[:500]:
-        s = str(x).strip()
-        if not s or not re.search(r"[0-9]", s): continue
-        if ',' in s and '.' in s:
-            if s.rfind(',') > s.rfind('.'): comma_as_decimal += 1
-            else: dot_as_decimal += 1
-        elif ',' in s:
-            parts = s.split(',')
-            if len(parts)==2 and len(parts[1]) in (1,2): comma_as_decimal += 1
-        elif '.' in s:
-            parts = s.split('.')
-            if len(parts)==2 and len(parts[1]) in (1,2): dot_as_decimal += 1
-    return ('.', ',') if comma_as_decimal > dot_as_decimal else (',', '.')
-
-def _normalize_numeric_text_series(s):
-    import pandas as _pd
-    if getattr(s,'dtype',None) != object: return s
-    sample = _pd.Series(s.dropna().astype(str).head(200)).tolist()
-    thousands, decimal = _detect_locale_pattern(sample)
-    ss = s.astype(str).str.replace(r"\s", "", regex=True)
-    if thousands: ss = ss.str.replace(thousands, "", regex=False)
-    if decimal and decimal!='.': ss = ss.str.replace(decimal, ".", regex=False)
-    return ss
-
-def _coerce_numeric_series(s):
-    if getattr(s,'dtype',None) == object:
-        s = _normalize_numeric_text_series(s)
-    return pd.to_numeric(s, errors='coerce')
+        # Compose suggestion order: preferred > numeric > datetime > categorical
+        ordered = list(dict.fromkeys(pref + num_cols + dt_cols + cat_cols))
+        return ordered
+    except Exception:
+        return []
 
 def cast_frame(df: pd.DataFrame, dayfirst=True, datetime_like_cols=None):
     datetime_like_cols = set(datetime_like_cols or [])
@@ -1125,9 +1092,20 @@ def _render_distribution_dashboard(df, col, alpha=0.05, bins=50, log_scale=False
             fig1.update_xaxes(type="log")
         fig1.update_layout(margin=dict(l=10,r=10,t=10,b=10))
         st_plotly(fig1)
+        
+        try:
+            s_num = pd.to_numeric(s, errors='coerce').dropna()
+            if len(s_num) > 0:
+                _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
+                sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
+                zs = (s_num - float(s_num.mean()))/sd if sd>0 else (s_num*0)
+                share_z = float((zs.abs() >= _thr).mean())
+                _sig_set('outlier_rate_z', share_z, note='|z|≥'+str(_thr))
+        except Exception:
+            pass
+        pass
         st.caption("Histogram + KDE: trung tâm (mean) và dải ±kσ; KDE giúp quan sát hình dạng đường cong.")
 
-    # Fig2: Box/Violin
     with c2:
         show_violin = st.toggle("Hiển thị Violin (thay Box)", value=False, key=f"violin_{col}")
         if show_violin:
@@ -1743,41 +1721,58 @@ with TAB4:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB0:
-    
-    # --- Comparison period controls (non-intrusive) ---
-    # This section only affects Overview visuals and stores selection in SS['compare_period'].
-    try:
-        _df_view_src = SS.get('df_view', SS.get('df'))
-        _time_col = None
-        if isinstance(_df_view_src, pd.DataFrame):
-            # auto-detect first datetime column
-            for _c in _df_view_src.columns:
-                if pd.api.types.is_datetime64_any_dtype(_df_view_src[_c]):
-                    _time_col = _c
-                    break
-        if _time_col:
-            st.markdown('##### ⏱️ Chu kỳ so sánh (Overview only)')
-            _min_d = pd.to_datetime(_df_view_src[_time_col].min())
-            _max_d = pd.to_datetime(_df_view_src[_time_col].max())
-            _def = SS.get('compare_period', (None, None))
-            _v0 = _def[0].date() if isinstance(_def, tuple) and isinstance(_def[0], pd.Timestamp) else _min_d.date()
-            _v1 = _def[1].date() if isinstance(_def, tuple) and isinstance(_def[1], pd.Timestamp) else _max_d.date()
-            _rng = st.date_input('Khoảng thời gian', value=(_v0, _v1), key='ovr_compare_period')
-            if isinstance(_rng, tuple) and len(_rng)==2:
-                SS['compare_period'] = (pd.to_datetime(_rng[0]), pd.to_datetime(_rng[1]))
-            else:
-                SS['compare_period'] = (None, None)
-            st.caption(f"Áp dụng cho tab Overview, **không ảnh hưởng** tới filter/test hiện có. Time col: `{_time_col}`.")
-        else:
-            st.caption('Không tìm thấy cột thời gian phù hợp để đặt chu kỳ so sánh trong Overview.')
-    except Exception as _e:
-        st.warning(f'Comparison period controls gặp lỗi nhẹ: {_e}')
-    # --- end comparison controls ---
-st.subheader('📊 Overview — Sales activity')
-st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
+    st.subheader('📊 Overview — Sales activity')
+    st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
 
 with TAB1:
 
+
+    # Sub-tabs for Distribution & Shape
+    _t1_tab_num, _t1_tab_dt, _t1_tab_cat = st.tabs(['Numeric', 'Datetime', 'Categorical'])
+    with _t1_tab_num:
+        st.caption('Numeric: dùng Histogram/KDE, Lorenz & Gini ở bên dưới. Các log: outlier_rate_z, gini.')
+    with _t1_tab_dt:
+        try:
+            _df = _df_full_safe()
+            # pick a datetime column
+            _dtc = None
+            for _c in _df.columns:
+                if pd.api.types.is_datetime64_any_dtype(_df[_c]): _dtc = _c; break
+            if _dtc is None:
+                st.info('Không tìm thấy cột datetime.')
+            else:
+                _gran = st.radio('Granularity', ['D','W','M'], index=2, horizontal=True, key='t1_dt_gran')
+                _per = _derive_period(_df, _dtc, 'M' if _gran=='M' else ('W' if _gran=='W' else 'D'))
+                _cnt = pd.Series(1, index=_df.index).groupby(_per).sum()
+                if HAS_PLOTLY:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=_cnt.index, y=_cnt.values, mode='lines+markers', name='Count'))
+                    fig.update_layout(title='Số lượng giao dịch theo thời gian', xaxis_title='Period', yaxis_title='Count', height=320)
+                    st_plotly(fig)
+                st.caption('Gợi ý: sang TAB2 “Trend & Corr” để kiểm định xu hướng (Mann–Kendall / Spearman-time).')
+        except Exception as _e:
+            st.debug(f'TAB1 Datetime sub-tab error: {_e}')
+    with _t1_tab_cat:
+        try:
+            _df = _df_full_safe()
+            # pick a categorical-like column (non-numeric, non-datetime)
+            _catc = None
+            for _c in _df.columns:
+                if (not pd.api.types.is_numeric_dtype(_df[_c])) and (not pd.api.types.is_datetime64_any_dtype(_df[_c])):
+                    _catc = _c; break
+            if _catc is None:
+                st.info('Không tìm thấy cột categorical/text.')
+            else:
+                _topk = st.slider('Top-N nhóm', 5, 30, 10, key='t1_cat_topn')
+                _freq = _df[_catc].astype('object').value_counts().head(int(_topk))
+                if HAS_PLOTLY and len(_freq)>0:
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=_freq.index.astype(str), y=_freq.values, name='Freq'))
+                    fig.update_layout(title=f'Top-{int(_topk)} tần suất theo {_catc}', xaxis_title=_catc, yaxis_title='Count', height=360)
+                    st_plotly(fig)
+                st.caption('Gợi ý: cân nhắc GoF/Uniform (phân phối đều) hoặc Pareto cho phân loại nhiều nhóm.')
+        except Exception as _e:
+            st.debug(f'TAB1 Categorical sub-tab error: {_e}')
     # Data type mapping & sorting & classification
     if False:
     # moved to Overview — removed from Distribution per v2.8
@@ -2039,27 +2034,6 @@ with TAB1:
                         if SS['log_scale'] and (s>0).all(): fig1.update_xaxes(type='log')
                         fig1.update_layout(title=f'{num_col} — Histogram+KDE', height=320)
                         st_plotly(fig1)
-
-                        try:
-
-                            s_num = pd.to_numeric(s, errors='coerce').dropna()
-
-                            if len(s_num) > 0:
-
-                                _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
-
-                                sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
-
-                                zs = (s_num - float(s_num.mean()))/sd if sd>0 else (s_num*0)
-
-                                share_z = float((zs.abs() >= _thr).mean())
-
-                                _sig_set('outlier_rate_z', share_z, note='|z|≥'+str(_thr))
-
-                        except Exception:
-
-                            pass
-
                     with gB:
                         fig2 = px.box(pd.DataFrame({num_col:s}), x=num_col, points='outliers', title=f'{num_col} — Box')
                         st_plotly(fig2)
@@ -2495,6 +2469,22 @@ with TAB2:
                 'Theil–Sen slope': slope, 'slope CI low': lo, 'slope CI high': hi,
                 'n': int(df.shape[0])
             }]), use_container_width=True, height=100)
+            try:
+                _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
+                _sig_set('trend_MK_p', float(p_mk), severity=(1.0 if (p_mk is not None and p_mk < _alpha) else 0.0), note='Mann–Kendall')
+                _sig_set('trend_SpearmanTime_r', float(rho))
+                _sig_set('trend_SpearmanTime_p', float(p_rho), severity=(1.0 if (p_rho is not None and p_rho < _alpha) else 0.0), note='Spearman(time-index)')
+            except Exception:
+                pass
+
+
+
+
+
+
+
+
+
             if HAS_PLOTLY:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
@@ -2505,7 +2495,6 @@ with TAB2:
                     fig.add_trace(go.Scatter(x=df['t'], y=roll, name=f'Rolling mean (win={win})'))
                 fig.update_layout(title=f'{var_x} vs {var_y} — Trend', height=360)
                 st_plotly(fig)
-
     # Datetime – Categorical
     elif (tX=='Datetime' and tY=='Categorical') or (tX=='Categorical' and tY=='Datetime'):
                     dt_col = var_x if tX=='Datetime' else var_y
@@ -2517,33 +2506,33 @@ with TAB2:
                     df = _pd.DataFrame({'period': per, 'cat': _df_full_safe()[cat_col].astype('object')}).dropna()
                     if df.empty or df['period'].nunique()<2 or df['cat'].nunique()<2:
                         st.warning('Cần ≥2 giai đoạn và ≥2 nhóm.')
-                    
-                    if not df.empty and df['period'].nunique()>=2 and df['cat'].nunique()>=2:
-                        _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
-                        topk = st.slider('Top-K nhóm (time×group)', 2, 20, 5, key='t2_dtcat_topk')
-                        keep = df['cat'].value_counts().head(int(topk)).index
-                        df2 = df[df['cat'].isin(keep)]
-                        pv = df2.pivot_table(index='period', columns='cat', aggfunc='size', fill_value=0)
-                        if not pv.empty:
-                            figG = go.Figure()
-                            for c in pv.columns:
-                                figG.add_trace(go.Scatter(x=pv.index, y=pv[c], mode='lines+markers', name=str(c)))
-                            figG.update_layout(title='Counts theo thời gian (Top-K nhóm)', xaxis_title='Period', yaxis_title='Count')
-                            st_plotly(figG)
-                            from scipy.stats import chi2_contingency
-                            try:
-                                chi2t, pvalt, doft, _ = chi2_contingency(pv.values)
-                                st.caption(f'Chi-square (time×group): chi2={chi2t:.2f}, dof={doft}, p={pvalt:.3g}')
-                                _sig_set('chi2_time_p', float(pvalt), severity=(1.0 if pvalt < _alpha else 0.0), note='time×group Top-K')
-                            except Exception:
-                                pass
-
+                    else:
                         V, p, chi2 = _cramers_v(df['period'], df['cat'])
                         st.dataframe(_pd.DataFrame([{'Cramér’s V (period×cat)': V, 'Chi²': chi2, 'p': p, 'n': int(df.shape[0])}]), use_container_width=True, height=80)
                         if HAS_PLOTLY:
                             tbl = _pd.crosstab(df['period'], df['cat'])
                             fig = px.imshow(tbl, text_auto=False, aspect='auto', title=f'Contingency: period × {cat_col}')
                             st_plotly(fig)
+                            # Time-sliced group comparison (Top-K) — line chart + chi2
+                            topk = st.slider('Top-K nhóm (time×group)', 2, 20, 5, key='t2_dtcat_topk')
+                            keep = df['cat'].value_counts().head(int(topk)).index
+                            df2 = df[df['cat'].isin(keep)]
+                            pv = df2.pivot_table(index='period', columns='cat', aggfunc='size', fill_value=0)
+                            if not pv.empty:
+                                figL = go.Figure()
+                                for c in pv.columns:
+                                    figL.add_trace(go.Scatter(x=pv.index, y=pv[c], mode='lines+markers', name=str(c)))
+                                figL.update_layout(title='Counts theo thời gian (Top-K nhóm)', xaxis_title='Period', yaxis_title='Count')
+                                st_plotly(figL)
+                                st.caption('Chú giải: Line theo nhóm cho thấy biến động phân phối nhóm theo thời gian; dùng Top-K để tập trung nhóm phổ biến.')
+                                try:
+                                    from scipy.stats import chi2_contingency
+                                    chi2t, pvalt, doft, _ = chi2_contingency(pv.values)
+                                    st.caption(f'Chi-square (time×group, Top-K): chi2={chi2t:.2f}, dof={doft}, p={pvalt:.3g}')
+                                    _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
+                                    _sig_set('chi2_time_p', float(pvalt), severity=(1.0 if pvalt < _alpha else 0.0), note='time×group Top-K')
+                                except Exception:
+                                    pass
 
     st.divider()
     # Optional: Numeric-only heatmap kept under expander for a cleaner UI
@@ -3462,3 +3451,5 @@ with TAB7:
         else:
             st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
     
+            # attach explanations
+            _dfsig['explain'] = _dfsig['signal'].map(SIGNAL_DOC).fillna('')
