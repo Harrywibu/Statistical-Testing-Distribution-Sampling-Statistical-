@@ -2386,7 +2386,7 @@ with TAB4:
                     else:
                         st.info('Tick các mục bạn đã rà soát để đảm bảo đầy đủ.')
                         st.markdown('---')
-                if not SS.get('_checklist_rendered', False):
+                    if not SS.get('_checklist_rendered', False):
                     SS['_checklist_rendered'] = True
                     ch = []
                     if _goal in ['Doanh thu','Giảm giá','Số lượng']:
