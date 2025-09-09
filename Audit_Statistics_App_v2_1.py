@@ -29,7 +29,6 @@ except NameError:
     _GLOBAL_HELPERS_READY = True
 
 from datetime import datetime
-from dataclasses import dataclass
 from typing import Optional, List, Callable, Dict, Any
 import numpy as np
 import pandas as pd
@@ -82,7 +81,7 @@ def robust_suggest_cols_by_goal(df, goal):
     """
     Return a DICT with best-guess columns for each type:
       {'num': <numeric col or ''>, 'dt': <datetime col or ''>, 'cat': <categorical/text col or ''>}
-    Robust to df=None / Series / array-like; fallback to SS.get('DF_FULL') / SS.get('df').
+    Robust to df=None / Series / array-like; fallback to SS['DF_FULL'] / SS['df'].
     """
     import pandas as pd
     try:
@@ -167,7 +166,7 @@ def read_any(file_bytes: bytes, ext: str, header=0, sheet_name=None, usecols=Non
     bio = io.BytesIO(file_bytes)
     ext = (ext or '').lower().strip('.')
     if ext in ('csv','txt'):
-        df = read_any(SS.get('file_bytes'), Path(SS.get('uploaded_name')).suffix, header=SS.get('header_row',1)-1, sheet_name=SS.get('xlsx_sheet','') or None)
+        df = read_any(SS['file_bytes'], Path(SS['uploaded_name']).suffix, header=SS.get('header_row',1)-1, sheet_name=SS.get('xlsx_sheet','') or None)
     elif ext in ('xlsx','xls'):
         try:
             df = pd.read_excel(bio, na_values=NA_VALUES, header=header if header is not None else 0, sheet_name=sheet_name, engine='openpyxl')
@@ -336,7 +335,6 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='collapsed')
 SS = st.session_state
-SS.setdefault('dtype_choice','')
 
 SS.setdefault('signals', {})
 
@@ -910,7 +908,7 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
         SS['sha12'] = file_sha12(fb)
         SS['df'] = None
         SS['df_preview'] = None
-        st.caption(f"Đã nhận file: {up.name} • SHA12={SS.get('sha12')}")
+        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
 
     if st.button('Clear file', key='btn_clear_file'):
         base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
@@ -932,7 +930,7 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
     help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
-    rp = SS.get('risk_params')
+    rp = SS['risk_params']
 
 
 
@@ -1210,11 +1208,11 @@ with st.sidebar.expander('4) Template & Validation', expanded=False):
     if st.button('📄 Tạo & tải TEMPLATE.xlsx', key='v28_btn_tpl'):
         _bio = BytesIO()
         with _pd.ExcelWriter(_bio, engine='openpyxl') as w:
-            _pd.DataFrame(columns=SS.get('v28_template_cols')).to_excel(w, index=False, sheet_name='TEMPLATE')
+            _pd.DataFrame(columns=SS['v28_template_cols']).to_excel(w, index=False, sheet_name='TEMPLATE')
             # nhúng hướng dẫn
             _guide = _pd.DataFrame({
-                'Field': SS.get('v28_template_cols'),
-                'Type (gợi ý)': ['date','text','text','text','number','number','number','number','text','text','text','text'][:len(SS.get('v28_template_cols'))]
+                'Field': SS['v28_template_cols'],
+                'Type (gợi ý)': ['date','text','text','text','number','number','number','number','text','text','text','text'][:len(SS['v28_template_cols'])]
             })
             _guide.to_excel(w, index=False, sheet_name='GUIDE')
         st.download_button('⬇️ Download TEMPLATE.xlsx', data=_bio.getvalue(), file_name='TEMPLATE.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1223,10 +1221,10 @@ with st.sidebar.expander('4) Template & Validation', expanded=False):
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
 
 st.title('📊 Audit Statistics')
-if SS.get('file_bytes') is None:
+if SS['file_bytes'] is None:
     st.info('Upload a file để bắt đầu.'); # soft gate removed to avoid jumping tabs
 
-fname=SS.get('uploaded_name'); fb=SS.get('file_bytes'); sha=SS.get('sha12')
+fname=SS['uploaded_name']; fb=SS['file_bytes']; sha=SS['sha12']
 colL, colR = st.columns([3,2])
 with colL:
     st.text_input('File', value=fname or '', disabled=True)
@@ -1236,36 +1234,36 @@ with colR:
 
 # Ingest flow
 if fname.lower().endswith('.csv'):
-    if do_preview or SS.get('df_preview') is None:
+    if do_preview or SS['df_preview'] is None:
         try:
-            SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS.get('pv_n')))
-            SS['last_good_preview'] = SS.get('df_preview'); SS['ingest_ready']=True
+            SS['df_preview'] = sanitize_for_arrow(read_csv_fast(fb).head(SS['pv_n']))
+            SS['last_good_preview'] = SS['df_preview']; SS['ingest_ready']=True
         except Exception as e:
             st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
-    if SS.get('df_preview') is not None:
-        st.dataframe(SS.get('df_preview'), use_container_width=True, height=260)
-        headers=list(SS.get('df_preview').columns)
+    if SS['df_preview'] is not None:
+        st.dataframe(SS['df_preview'], use_container_width=True, height=260)
+        headers=list(SS['df_preview'].columns)
         selected = st.multiselect('Columns to load', headers, default=headers)
         SS['col_whitelist'] = selected if selected else headers
         if st.button('📥 Load full CSV with selected columns', key='btn_load_csv'):
             sel_key=';'.join(selected) if selected else 'ALL'
             key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
-            df_cached = read_parquet_cache(sha, key) if SS.get('use_parquet_cache') else None
+            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
             if df_cached is None:
                 df_full = sanitize_for_arrow(read_csv_fast(fb, usecols=(selected or None)))
-                if SS.get('use_parquet_cache'): write_parquet_cache(df_full, sha, key)
+                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             # : optional header validation
             if SS.get('v28_validate_on_load'):
-                _ok, _msg = v28_validate_headers(SS.get('df'))
+                _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
                     st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
                     pass
 
-            st.success(f"Loaded: {len(SS.get('df')):,} rows × {len(SS.get('df').columns)} cols • SHA12={sha}")
+            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 else:
     # Detect sheets safely. This covers CSV disguised as XLSX.
     try:
@@ -1276,15 +1274,15 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
         c1,c2,c3 = st.columns([2,1,1])
         idx=0 if sheets else 0
         SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=idx)
-        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS.get('header_row'))
-        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS.get('skip_top'))
+        SS['header_row'] = c2.number_input('Header row (1‑based)', 1, 100, SS['header_row'])
+        SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS['skip_top'])
         SS['dtype_choice'] = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60)
         dtype_map=None
-        if str(SS.get('dtype_choice','')).strip():
-            try: dtype_map=json.loads(SS.get('dtype_choice'))
+        if SS['dtype_choice'].strip():
+            try: dtype_map=json.loads(SS['dtype_choice'])
             except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
         try:
-            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS.get('xlsx_sheet'), usecols=None, header_row=SS.get('header_row'), skip_top=SS.get('skip_top'), dtype_map=dtype_map).head(SS.get('pv_n')))
+            prev = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n']))
             SS['df_preview']=prev; SS['last_good_preview']=prev  # chỉ để xem định dạng
         except Exception as e:
             st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
@@ -1292,29 +1290,29 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
         headers=list(prev.columns)
         st.caption(f'Columns: {len(headers)} • SHA12={sha}')
         SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''))
-        filtered = [h for h in headers if str(SS.get('col_filter','')).lower() in h.lower()] if SS.get('col_filter') else headers
+        filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
         selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers)
         if st.button('📥 Load full data', key='btn_load_xlsx'):
-            key_tuple=(SS.get('xlsx_sheet'), SS.get('header_row'), SS.get('skip_top'), tuple(selected) if selected else ('ALL',))
+            key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
             key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
-            df_cached = read_parquet_cache(sha, key) if SS.get('use_parquet_cache') else None
+            df_cached = read_parquet_cache(sha, key) if SS['use_parquet_cache'] else None
             if df_cached is None:
-                df_full = sanitize_for_arrow(read_xlsx_fast(fb, SS.get('xlsx_sheet'), usecols=(selected or None), header_row=SS.get('header_row'), skip_top=SS.get('skip_top'), dtype_map=dtype_map))
-                if SS.get('use_parquet_cache'): write_parquet_cache(df_full, sha, key)
+                df_full = sanitize_for_arrow(read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=(selected or None), header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map))
+                if SS['use_parquet_cache']: write_parquet_cache(df_full, sha, key)
             else:
                 df_full = df_cached
             SS['df']=df_full; SS['last_good_df']=df_full; SS['ingest_ready']=True; SS['col_whitelist']=list(df_full.columns)
             # : optional header validation
             if SS.get('v28_validate_on_load'):
-                _ok, _msg = v28_validate_headers(SS.get('df'))
+                _ok, _msg = v28_validate_headers(SS['df'])
                 st.info(f'Validation: {_msg}' if _ok else f'❌ Validation: {_msg}')
                 if not _ok:
                     st.warning('Header không khớp TEMPLATE; bạn có thể điều chỉnh trong Sidebar › Template & Validation.')
                     pass
 
-            st.success(f"Loaded: {len(SS.get('df')):,} rows × {len(SS.get('df').columns)} cols • SHA12={sha}")
+            st.success(f"Loaded: {len(SS['df']):,} rows × {len(SS['df'].columns)} cols • SHA12={sha}")
 
-if SS.get('df') is None and SS.get('df_preview') is None:
+if SS['df'] is None and SS['df_preview'] is None:
     st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
     pass
 
@@ -1327,7 +1325,7 @@ ALL_COLS = list(_df_full_safe().columns)
 DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, _df_full_safe()[c])]
 NUM_COLS = _df_full_safe().select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = _df_full_safe().select_dtypes(include=['object','category','bool']).columns.tolist()
-VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS.get('col_whitelist'))]
+VIEW_COLS = [c for c in _df_full_safe().columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 # — Sales risk context on FULL dataset only
 try:
     _sales = compute_sales_flags(DF_FULL)
@@ -1518,6 +1516,158 @@ def build_rule_context() -> Dict[str,Any]:
             ctx['benford']['r2_maxdiff'] = None
     return ctx
 
+def rules_catalog() -> List[Rule]:
+    R: List[Rule] = []
+    # Profiling — zero heavy
+    R.append(Rule(
+        id='NUM_ZERO_HEAVY', name='Zero‑heavy numeric', scope='profiling', severity='Medium',
+        condition=lambda c: _get(c,'last_numeric','zero_ratio', default=0)<=1 and _get(c,'last_numeric','zero_ratio', default=0) > _get(c,'thr','zero_ratio'),
+        action='Kiểm tra policy/threshold; χ² tỷ lệ theo đơn vị/nhóm; cân nhắc data quality.',
+        rationale='Tỉ lệ 0 cao có thể do ngưỡng phê duyệt/không sử dụng trường/ETL.'
+    ))
+    # Profiling — heavy right tail
+    R.append(Rule(
+        id='NUM_TAIL_HEAVY', name='Đuôi phải dày (>P99)', scope='profiling', severity='High',
+        condition=lambda c: _get(c,'last_numeric','tail_gt_p99', default=0) > _get(c,'thr','tail_p99'),
+        action='Benford 1D/2D; xem cut‑off cuối kỳ; rà soát outliers/drill‑down.',
+        rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
+    ))
+    # GoF suggests transform
+    R.append(Rule(
+        id='GOF_TRANSFORM', name='Nên biến đổi (log/Box‑Cox)', scope='profiling', severity='Info',
+        condition=lambda c: bool(_get(c,'gof','suggest')) and _get(c,'gof','best') in {'Lognormal','Gamma'},
+        action='Áp dụng log/Box‑Cox trước các test tham số hoặc dùng phi tham số.',
+        rationale='Phân phối lệch/không chuẩn — biến đổi giúp thỏa giả định tham số.'
+    ))
+    # Benford 1D
+    R.append(Rule(
+        id='BENFORD_1D_SEV', name='Benford 1D lệch', scope='benford', severity='High',
+        condition=lambda c: (_get(c,'benford','r1') is not None) and \
+            ((_get(c,'benford','r1','p', default=1.0) < 0.05) or (_get(c,'benford','r1','MAD', default=0) > 0.012) or \
+             (_get(c,'benford','r1_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
+        action='Drill‑down nhóm digit chênh nhiều; đối chiếu nhà CC/kỳ; kiểm tra cut‑off.',
+        rationale='Lệch Benford gợi ý thresholding/làm tròn/chia nhỏ hóa đơn.'
+    ))
+    # Benford 2D
+    R.append(Rule(
+        id='BENFORD_2D_SEV', name='Benford 2D lệch', scope='benford', severity='Medium',
+        condition=lambda c: (_get(c,'benford','r2') is not None) and \
+            ((_get(c,'benford','r2','p', default=1.0) < 0.05) or (_get(c,'benford','r2','MAD', default=0) > 0.012) or \
+             (_get(c,'benford','r2_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
+        action='Xem hot‑pair (19/29/…); đối chiếu chính sách giá; không mặc định là gian lận.',
+        rationale='Mẫu cặp chữ số đầu bất thường có thể phản ánh hành vi định giá.'
+    ))
+    # Categorical — HHI high
+    R.append(Rule(
+        id='HHI_HIGH', name='Tập trung nhóm cao (HHI)', scope='tests', severity='Medium',
+        condition=lambda c: _get(c,'t4','hhi','hhi', default=0) > _get(c,'thr','hhi'),
+        action='Đánh giá rủi ro phụ thuộc nhà cung cấp/GL; kiểm soát phê duyệt.',
+        rationale='HHI cao cho thấy rủi ro tập trung vào ít nhóm.'
+    ))
+    # Categorical — Chi-square significant
+    R.append(Rule(
+        id='CGOF_SIG', name='Chi‑square GoF khác Uniform', scope='tests', severity='Medium',
+        condition=lambda c: _get(c,'t4','cgof','p', default=1.0) < 0.05,
+        action='Drill‑down residual lớn; xem data quality/policy phân loại.',
+        rationale='Sai khác mạnh so với uniform gợi ý phân phối lệch có chủ đích.'
+    ))
+    # Time — Gap large
+    R.append(Rule(
+        id='TIME_GAP_LARGE', name='Khoảng cách thời gian lớn (p95)', scope='tests', severity='Low',
+        condition=lambda c: to_float(_get(c,'t4','gap','gaps','gap_hours','describe','95%', default=np.nan)) or False,
+        action='Xem kịch bản bỏ sót/chèn nghiệp vụ; đối chiếu lịch chốt.',
+        rationale='Khoảng trống dài bất thường có thể do quy trình/ghi nhận không liên tục.'
+    ))
+    # Correlation — high multicollinearity
+    def _corr_high(c: Dict[str,Any]):
+        M = _get(c,'corr');
+        if not isinstance(M, pd.DataFrame) or M.empty: return False
+        thr = _get(c,'thr','corr_high', default=0.9)
+        tri = M.where(~np.eye(len(M), dtype=bool))
+        return np.nanmax(np.abs(tri.values)) >= thr
+    R.append(Rule(
+        id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
+        condition=_corr_high,
+        action='Kiểm tra đa cộng tuyến; cân nhắc loại bớt biến khi hồi quy.',
+        rationale='|r| cao gây bất ổn ước lượng tham số.'
+    ))
+    # Flags — duplicates
+    def _flags_dup(c: Dict[str,Any]):
+        return any((isinstance(x, dict) and 'Duplicate' in str(x.get('flag',''))) for x in _get(c,'flags', default=[]))
+    R.append(Rule(
+        id='DUP_KEYS', name='Trùng khóa/tổ hợp', scope='flags', severity='High',
+        condition=_flags_dup,
+        action='Rà soát entries trùng; kiểm soát nhập liệu/phê duyệt; root‑cause.',
+        rationale='Trùng lặp có thể là double posting/ghost entries.'
+    ))
+    # Flags — off hours/weekend
+    def _flags_off(c):
+        return any('off-hours' in str(x.get('flag','')).lower() for x in _get(c,'flags', default=[]))
+    R.append(Rule(
+        id='OFF_HOURS', name='Hoạt động off‑hours/ cuối tuần', scope='flags', severity='Medium',
+        condition=_flags_off,
+        action='Rà soát phân quyền/ca trực/automation; χ² theo khung giờ × status.',
+        rationale='Hoạt động bất thường ngoài giờ có thể là tín hiệu rủi ro.'
+    ))
+    # Regression — poor linear fit
+    R.append(Rule(
+        id='LIN_POOR', name='Linear Regression kém (R2 thấp)', scope='regression', severity='Info',
+        condition=lambda c: to_float(_get(c,'regression','linear','R2')) is not None and to_float(_get(c,'regression','linear','R2')) < 0.3,
+        action='Xem lại chọn biến/biến đổi/log/phi tuyến hoặc dùng mô hình khác.',
+        rationale='R2 thấp: mô hình chưa giải thích tốt biến thiên mục tiêu.'
+    ))
+    # Regression — logistic good AUC
+    R.append(Rule(
+        id='LOGIT_GOOD', name='Logistic phân biệt tốt (AUC ≥ 0.7)', scope='regression', severity='Info',
+        condition=lambda c: to_float(_get(c,'regression','logistic','ROC_AUC')) is not None and to_float(_get(c,'regression','logistic','ROC_AUC')) >= 0.7,
+        action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
+        rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
+    ))
+    
+    # — Sales: negative margin share
+    R.append(Rule(
+        id='SALES_GM_NEG', name='GM% âm (tỷ lệ > 2%)', scope='flags', severity='High',
+        condition=lambda c: float(_get(c,'sales','gm_neg_share', default=0) or 0) > 0.02,
+        action='Khoanh vùng giao dịch GM âm theo sản phẩm/khách hàng; xác minh giá/COGS.',
+        rationale='GM âm có thể do sai sót giá/COGS hoặc chiết khấu vượt quy định.'
+    ))
+    # — Sales: discount share high
+    R.append(Rule(
+        id='SALES_DISC_HIGH', name='Chiết khấu chiếm tỷ trọng cao', scope='flags', severity='Medium',
+        condition=lambda c: float(_get(c,'sales','disc_share', default=0) or 0) > 0.05,
+        action='Rà soát điều kiện chiết khấu, phê duyệt, và thời điểm hạch toán.',
+        rationale='Chiết khấu cao bất thường làm xói mòn doanh thu và có thể bị lạm dụng.'
+    ))
+    # — Sales: price variance high by product
+    R.append(Rule(
+        id='SALES_PRICE_VAR', name='Biến động giá/đơn vị cao theo sản phẩm', scope='flags', severity='Medium',
+        condition=lambda c: float(_get(c,'sales','price_cv_max', default=0) or 0) > 0.35,
+        action='So sánh giá theo khu vực/khách hàng; kiểm tra phê duyệt ngoại lệ.',
+        rationale='CV giá cao gợi ý định giá thiếu nhất quán hoặc ngoại lệ không kiểm soát.'
+    ))
+    # — Sales: weight per bag mismatch
+    R.append(Rule(
+        id='SALES_W_MISMATCH', name='Sai lệch khối lượng/bao', scope='flags', severity='Medium',
+        condition=lambda c: int(_get(c,'sales','weight_mismatch', default=0) or 0) > 0,
+        action='Đối chiếu trọng lượng thực tế/bao (10kg/25kg) với số lượng xuất.',
+        rationale='Sai lệch định lượng có thể do lập chứng từ sai hoặc gian lận cân đo.'
+    ))
+    # — Sales: duplicates
+    R.append(Rule(
+        id='SALES_DUP_KEYS', name='Trùng chứng từ (Docno×Refdocno)', scope='flags', severity='High',
+        condition=lambda c: int(_get(c,'sales','dup_cnt', default=0) or 0) > 0,
+        action='Loại bỏ bút toán trùng/đảo; đối chiếu số chứng từ nguồn.',
+        rationale='Gây rủi ro double posting/doanh thu ảo.'
+    ))
+    # — Sales: weekend share high
+    R.append(Rule(
+        id='SALES_WEEKEND', name='Hạch toán cuối tuần cao', scope='flags', severity='Low',
+        condition=lambda c: float(_get(c,'sales','weekend_share', default=0) or 0) > 0.35,
+        action='Đánh giá quy trình bán hàng ngày nghỉ; phân quyền & lịch làm việc.',
+        rationale='Hạch toán ngoài ngày làm việc có thể là tín hiệu bất thường.'
+    ))
+
+    return R
 
 def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFrame:
     rows=[]
@@ -1672,7 +1822,7 @@ with TABQ:
             dq = dq[cols_order]
             return dq.sort_values(['type','column']).reset_index(drop=True)
         try:
-            dq = data_quality_table(SS.get('df') if SS.get('df') is not None else DF_FULL)
+            dq = data_quality_table(SS['df'] if SS.get('df') is not None else DF_FULL)
             st.dataframe(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             if DT_COLS:
@@ -1716,7 +1866,7 @@ with TAB1:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
             else:
                 fig1 = go.Figure()
-                fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS.get('bins'), name='Histogram', opacity=0.8))
+                fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
                 if kde_on and (len(s_num)>10) and (s_num.var()>0):
                     try:
                         from scipy.stats import gaussian_kde
@@ -1725,7 +1875,7 @@ with TAB1:
                         ys_scaled = ys*len(s_num)*(xs[1]-xs[0])
                         fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE'))
                     except Exception: pass
-                if SS.get('log_scale') and (s_num>0).all(): fig1.update_xaxes(type='log')
+                if SS['log_scale'] and (s_num>0).all(): fig1.update_xaxes(type='log')
                 fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
                 st_plotly(fig1)
 
@@ -2477,7 +2627,7 @@ with TAB5:
                                 with g1:
                                     fig1 = px.scatter(x=yhat, y=resid, labels={'x':'Fitted','y':'Residuals'}, title='Residuals vs Fitted'); st_plotly(fig1)
                                 with g2:
-                                    fig2 = px.histogram(resid, nbins=SS.get('bins'), title='Residuals distribution'); st_plotly(fig2)
+                                    fig2 = px.histogram(resid, nbins=SS['bins'], title='Residuals distribution'); st_plotly(fig2)
                                 try:
                                     if len(resid)>7:
                                         p_norm = float(stats.normaltest(resid)[1]); st.caption(f'Normality test (residuals) p-value: {p_norm:.4f}')
@@ -2575,8 +2725,8 @@ with TAB5:
 with TAB6:
     require_full_data()
     st.subheader('🚩 Fraud Flags')
-    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS.get('df') is not None), key='ff_use_full')
-    FLAG_DF = DF_FULL if (use_full_flags and SS.get('df') is not None) else DF_FULL
+    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
+    FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_FULL
     # Optional: filter FLAG_DF by selected period before scanning
     if DT_COLS:
         with st.expander('Bộ lọc thời gian cho Fraud Flags (M/Q/Y)', expanded=False):
@@ -2588,7 +2738,7 @@ with TAB6:
             if pick != '(All)':
                 FLAG_DF = FLAG_DF.loc[per_ser == pick]
                 st.caption(f'Đang quét Fraud Flags trong giai đoạn: {pick} — {len(FLAG_DF):,} dòng')
-            if FLAG_DF is DF_FULL and SS.get('df') is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
+            if FLAG_DF is DF_FULL and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     _base_df = FLAG_DF if isinstance(globals().get('FLAG_DF'), pd.DataFrame) else _df_full_safe()
@@ -2782,7 +2932,7 @@ with TAB7:
         if n_dupes>0:
             signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
         for c in NUM_COLS[:20]:
-            s = pd.to_numeric(_df_full_safe()[c] if SS.get('df') is not None else _df_full_safe()[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            s = pd.to_numeric(_df_full_safe()[c] if SS['df'] is not None else _df_full_safe()[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
             if len(s)==0: continue
             zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
             if zr>0.30:
@@ -2907,112 +3057,3 @@ with TAB7:
             st.dataframe(sub.head(500), use_container_width=True)
         else:
             st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
-
-
-
-# --- Rules engine: clean, context-driven ---
-@dataclass
-class Rule:
-    id: str
-    name: str
-    scope: str
-    severity: str
-    condition: callable
-    action: str
-    rationale: str
-
-def rules_catalog():
-    import numpy as np
-    import pandas as pd
-    R = []
-
-    # Profiling examples
-    R.append(Rule(
-        id='NUM_ZERO_HEAVY', name='Zero-heavy numeric', scope='profiling', severity='Medium',
-        condition=lambda c: float(_get(c,'last_numeric','zero_ratio', default=0.0)) >
-                            float(_get(c,'thr','zero_ratio', default=0.2)),
-        action='Kiểm tra policy/threshold; χ² theo đơn vị/nhóm; cân nhắc data quality.',
-        rationale='Tỉ lệ 0 cao có thể do ngưỡng phê duyệt/không sử dụng trường/ETL.'
-    ))
-    R.append(Rule(
-        id='NUM_TAIL_HEAVY', name='Đuôi phải dày (>P99)', scope='profiling', severity='High',
-        condition=lambda c: float(_get(c,'last_numeric','tail_gt_p99', default=0.0)) >
-                            float(_get(c,'thr','tail_p99', default=0.01)),
-        action='Benford 1D/2D; xem cut-off cuối kỳ; rà soát outliers/drill-down.',
-        rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
-    ))
-
-    # Correlation high
-    def _corr_high(ctx):
-        thr = float(_get(ctx,'thr','corr_abs', default=0.9))
-        M = _get(ctx,'correlation','matrix')
-        if M is None:
-            df_num = _get(ctx,'df_numeric')
-            if isinstance(df_num, pd.DataFrame) and not df_num.empty:
-                M = df_num.corr(method=_get(ctx,'corr','method', default='pearson'))
-        if M is None:
-            return False
-        try:
-            arr = M.values.copy()
-        except Exception:
-            return False
-        # zero-out diagonal then take max |corr|
-        try:
-            np.fill_diagonal(arr, np.nan)
-        except Exception:
-            pass
-        return float(np.nanmax(np.abs(arr))) >= thr
-
-    R.append(Rule(
-        id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
-        condition=_corr_high,
-        action='Kiểm tra đa cộng tuyến; cân nhắc loại bớt biến khi hồi quy.',
-        rationale='|r| cao gây bất ổn ước lượng tham số.'
-    ))
-
-    # Flags examples
-    def _flags_dup(ctx):
-        flags = _get(ctx,'flags', default=[])
-        try:
-            return any((isinstance(x, dict) and 'Duplicate' in str(x.get('flag',''))) for x in flags)
-        except Exception:
-            return False
-
-    R.append(Rule(
-        id='DUP_KEYS', name='Trùng khóa/tổ hợp', scope='flags', severity='High',
-        condition=_flags_dup,
-        action='Rà soát entries trùng; kiểm soát nhập liệu/phê duyệt; root-cause.',
-        rationale='Trùng lặp có thể là double posting/ghost entries.'
-    ))
-
-    def _flags_off(ctx):
-        flags = _get(ctx,'flags', default=[])
-        return any('off-hours' in str(x.get('flag','')).lower() or
-                   'weekend'   in str(x.get('flag','')).lower() for x in flags)
-
-    R.append(Rule(
-        id='OFF_HOURS', name='Giao dịch ngoài giờ/cuối tuần', scope='flags', severity='Medium',
-        condition=_flags_off,
-        action='Rà soát phê duyệt ngoài giờ; kiểm tra phân quyền; đối chiếu log.',
-        rationale='Nghi ngờ hành vi bất thường xảy ra ngoài giờ hành chính.'
-    ))
-
-    return R
-
-# Evaluate rules (guarded)
-def evaluate_rules(ctx, scope=None):
-    import pandas as pd
-    rows = []
-    for r in rules_catalog():
-        if scope and r.scope != scope:
-            continue
-        try:
-            fired = bool(r.condition(ctx))
-        except Exception:
-            fired = False
-        rows.append({
-            'id': r.id, 'name': r.name, 'scope': r.scope, 'severity': r.severity,
-            'triggered': fired, 'action': r.action, 'rationale': r.rationale
-        })
-    return pd.DataFrame(rows)
-
