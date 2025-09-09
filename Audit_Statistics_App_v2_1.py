@@ -1212,6 +1212,7 @@ with st.expander('4) Template & Validation', expanded=False):
     st.divider()
     SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False), help='Nếu bật, khi Load full data, hệ thống sẽ kiểm tra cột có khớp TEMPLATE.')
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (thời gian/số/văn bản) (beta)', value=SS.get('v28_strict_types', False))
+
 # -- Local compact settings (no sidebar) --
 with st.expander('⚙️ Cache & Settings', expanded=False):
     if not HAS_PYARROW:
@@ -1851,23 +1852,25 @@ with TABQ:
             s_num = pd.to_numeric(s, errors='coerce').dropna()
             if len(s_num)==0:
                 st.info('Cột numeric không có dữ liệu hợp lệ.')
-            # Descriptive & Normality
-            try:
-                stats_df = _summary_stats(s_num)
-                st.markdown("**Descriptive statistics**")
-                st.dataframe(stats_df, use_container_width=True, height=220)
-            except Exception:
-                stats_df = None
-            try:
-                method, stat, p = _normality_tests(s_num)
-                _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
-                norm_msg = "KHÔNG bác bỏ H0 (gần chuẩn)" if (p==p and p>=_alpha) else "Bác bỏ H0 (không chuẩn)"
-                st.caption(f"Normality test: {method} • statistic={stat:.3f} • p={p:.4f} • α={_alpha} → {norm_msg}")
-                if stats_df is not None:
-                    _notes = _interpret_distribution(s_num, _alpha, method, p, stats_df)
-                    if _notes: st.markdown('**Gợi ý diễn giải tự động:**\n'+'\n'.join(['- '+m for m in _notes]))
-            except Exception:
-                pass
+            else:
+         
+                # Descriptive & Normality
+                try:
+                    stats_df = _summary_stats(s_num)
+                    st.markdown("**Descriptive statistics**")
+                    st.dataframe(stats_df, use_container_width=True, height=220)
+                except Exception:
+                    stats_df = None
+                try:
+                    method, stat, p = _normality_tests(s_num)
+                    _alpha = float(SS.get('alpha', 0.05)) if 'alpha' in SS else 0.05
+                    norm_msg = "KHÔNG bác bỏ H0 (gần chuẩn)" if (p==p and p>=_alpha) else "Bác bỏ H0 (không chuẩn)"
+                    st.caption(f"Normality test: {method} • statistic={stat:.3f} • p={p:.4f} • α={_alpha} → {norm_msg}")
+                    if stats_df is not None:
+                        _notes = _interpret_distribution(s_num, _alpha, method, p, stats_df)
+                        if _notes: st.markdown('**Gợi ý diễn giải tự động:**\n'+'\n'.join(['- '+m for m in _notes]))
+                except Exception:
+                    pass
                 fig1 = go.Figure()
                 fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
                 if kde_on and (len(s_num)>10) and (s_num.var()>0):
@@ -2208,6 +2211,14 @@ with TAB2:
                 _sig_set('trend_SpearmanTime_p', float(p_rho), severity=(1.0 if (p_rho is not None and p_rho < _alpha) else 0.0), note='Spearman(time-index)')
             except Exception:
                 pass
+
+
+
+
+
+
+
+
 
             if HAS_PLOTLY:
                 fig = go.Figure()
