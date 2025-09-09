@@ -894,11 +894,11 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
     help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
     rp = SS['risk_params']
-    st.caption('Alpha đã được dời vào tab Hypothesis Tests.')
-    rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1)
-    rp['zero_ratio_thr'] = st.slider('Tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
-    rp['benford_dev_thr'] = st.slider('Lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5)
-    SS['kde_threshold'] = st.number_input('KDE max n', 1000, 300000, SS.get('kde_threshold', 150000), 1000)
+
+
+
+
+
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
         SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
 with st.sidebar.expander('3) Cache', expanded=False):
@@ -1644,7 +1644,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
 
-# ----------------------------------- TABS -------------------------------------TAB0, TABQ, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7, TAB8 = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
+# ----------------------------------- TABS -------------------------------------TAB0, TABQ, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7, TAB8 = (TAB0, TABQ, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 # ---- (moved) Data Quality ----
 with TAB4:
