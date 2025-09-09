@@ -890,22 +890,19 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
                 SS[rk] = None
 
         st.rerun()
-with st.sidebar.expander('1) Display & Performance', expanded=False):
-    st.caption('Đã tinh gọn — tham số chính nằm trong các tab liên quan (Histogram bins, Alpha, Benford diff...).')
+with st.sidebar.expander('Workflow', expanded=True):
     SS.setdefault('preserve_results', True)
     SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
-                                       help='Giữ kết quả tạm khi chuyển tab.')
+    help='Giữ kết quả tạm khi chuyển tab.')
     SS.setdefault('risk_params', {})
     rp = SS['risk_params']
     st.caption('Alpha đã được dời vào tab Hypothesis Tests.')
     rp['z_thr'] = st.slider('Ngưỡng |z|', 1.0, 5.0, float(rp.get('z_thr', 3.0)), 0.1)
     rp['zero_ratio_thr'] = st.slider('Tỷ lệ 0 ở cột số (%)', 0.0, 100.0, float(rp.get('zero_ratio_thr', 40.0)), 1.0)
     rp['benford_dev_thr'] = st.slider('Lệch Benford (pp)', 0.0, 20.0, float(rp.get('benford_dev_thr', 5.0)), 0.5)
-    st.caption('Đã tinh gọn — tham số chính nằm trong tab Distribution & Shape.')
     SS['kde_threshold'] = st.number_input('KDE max n', 1000, 300000, SS.get('kde_threshold', 150000), 1000)
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
-    st.caption('Đã tinh gọn — tham số chính nằm trong tab Benford.')
-    SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
+        SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
 with st.sidebar.expander('3) Cache', expanded=False):
     if not HAS_PYARROW:
         st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
@@ -1650,7 +1647,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 # ---- (moved) Data Quality ----
 with TAB4:
@@ -1723,6 +1720,28 @@ with TAB4:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB0:
+
+    # ----------------- Data Quality -----------------
+    with TABQ:
+        st.subheader("Data Quality")
+        try:
+            df = _df_full_safe()
+            if df is None or len(df) == 0:
+                st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu (Load full data).')
+            else:
+                # Basic profiling counts
+                st.write('Số dòng:', len(df), ' · Số cột:', len(df.columns))
+                miss = df.isna().mean().sort_values(ascending=False)
+                if len(miss)>0:
+                    st.write('Tỉ lệ thiếu dữ liệu theo cột (Top-10):')
+                    st.dataframe(miss.head(10).to_frame('missing_rate'))
+                # Zero/constant columns
+                import pandas as pd, numpy as np
+                const_cols = [c for c in df.columns if df[c].nunique(dropna=True)<=1]
+                if const_cols:
+                    st.warning('Các cột hằng số/1-mức: ' + ', '.join(map(str, const_cols[:20])) + (' ...' if len(const_cols)>20 else ''))
+        except Exception as _e:
+            st.debug(f'Data Quality error: {_e}')
     st.subheader('📊 Overview — Sales activity')
     st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
 
@@ -1732,6 +1751,7 @@ with TAB1:
     # Sub-tabs for Distribution & Shape
     _t1_tab_num, _t1_tab_dt, _t1_tab_cat = st.tabs(['Numeric', 'Datetime', 'Categorical'])
     with _t1_tab_num:
+        _t1_tab_num_guard = True
         SS['bins'] = st.slider('Histogram bins', 10, 200, int(SS.get('bins', 50)), 5)
         SS['log_scale'] = st.checkbox('Log scale (X)', value=bool(SS.get('log_scale', False)))
         st.caption('Numeric: dùng Histogram/KDE, Lorenz & Gini ở bên dưới. Các log: outlier_rate_z, gini.')
