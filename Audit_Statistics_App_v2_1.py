@@ -6,6 +6,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+
+SS = st.session_state  # ensure SS alias early
+SS.setdefault('debug', False)
+
+def log(msg):
+    """Lightweight runtime logger. Toggle in sidebar: 'Debug logs'."""
+    try:
+        if SS.get('debug', False):
+            st.write(msg)
+    except Exception:
+        pass
 # --- Safe helper: robust_suggest_cols_by_goal ---
 def robust_suggest_cols_by_goal(df, goal):
     import pandas as pd
@@ -1732,7 +1743,37 @@ with TAB4:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB0:
-    st.subheader('📊 Overview — Sales activity')
+    
+    # --- Comparison period controls (non-intrusive) ---
+    # This section only affects Overview visuals and stores selection in SS['compare_period'].
+    try:
+        _df_view_src = SS.get('df_view', SS.get('df'))
+        _time_col = None
+        if isinstance(_df_view_src, pd.DataFrame):
+            # auto-detect first datetime column
+            for _c in _df_view_src.columns:
+                if pd.api.types.is_datetime64_any_dtype(_df_view_src[_c]):
+                    _time_col = _c
+                    break
+        if _time_col:
+            st.markdown('##### ⏱️ Chu kỳ so sánh (Overview only)')
+            _min_d = pd.to_datetime(_df_view_src[_time_col].min())
+            _max_d = pd.to_datetime(_df_view_src[_time_col].max())
+            _def = SS.get('compare_period', (None, None))
+            _v0 = _def[0].date() if isinstance(_def, tuple) and isinstance(_def[0], pd.Timestamp) else _min_d.date()
+            _v1 = _def[1].date() if isinstance(_def, tuple) and isinstance(_def[1], pd.Timestamp) else _max_d.date()
+            _rng = st.date_input('Khoảng thời gian', value=(_v0, _v1), key='ovr_compare_period')
+            if isinstance(_rng, tuple) and len(_rng)==2:
+                SS['compare_period'] = (pd.to_datetime(_rng[0]), pd.to_datetime(_rng[1]))
+            else:
+                SS['compare_period'] = (None, None)
+            st.caption(f"Áp dụng cho tab Overview, **không ảnh hưởng** tới filter/test hiện có. Time col: `{_time_col}`.")
+        else:
+            st.caption('Không tìm thấy cột thời gian phù hợp để đặt chu kỳ so sánh trong Overview.')
+    except Exception as _e:
+        st.warning(f'Comparison period controls gặp lỗi nhẹ: {_e}')
+    # --- end comparison controls ---
+st.subheader('📊 Overview — Sales activity')
     st.caption('Tổng quan KPI và bảng/biểu đồ tóm tắt; các biểu đồ phân phối chi tiết nằm ở tab “Distribution & Shape”.')
 
 with TAB1:
