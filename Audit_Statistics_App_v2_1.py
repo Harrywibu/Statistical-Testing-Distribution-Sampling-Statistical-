@@ -188,16 +188,27 @@ SS.setdefault('ingest_ready', False)
 
 st.sidebar.title('Workflow')
 
-with st.sidebar.expander('0) Ingest data', expanded=False, key=_k('sb','ingest')):
+with sidebar_expander('0) Ingest data', expanded=False, key=_k('sb','ingest')):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key=_k('ingest','uploader'))
-    if up is not None:
+    
+if up is not None:
         fb = up.read()
         SS['file_bytes'] = fb
         SS['uploaded_name'] = up.name
         SS['sha12'] = _file_sha12(fb)
         SS['df'] = None
         SS['df_preview'] = None
-        st.caption(f"Đã nhận file: **{up.name}** • SHA12={SS['sha12']}")
+        # Auto-detect CSV encoding & delimiter (best-effort); still user-overridable
+        try:
+            enc_auto, delim_auto = detect_csv_params(fb) if up.name.lower().endswith('.csv') else ('utf-8','auto')
+        except Exception:
+            enc_auto, delim_auto = ('utf-8','auto')
+        SS['csv_encoding_auto'] = enc_auto
+        SS['csv_delim_auto'] = delim_auto
+        # Initialize UI selections to auto if first time
+        if 'csv_encoding' not in SS: SS['csv_encoding'] = enc_auto
+        if 'csv_delimiter' not in SS: SS['csv_delimiter'] = delim_auto if delim_auto else 'auto'
+        st.caption(f"Đã nhận file: **{up.name}** • SHA12={SS['sha12']} • gợi ý: enc={enc_auto}, delim={delim_auto}")
 
     c1,c2 = st.columns(2)
     with c1:
@@ -208,10 +219,10 @@ with st.sidebar.expander('0) Ingest data', expanded=False, key=_k('sb','ingest')
     with c2:
         SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True))
 
-with st.sidebar.expander('2) Risk & Advanced', expanded=False, key=_k('sb','risk')):
+with sidebar_expander('2) Risk & Advanced', expanded=False, key=_k('sb','risk')):
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
 
-with st.sidebar.expander('3) Cache', expanded=False, key=_k('sb','cache')):
+with sidebar_expander('3) Cache', expanded=False, key=_k('sb','cache')):
     if not ARROW_OK:
         st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
     SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and ARROW_OK)
@@ -251,7 +262,7 @@ def v28_validate_headers(df_in: pd.DataFrame) -> Tuple[bool,str]:
     except Exception as e:
         return False, f"Lỗi kiểm tra TEMPLATE: {e}"
 
-with st.sidebar.expander('4) Template & Validation', expanded=False, key=_k('sb','tpl')):
+with sidebar_expander('4) Template & Validation', expanded=False, key=_k('sb','tpl')):
     st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
     tpl_text_default = ','.join(SS.get('v28_template_cols', _default_template_cols()))
     tpl_text = st.text_area('Header TEMPLATE (CSV, cho phép sửa)', tpl_text_default, height=60, key=_k('tpl','text'))
@@ -269,6 +280,45 @@ with st.sidebar.expander('4) Template & Validation', expanded=False, key=_k('sb'
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (beta)', value=SS.get('v28_strict_types', False))
 
 # ---------------- Unified Readers ----------------
+
+# ---------------- CSV Auto-detect (encoding & delimiter) ----------------
+def detect_csv_params(file_bytes: bytes) -> tuple[str, str]:
+    """
+    Return (encoding, delimiter). Encoding best-effort using chardet if available,
+    else try utf-8 -> utf-8-sig -> cp1258 -> cp1252 -> latin-1. Delimiter via csv.Sniffer.
+    """
+    enc_guess = 'utf-8'
+    try:
+        import chardet  # optional
+        det = chardet.detect(file_bytes[:131072])
+        if det and det.get('encoding'):
+            enc_guess = det['encoding']
+    except Exception:
+        # try decode attempts
+        for enc in ('utf-8', 'utf-8-sig', 'cp1258', 'cp1252', 'latin-1', 'utf-16'):
+            try:
+                file_bytes[:4096].decode(enc)
+                enc_guess = enc; break
+            except Exception:
+                continue
+    # delimiter
+    delim = ','
+    try:
+        import csv
+        head = file_bytes[:8192].decode(enc_guess, errors='ignore')
+        dialect = csv.Sniffer().sniff(head, delimiters=[',',';','\t','|','^'])
+        delim = dialect.delimiter
+    except Exception:
+        # heuristic: pick the one that appears most in the first line
+        try:
+            head = file_bytes[:2048].decode(enc_guess, errors='ignore').splitlines()[0]
+            candidates = [',',';','\t','|','^']
+            counts = {d: head.count(d) for d in candidates}
+            delim = max(counts, key=counts.get)
+        except Exception:
+            pass
+    return enc_guess, delim
+
 @st.cache_data(ttl=6*3600, max_entries=16, show_spinner=False)
 def list_sheets_xlsx(file_bytes: bytes) -> List[str]:
     from openpyxl import load_workbook
@@ -423,7 +473,7 @@ if fb:
         except Exception:
             sheets = []
 
-with st.expander('📁 Select sheet & header (XLSX)', expanded=False, key=_k('main','xls')):
+with expander('📁 Select sheet & header (XLSX)', expanded=False, key=_k('main','xls')):
     if fb:
         c1,c2,c3 = st.columns([2,1,1])
         idx=0 if sheets else 0
@@ -926,7 +976,7 @@ def tabQ_data_quality():
     # By-period charts
     dt_cols = _dt_cols(df)
     if dt_cols:
-        with st.expander('📈 Thống kê theo kỳ (M/Q/Y)', key=_k('tabQ','per')):
+        with expander('📈 Thống kê theo kỳ (M/Q/Y)', key=_k('tabQ','per')):
             c1,c2 = st.columns([1,1])
             with c1:
                 dt_col = st.selectbox('Cột thời gian', dt_cols, index=0, key=_k('tabQ','dtcol'))
@@ -975,7 +1025,7 @@ def tab0_overview():
     goal = st.radio('Mục tiêu', ['Doanh thu','KH','Số lượng','Sản phẩm'], horizontal=True, key=_k('tab0','goal'))
     dt_col = st.selectbox('Cột thời gian', [hints['date']]+[c for c in _dt_cols(df) if c!=hints['date']], index=0 if hints['date'] else 0, key=_k('tab0','dt'))
     # Filters
-    with st.expander('🔎 Bộ lọc', key=_k('tab0','filters')):
+    with expander('🔎 Bộ lọc', key=_k('tab0','filters')):
         dims = [c for c in [hints['region'], hints['type'], hints['product'], hints['customer'], hints['salesperson']] if c]
         dims += [c for c in _cat_cols(df) if c not in dims][:3]  # add a few more
         filters = {}
@@ -1420,7 +1470,7 @@ def tab3_benford():
             pass
     # By period
     if dt_col and dt_col!='<none>':
-        with st.expander('📆 Theo chu kỳ (M/Q/Y)', key=_k('tab3','per')):
+        with expander('📆 Theo chu kỳ (M/Q/Y)', key=_k('tab3','per')):
             gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, key=_k('tab3','gran'))
             per = derive_period(df, dt_col, gran)
             rows = []
@@ -1444,7 +1494,7 @@ def tab4_hypothesis():
     st.markdown('**Quick‑nav (chọn mục tiêu):**')
     goal = st.radio('Mục tiêu test', ['Khác biệt trung bình','Khác biệt tỷ lệ','Liên hệ hai biến phân loại','Phân phối khác nhau (2 nhóm)'], horizontal=True, key=_k('tab4','goal'))
     # Checklist (no Run button)
-    with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', key=_k('tab4','chk')):
+    with expander('✅ Checklist — đã kiểm tra đủ chưa?', key=_k('tab4','chk')):
         st.checkbox('Đã lọc đúng tập dữ liệu cần so sánh?', value=False, key='tests_chk_1')
         st.checkbox('Các nhóm độc lập và phân phối phù hợp?', value=False, key='tests_chk_2')
         st.checkbox('Đã kiểm tra ngoại lệ/outliers?', value=False, key='tests_chk_3')
