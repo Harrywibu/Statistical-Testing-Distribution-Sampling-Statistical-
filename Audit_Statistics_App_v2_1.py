@@ -1715,8 +1715,8 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df['sev_rank'] = df['severity'].map(SEV_ORDER).fillna(0)
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
-    (TABQ, TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Data Quality', 'Overview', 'Distribution & Shape', 'Correlation & Trend', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
-
+    
+(TABQ, TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Data Quality', 'Overview', 'Distribution & Shape', 'Correlation & Trend', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 with TAB0:
     st.subheader('📈 Overview — Sales activity')
     _df = _df_full_safe()
@@ -1834,52 +1834,6 @@ with TAB0:
         else:
             st.caption('Không có cột thời gian hoặc doanh thu để vẽ tổng quan theo thời gian.')
 
-
-
-
-        # --- Data Type & Pivot (group-by) ---
-        st.markdown('---')
-        st.subheader('🧩 Data type & Pivot (“group by”)')
-        try:
-            import pandas as pd, numpy as np, plotly.express as px
-            # Auto-detect types with override
-            num_cols = [c for c in _df.columns if pd.api.types.is_numeric_dtype(_df[c])]
-            dt_cols  = [c for c in _df.columns if str(getattr(_df[c], 'dtype', '')).startswith('datetime')]
-            cat_cols = [c for c in _df.columns if (c not in num_cols + dt_cols)]
-            c1, c2, c3 = st.columns([2,2,1])
-            with c1:
-                group_by = st.multiselect('Group by (categorical/datetime)', options=dt_cols + cat_cols, key='ov_gb')
-            with c2:
-                metric_col = st.selectbox('Value (numeric)', options=(num_cols or ['(no numeric)']), key='ov_val')
-            with c3:
-                aggfunc = st.selectbox('Aggregation', options=['sum','mean','count','nunique','median'], index=0, key='ov_agg')
-            if isinstance(metric_col, str) and metric_col in _df.columns:
-                dfp = _df.copy()
-                if group_by:
-                    if aggfunc in ['sum','mean','median']:
-                        pv = dfp.groupby(group_by, dropna=False)[metric_col].agg(aggfunc).reset_index()
-                    elif aggfunc in ['count']:
-                        pv = dfp.groupby(group_by, dropna=False)[metric_col].count().reset_index().rename(columns={metric_col:'count'})
-                    else: # nunique
-                        pv = dfp.groupby(group_by, dropna=False)[metric_col].nunique().reset_index().rename(columns={metric_col:'nunique'})
-                else:
-                    if aggfunc in ['sum','mean','median']:
-                        pv = pd.DataFrame({metric_col:[getattr(dfp[metric_col], aggfunc)()]})
-                    elif aggfunc=='count':
-                        pv = pd.DataFrame({'count':[int(dfp[metric_col].count())]})
-                    else:
-                        pv = pd.DataFrame({'nunique':[int(dfp[metric_col].nunique())]})
-                st.dataframe(pv, use_container_width=True, height=min(360, 60+24*min(len(pv), 12)))
-                try:
-                    if group_by:
-                        fig = px.bar(pv, x=group_by[0], y=pv.columns[-1], color=(group_by[1] if len(group_by)>1 else None),
-                                     title='Tổng hợp theo nhóm', barmode='group')
-                        st_plotly(fig)
-                except Exception:
-                    pass
-                st.caption('Chọn nhóm (group by) và cột giá trị để xem tổng hợp kiểu pivot.')
-        except Exception as _e:
-            st.warning(f'Không thể hiển thị Pivot: {_e}')
 # ---- (moved) Data Quality ----
 with TABQ:
     st.subheader('🧪 Data Quality')
@@ -1949,13 +1903,6 @@ with TABQ:
                         st_plotly(fig)
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
-
-
-
-
-
-
-
 with TAB1:
     st.subheader('📊 Distribution & Shape')
     _df = _df_full_safe()
@@ -2228,12 +2175,6 @@ with TAB2:
             return [c for c in cols if any(t in str(c).lower() for t in tokens)] or cols
         ALL_COLS_T2 = _filter_cols_goal(ALL_COLS)
 
-
-
-
-
-
-
     c1, c2, c3 = st.columns([2, 2, 1.5])
     var_x = c1.selectbox('Variable X', ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS, index=((ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS).index(SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt'))) if (SS.get('t2_x', _sug_t2.get('num') or _sug_t2.get('cat') or _sug_t2.get('dt')) in (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)) else 0), key='t2_x')
     pool_y = (ALL_COLS_T2 if SS.get('t2_only') else ALL_COLS)
@@ -2355,14 +2296,6 @@ with TAB2:
             except Exception:
                 pass
 
-
-
-
-
-
-
-
-
             if HAS_PLOTLY:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df['t'], y=df['y'], name='Value'))
@@ -2411,29 +2344,6 @@ with TAB2:
                                     _sig_set('chi2_time_p', float(pvalt), severity=(1.0 if pvalt < _alpha else 0.0), note='time×group Top-K')
                                 except Exception:
                                     pass
-
-    st.divider()
-    # Optional: Numeric-only heatmap kept under expander for a cleaner UI
-    with st.expander('🔢 Numeric-only correlation heatmap (optional)'):
-        if len(NUM_COLS) < 2:
-            st.info('Cần ≥2 cột numeric để tính tương quan.')
-        else:
-            mth = st.radio('Method', ['Pearson','Spearman','Kendall'], index=1 if SS.get('spearman_recommended') else 0, horizontal=True, key='t2_heat_m')
-            sel = st.multiselect('Chọn cột', options=NUM_COLS, default=NUM_COLS[:30], key='t2_heat_cols')
-            if len(sel) >= 2:
-                if mth=='Kendall':
-                    sub = _df_full_safe()[sel].apply(_pd.to_numeric, errors='coerce').dropna(how='all', axis=1)
-                    corr = sub.corr(method='kendall') if sub.shape[1]>=2 else _pd.DataFrame()
-                else:
-                    corr = corr_cached(DF_FULL, sel, 'spearman' if mth=='Spearman' else 'pearson')
-                SS['last_corr'] = corr
-                if not corr.empty and HAS_PLOTLY:
-                    figH = px.imshow(corr, color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title=f'Correlation heatmap ({mth})', aspect='auto')
-                    figH.update_xaxes(tickangle=45)
-                    st_plotly(figH)
-            else:
-                st.warning('Chọn ≥2 cột.')
-
     # --- Rule insights for sales (correlation/trend) ---
     with st.expander('🧠 Rule Engine (Correlation & Trend) — Sales insights'):
         ctx = build_rule_context()
@@ -2446,7 +2356,6 @@ with TAB3:
     SS['risk_diff_threshold'] = st.slider('Ngưỡng lệch Benford (diff%)', 0.01, 0.10, float(SS.get('risk_diff_threshold', 0.05)), 0.01, help='Dùng để đánh dấu mức lệch Benford đáng chú ý.')
     require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
-
     # Column selection & run controls
     import pandas as pd, numpy as np
     _df_bf = _df_full_safe()
@@ -2520,33 +2429,6 @@ with TAB3:
             except Exception as e:
                 st.error(f'Lỗi chạy Benford: {e}')
 
-
-# ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
-# ------------------------------- 
-    # --- Benford by Time (Month/Quarter/Year) ---
-    st.divider()
-    with st.expander('⏱️ Benford theo thời gian (M/Q/Y) — so sánh & heatmap', expanded=False):
-        if not DT_COLS:
-            st.info('Không có cột thời gian. Hãy chọn file có cột thời gian để dùng tính năng này.')
-        else:
-            dtc = st.selectbox('Chọn cột thời gian', DT_COLS, key='bf_time_dt')
-            gran = st.radio('Granularity', ['M','Q','Y'], index=0, horizontal=True, key='bf_time_gran')
-            src_df = DF_FULL if (SS.get('df') is not None and True) else DF_FULL
-            val_col = st.selectbox('Cột giá trị (1D Benford)', NUM_COLS, key='bf_time_val')
-            res = benford_by_period(src_df, val_col, dtc, gran)
-            if res.empty:
-                st.warning('Không đủ dữ liệu hợp lệ để tính Benford theo thời gian.')
-            else:
-                st.caption(f"Số giai đoạn: {len(res)} • Hiển thị MAD, p-value, maxdiff")
-                st.dataframe(res, use_container_width=True, height=min(360, 60+24*min(len(res),12)))
-                if HAS_PLOTLY:
-                    try:
-                        fig = px.bar(res, x='period', y='MAD', title='Benford MAD theo giai đoạn', labels={'MAD':'MAD'})
-                        st_plotly(fig)
-                        fig2 = px.bar(res, x='period', y='maxdiff', title='Max diff% theo giai đoạn', labels={'maxdiff':'Max diff% (|obs-exp|/exp)'})
-                        st_plotly(fig2)
-                    except Exception:
-                        pass
                 # Side-by-side compare two periods
                 if len(res) >= 2:
                     p1, p2 = st.columns(2)
@@ -2614,7 +2496,6 @@ with TAB3:
             st.warning(f'Drill-down lỗi: {e}')
 
 with TAB4:
-
     try:
             require_full_data()
             require_full_data()
@@ -2767,7 +2648,6 @@ with TAB4:
         # ------------------------------ TAB 5: Regression -----------------------------
     except Exception as e:
         st.error(f'Lỗi khi chạy Tests: {e}')
-
 
 with TAB5:
     require_full_data()
