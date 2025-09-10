@@ -1716,7 +1716,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
 
-(TAB0, TABQ, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Overview', 'Data Quality', 'Distribution & Shape', 'Trend & Corr', 'Benford', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
+(TABQ, TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Data Quality', 'Overview', 'Distribution & Shape', 'Correlation & Trend', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 with TAB0:
     st.subheader('📈 Overview — Sales activity')
@@ -1725,6 +1725,39 @@ with TAB0:
         st.info('Hãy **Load full data** để xem tổng quan.')
     else:
         import pandas as pd, numpy as np, plotly.express as px
+        # --- KPI + 3 charts for Overview ---
+        import plotly.express as px2
+        import pandas as _pd, numpy as _np, contextlib
+        col_date = SS.get('primary_dt')
+        col_amt  = SS.get('primary_amount')
+        col_prod = SS.get('primary_product')
+        col_cust = SS.get('primary_customer')
+        if col_date is None:
+            with contextlib.suppress(Exception):
+                for c in _df.columns:
+                    if str(getattr(_df[c],'dtype','')).startswith('datetime') or any(k in str(c).lower() for k in ['date','pstg','post','invoice']):
+                        col_date = c; break
+        gran = st.radio('Chu kỳ doanh thu', ['M','Q','Y'], horizontal=True, index=0, key='ov_gran')
+        if col_date and col_amt and col_date in _df.columns and col_amt in _df.columns:
+            _tmp = _df[[col_date, col_amt]].dropna()
+            with contextlib.suppress(Exception):
+                _tmp[col_date] = _pd.to_datetime(_tmp[col_date], errors='coerce')
+            rev = _tmp.assign(__per=_tmp[col_date].dt.to_period(gran).astype(str)).groupby('__per')[col_amt].sum().reset_index().rename(columns={'__per':'period'})
+            if not rev.empty:
+                figM = px2.line(rev, x='period', y=col_amt, markers=True, title='Revenue by '+('Month' if gran=='M' else 'Quarter' if gran=='Q' else 'Year'))
+                st_plotly(figM); st.caption('Doanh thu theo kỳ.')
+        if col_amt and col_amt in _df.columns:
+            if col_prod and col_prod in _df.columns:
+                tp = _df.groupby(col_prod, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(15)
+                if not tp.empty:
+                    figP = px2.bar(tp.iloc[::-1], x=col_amt, y=col_prod, orientation='h', title='Top Products (by revenue)')
+                    st_plotly(figP); st.caption('Top sản phẩm theo doanh thu.')
+            if col_cust and col_cust in _df.columns:
+                tc = _df.groupby(col_cust, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(15)
+                if not tc.empty:
+                    figC = px2.bar(tc.iloc[::-1], x=col_amt, y=col_cust, orientation='h', title='Top Customers (by revenue)')
+                    st_plotly(figC); st.caption('Top khách hàng theo doanh thu.')
+        
         # Pick typical columns (fallback by dtype)
         cols = pd.Index([str(c) for c in _df.columns]).str.lower()
         def _pick(patterns, prefer_numeric=False, prefer_datetime=False):
@@ -1923,93 +1956,127 @@ with TABQ:
 
 
 
+
 with TAB1:
     st.subheader('📊 Distribution & Shape')
     _df = _df_full_safe()
     if _df is None or _df.empty:
         st.info('Chưa có dữ liệu. Vui lòng **Load full data** trước khi chạy tab này.')
     else:
-        import pandas as pd, numpy as np, plotly.express as px, plotly.graph_objects as go
-        col = st.selectbox('Chọn cột', list(_df.columns))
-        s = _df[col]
-    run_tab1 = st.button('▶️ Run Test (Distribution & Shape)', key='btn_run_tab1', use_container_width=True)
-    if not (run_tab1 or SS.get('_ran_tab1')):
-        st.info('Chọn cột và bấm **Run Test** để chạy thống kê & biểu đồ.')
-        SS['_ran_tab1'] = False
-        st.stop()
-    else:
-        SS['_ran_tab1'] = True
-        # Numeric
-        if _is_num(s):
-            c1,c2 = st.columns(2)
-            with c1:
-                SS['bins'] = st.slider('Histogram bins', 10, 200, int(SS.get('bins', 50)), 5)
-                SS['log_scale'] = st.checkbox('Log scale (X)', value=bool(SS.get('log_scale', False)))
-            with c2:
-                kde_on = st.checkbox('KDE', value=True)
-            s_num = pd.to_numeric(s, errors='coerce').dropna()
-            if len(s_num)==0:
-                st.info('Cột numeric không có dữ liệu hợp lệ.')
+        import pandas as pd, numpy as np, plotly.express as px, plotly.graph_objects as go, contextlib
+        NUMS = [c for c in _df.columns if pd.api.types.is_numeric_dtype(_df[c])]
+        DTS  = [c for c in _df.columns if str(getattr(_df[c],'dtype','')).startswith('datetime')]
+        CATS = [c for c in _df.columns if (c not in NUMS + DTS)]
+        tab_num, tab_dt, tab_cat = st.tabs(['Numeric','Datetime','Categorical'])
+
+        with tab_num:
+            if not NUMS:
+                st.info('Không có cột numeric.')
             else:
-                fig1 = go.Figure()
-                fig1.add_trace(go.Histogram(x=s_num, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
-                if kde_on and (len(s_num)>10) and (s_num.var()>0):
-                    try:
-                        from scipy.stats import gaussian_kde
-                        xs = np.linspace(s_num.min(), s_num.max(), 256)
-                        kde = gaussian_kde(s_num); ys = kde(xs)
-                        ys_scaled = ys*len(s_num)*(xs[1]-xs[0])
-                        fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE'))
-                    except Exception: pass
-                if SS['log_scale'] and (s_num>0).all(): fig1.update_xaxes(type='log')
-                fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
-                st_plotly(fig1)
-
-                # Lorenz & Gini
-                v = np.sort(s_num.values)
-                if len(v)>0 and v.sum()!=0:
-                    cum=np.cumsum(v); lor=np.insert(cum,0,0)/cum.sum(); x=np.linspace(0,1,len(lor))
-                    gini = 1 - 2*np.trapz(lor, dx=1/len(v))
-                    try: _sig_set('gini', float(gini), severity=float(gini))
-                    except Exception: pass
-                    figL=go.Figure(); figL.add_trace(go.Scatter(x=x,y=lor,name='Lorenz',mode='lines'))
-                    figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
-                    figL.update_layout(title=f'{col} — Lorenz (Gini={gini:.3f})', height=320)
-                    st_plotly(figL)
+                col = st.selectbox('Chọn cột numeric', NUMS, key='tab1_num_col')
+                s = pd.to_numeric(_df[col], errors='coerce').dropna()
+                if s.empty:
+                    st.info('Cột numeric không có dữ liệu hợp lệ.')
                 else:
-                    st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
-                # outlier_rate_z
-                _thr = float(SS.get('z_thr', 3.0)) if 'z_thr' in SS else 3.0
-                sd = float(s_num.std(ddof=0)) if s_num.std(ddof=0)>0 else 0.0
-                zs = (s_num - float(s_num.mean()))/sd if sd>0 else (s_num*0)
-                share_z = float((np.abs(zs) >= _thr).mean())
-                try: _sig_set('outlier_rate_z', share_z, note='|z|≥'+str(_thr))
-                except Exception: pass
-                st.caption('Chú giải: Histogram/KDE thể hiện phân phối; Lorenz & Gini đo mức độ tập trung; outlier_rate_z = tỷ lệ điểm có |z| ≥ ngưỡng.')
+                    desc = dict(count=float(len(s)),
+                                mean=float(np.nanmean(s)), median=float(np.nanmedian(s)), mode=float(s.mode(dropna=True).iloc[0]) if not s.mode(dropna=True).empty else float('nan'),
+                                std=float(np.nanstd(s, ddof=1)), var=float(np.nanvar(s, ddof=1)),
+                                min=float(np.nanmin(s)), q1=float(np.nanpercentile(s,25)), q3=float(np.nanpercentile(s,75)), max=float(np.nanmax(s)))
+                    from scipy.stats import skew, kurtosis, shapiro, normaltest
+                    desc['skewness'] = float(skew(s, bias=False, nan_policy='omit'))
+                    desc['kurtosis'] = float(kurtosis(s, bias=False, fisher=True, nan_policy='omit'))
+                    n = len(s)
+                    if n < 5000:
+                        try:
+                            stat, p = shapiro(s.sample(min(n, 5000), random_state=0))
+                            normal_test = ('Shapiro–Wilk', float(stat), float(p))
+                        except Exception:
+                            normal_test = ('Shapiro–Wilk', float('nan'), float('nan'))
+                    else:
+                        try:
+                            stat, p = normaltest(s)
+                            normal_test = ('D’Agostino K²', float(stat), float(p))
+                        except Exception:
+                            normal_test = ('D’Agostino K²', float('nan'), float('nan'))
+                    st.write(pd.DataFrame([desc]).T.rename(columns={0:col}))
+                    st.caption('Bảng mô tả: count/mean/median/mode/std/var/min/Q1/Q3/max/skewness/kurtosis.')
+                    st.caption(f'Kiểm định chuẩn tính: {normal_test[0]} — p-value={normal_test[2]:.4g}.')
 
-        # Datetime
-        elif _is_dt(col, s):
-            gran = st.radio('Chu kỳ', ['D','W','M'], horizontal=True, index=2)
-            try:
-                sdt = pd.to_datetime(s, errors='coerce')
+                    c1, c2, c3 = st.columns([1.6,1,1])
+                    with c1:
+                        bins = st.slider('Histogram bins', 10, 120, 50, 5, key='tab1_bins')
+                        logx = st.checkbox('Log scale (X)', value=False, key='tab1_logx')
+                    with c2:
+                        kde_on = st.checkbox('KDE', value=True, key='tab1_kde')
+                    with c3:
+                        show_violin = st.checkbox('Hiện Violin', value=True, key='tab1_violin')
+
+                    fig1 = go.Figure()
+                    fig1.add_trace(go.Histogram(x=s, nbinsx=bins, name='Histogram', opacity=0.8))
+                    if kde_on and len(s)>10 and s.var()>0:
+                        try:
+                            from scipy.stats import gaussian_kde
+                            xs = np.linspace(float(s.min()), float(s.max()), 256)
+                            kde = gaussian_kde(s); ys = kde(xs)
+                            ys_scaled = ys*len(s)*(xs[1]-xs[0])
+                            fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE'))
+                        except Exception:
+                            pass
+                    if logx and (s>0).all(): fig1.update_xaxes(type='log')
+                    fig1.update_layout(title=f'{col} — Histogram+KDE', height=320)
+                    st_plotly(fig1); st.caption('Histogram/KDE: phân phối và mức độ tập trung; hỗ trợ log-scale và chỉnh bins.')
+
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Box(y=s, name='Box'))
+                    if show_violin:
+                        fig2.add_trace(go.Violin(y=s, name='Violin', box_visible=True))
+                    fig2.update_layout(title=f'{col} — Box/Violin', height=320)
+                    st_plotly(fig2); st.caption('Box/Violin: trung vị/IQR/tails và mật độ.')
+
+                    # QQ-plot (optional)
+                    try:
+                        from statsmodels.api import qqplot
+                        import matplotlib.pyplot as plt, io
+                        fig = qqplot(s, line='s').figure
+                        fig.set_figwidth(5); fig.set_figheight(3)
+                        bio = io.BytesIO(); fig.savefig(bio, format='png', bbox_inches='tight'); plt.close(fig)
+                        st.image(bio.getvalue(), caption='QQ-plot')
+                    except Exception:
+                        st.caption('QQ-plot không khả dụng (thiếu statsmodels).')
+
+                    x = np.sort(s.values); y = np.arange(1, len(x)+1)/len(x)
+                    figE = go.Figure(); figE.add_trace(go.Scatter(x=x, y=y, mode='lines', name='ECDF'))
+                    figE.update_layout(title=f'{col} — ECDF', height=320)
+                    st_plotly(figE); st.caption('ECDF: phân phối tích lũy thực nghiệm.')
+
+                    q1,q3 = np.nanpercentile(s,25), np.nanpercentile(s,75); iqr = q3-q1
+                    lo, hi = q1-1.5*iqr, q3+1.5*iqr
+                    out_share = float(((s<lo)|(s>hi)).mean())
+                    tail = 'heavy' if desc['kurtosis']>0 else 'light'
+                    skew_dir = 'lệch phải' if desc['skewness']>0 else ('lệch trái' if desc['skewness']<0 else 'đối xứng')
+                    st.caption(f'Giải thích: {skew_dir}, tails {tail}; outliers(IQR)≈{out_share:.2%}. Kết luận theo p-value: {"không đạt" if (normal_test[2]<0.05) else "khả dĩ"}.' )
+
+        with tab_dt:
+            if not DTS:
+                st.info('Không có cột datetime.')
+            else:
+                col = st.selectbox('Chọn cột thời gian', DTS, key='tab1_dt_col')
+                sdt = pd.to_datetime(_df[col], errors='coerce')
+                gran = st.radio('Chu kỳ', ['D','W','M'], horizontal=True, index=2, key='tab1_dt_gran')
                 grp = sdt.dt.to_period(gran).value_counts().sort_index()
-                dfc = grp.rename_axis('period').reset_index(name='n')
-                dfc['period'] = dfc['period'].astype(str)
-                fig = px.line(dfc, x='period', y='n', markers=True, title=f'Biến đếm theo {gran}')
-                st_plotly(fig)
-            except Exception:
-                st.info('Không thể phân tích cột thời gian này.')
-            st.caption('Gợi ý: sang TAB2 “Trend & Corr” để kiểm định xu hướng (Mann–Kendall / Spearman‑time).')
+                dfc = grp.rename_axis('period').reset_index(name='n'); dfc['period']=dfc['period'].astype(str)
+                fig = px.line(dfc, x='period', y='n', markers=True, title=f'{col} — Biến đếm theo {gran}')
+                st_plotly(fig); st.caption('Count theo chu kỳ; gợi ý: kiểm định xu hướng ở TAB2.')
 
-        # Categorical
-        else:
-            k = st.slider('Top-N', 5, 50, 20, 5)
-            vc = s.astype('object').fillna('(null)').value_counts().head(k)
-            fig = px.bar(vc[::-1], title=f'Top-{k} tần suất')
-            st_plotly(fig)
-            st.caption('Gợi ý: cân nhắc GoF/Uniform hoặc Pareto nếu có nhiều nhóm.')
-
-
+        with tab_cat:
+            if not CATS:
+                st.info('Không có cột categorical/text.')
+            else:
+                col = st.selectbox('Chọn cột phân loại', CATS, key='tab1_cat_col')
+                k = st.slider('Top-N', 5, 50, 20, 5, key='tab1_cat_topn')
+                vc = _df[col].astype('object').fillna('(null)').value_counts().head(k)
+                fig = px.bar(vc.iloc[::-1], title=f'{col} — Top-{k} tần suất')
+                st_plotly(fig); st.caption('Tần suất nhóm; gợi ý GoF/Pareto khi số nhóm lớn.')
 with TAB2:
     require_full_data()
     st.subheader('🔗 Correlation Studio & 📈 Trend')
@@ -2394,7 +2461,7 @@ with TAB3:
         with c2:
             mode = st.radio('Chế độ', ['1D (leading digit)','2D (leading pair)'], horizontal=True, index=0, key='bf_mode')
         with c3:
-            btn1 = st.button('▶️ Run Benford', key='btn_run_bf', use_container_width=True)
+            btn1 = True  # auto-run Benford
         # Core functions
         def _leading_digits(x: pd.Series, k: int = 1) -> pd.Series:
             s = pd.to_numeric(x, errors='coerce').astype(float).abs()
@@ -2745,7 +2812,7 @@ with TAB5:
                     drop_const = st.checkbox('Loại cột variance=0', value=True, key='lin_drop_const')
                 with optR:
                     show_diag = st.checkbox('Hiện chẩn đoán residuals', value=True, key='lin_diag')
-                run_lin = st.button('▶️ Run Linear Regression', key='btn_run_lin', use_container_width=True)
+                run_lin = st.button('▶️ Linear Regression', key='btn_run_lin', use_container_width=True)
                 if run_lin:
                     try:
                         sub = REG_DF[[y_lin] + X_lin].copy()
@@ -2820,7 +2887,7 @@ with TAB5:
                     thr = st.slider('Ngưỡng phân loại (threshold)', 0.1, 0.9, 0.5, 0.05, key='logit_thr')
                 with optC:
                     test_size_l = st.slider('Test size', 0.1, 0.5, 0.25, 0.05, key='logit_ts')
-                run_log = st.button('▶️ Run Logistic Regression', key='btn_run_log', use_container_width=True)
+                run_log = st.button('▶️ Logistic Regression', key='btn_run_log', use_container_width=True)
                 if run_log:
                     try:
                         sub = REG_DF[[y_col] + X_sel].copy()
@@ -3097,7 +3164,7 @@ with TAB7:
             if zr>0.30:
                 signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
             if share99>0.02:
-                signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
+                signals.append({'signal':'Heavy tail (>p99) present','scope':'sales','sev':'low','note':'amount','action':'xem Distribution/Shape; soát giao dịch ngoại lệ'})
         st.dataframe(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
 
         with st.expander('🧠 Rule Engine — Insights (All tests)'):
