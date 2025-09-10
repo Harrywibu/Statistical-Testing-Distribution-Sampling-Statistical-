@@ -528,11 +528,11 @@ try:
     SS['df_preview'] = prev; SS['last_good_preview'] = prev
 except Exception as e:
     st.error(f'Lỗi đọc XLSX: {e}'); prev = pd.DataFrame()
-st_df(prev, height=260)
-            headers=list(prev.columns)
-            SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''), key=_k('xl','filter'))
-            filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
-            selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers, key=_k('xl','selcols'))
+    st_df(prev, height=260)
+    headers=list(prev.columns)
+    SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''), key=_k('xl','filter'))
+    filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+    selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers, key=_k('xl','selcols'))
             if st.button('📥 Load full data', key=_k('xl','load')):
                 key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
                 key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
