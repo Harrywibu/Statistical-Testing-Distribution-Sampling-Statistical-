@@ -1,14 +1,14 @@
 from __future__ import annotations
-
 import os, io, re, json, time, hashlib, math, contextlib, tempfile, warnings, zipfile
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# Optional deps (graceful fallback)
+# Optional deps
 try:
     import plotly.express as px
     import plotly.graph_objects as go
@@ -17,7 +17,6 @@ try:
 except Exception:
     HAS_PLOTLY = False
 
-# Kaleido for static image export
 try:
     import kaleido  # noqa: F401
     HAS_KALEIDO = True
@@ -195,7 +194,7 @@ def read_parquet_cache(sha: str, key: str) -> Optional[pd.DataFrame]:
             return None
     return None
 
-# ------------------------------ Rule Engine (central store) ------------------------------
+# ------------------------------ Rule Engine ------------------------------
 def _init_rule_engine():
     if 'signals' not in SS:
         SS['signals'] = {'benford': [], 'flags': [], 'corr': [], 'regression': [], 'dist': [], 'htest': []}
@@ -213,7 +212,6 @@ def _log_signal(scope: str, name: str, score: float, weight: float = 1.0, meta: 
     except Exception:
         weight = 1.0
     SS['signals'].setdefault(scope, [])
-    # de-duplicate by (scope, name)
     if dedup:
         SS['signals'][scope] = [it for it in SS['signals'][scope] if it.get('name') != name]
     SS['signals'][scope].append({
@@ -241,8 +239,7 @@ def _clear_signals(scope: Optional[str] = None):
         SS['signals'][scope] = []
 
 def _explain_signal(scope: str, name: str, meta: dict, goals: dict) -> str:
-    col = meta.get('col') or ''
-    # business grounding by goal columns
+    col = meta.get('col') or meta.get('y') or ''
     business = []
     if col:
         if col == goals.get('revenue'): business.append('doanh thu')
@@ -251,12 +248,12 @@ def _explain_signal(scope: str, name: str, meta: dict, goals: dict) -> str:
     business_txt = f" liên quan {', '.join(business)}" if business else ''
     if scope == 'benford':
         mad = meta.get('MAD'); p = meta.get('p')
-        return f"Benford lệch cho cột **{col}**{business_txt}: MAD≈{mad:.4f}, p≈{p:.4f}. Nên khoanh vùng theo kỳ/nhóm để kiểm tra bút toán bất thường." if mad is not None else name
+        return f"Benford lệch cho cột **{meta.get('col','')}**{business_txt}: MAD≈{mad:.4f}, p≈{p:.4f}. Nên khoanh vùng theo kỳ/nhóm để kiểm tra bút toán bất thường." if mad is not None else name
     if scope == 'flags':
         cat = meta.get('cat'); raw = meta.get('raw')
         mapping = {'zeros':'tỉ lệ 0 cao', 'rounding':'mẫu số tròn', 'tail':'đuôi phân phối dày', 'near':'cận ngưỡng', 'time':'off-hours/weekend', 'dups':'trùng tổ hợp'}
         why = mapping.get(cat, cat)
-        return f"Phát hiện **{why}** ở **{col or name}**{business_txt}: chỉ số={raw}. Khuyến nghị drill-down và đối chiếu chứng từ."
+        return f"Phát hiện **{why}** ở **{meta.get('column','')}**{business_txt}: chỉ số={raw}. Khuyến nghị drill-down và đối chiếu chứng từ."
     if scope == 'dist':
         p = meta.get('p'); skew = meta.get('skew'); kurt = meta.get('kurt'); out = meta.get('outlier_share')
         msg = [f"p≈{p:.4f}" if p is not None else None,
@@ -264,27 +261,76 @@ def _explain_signal(scope: str, name: str, meta: dict, goals: dict) -> str:
                f"kurt≈{kurt:.2f}" if kurt is not None else None,
                f"outliers≈{out:.1%}" if out is not None else None]
         msg = ', '.join([m for m in msg if m])
-        return f"Phân phối của **{col}**{business_txt} có dấu hiệu bất thường ({msg}). Kiểm tra chính sách làm tròn, ngưỡng, và quy trình nhập liệu."
+        return f"Phân phối của **{meta.get('col','')}**{business_txt} có dấu hiệu bất thường ({msg}). Kiểm tra chính sách làm tròn, ngưỡng, và quy trình nhập liệu."
     if scope == 'corr':
         if meta.get('kind') == 'trend':
             tau = meta.get('tau'); p = meta.get('p'); direction = 'tăng' if (tau or 0) > 0 else 'giảm'
-            return f"Xu hướng **{direction}** theo thời gian ở **{col}**{business_txt} (τ≈{tau:.3f}, p≈{p:.4f}). Cần soát biến động theo kỳ và nguyên nhân."
+            return f"Xu hướng **{direction}** theo thời gian ở **{meta.get('col','')}**{business_txt} (τ≈{tau:.3f}, p≈{p:.4f}). Cần soát biến động theo kỳ và nguyên nhân."
+        elif meta.get('kind') == 'cat_cat':
+            V = meta.get('V'); x = meta.get('x'); y = meta.get('y')
+            return f"Liên hệ danh mục **{x}** ~ **{y}** khá mạnh (Cramér’s V≈{V:.2f}). Xem phân bố chéo và residuals để xác định nhóm bất thường."
         else:
             r = meta.get('r'); x = meta.get('x'); y = meta.get('y')
-            return f"Tương quan mạnh giữa **{x}** và **{y}** (|r|≈{abs(r or 0):.2f}). Cân nhắc kiểm soát rủi ro phụ thuộc/ghép bút toán."
+            return f"Tương quan **{x}** ~ **{y}** (|r|≈{abs(r or 0):.2f}). Cân nhắc kiểm soát rủi ro phụ thuộc/ghép bút toán."
     if scope == 'htest':
         test = meta.get('test'); p = meta.get('p'); grp = meta.get('grp')
-        return f"Kiểm định **{test}** cho **{col}** theo nhóm **{grp}**{business_txt}: p≈{p:.4f} (có ý nghĩa). Nên xem nhóm khác biệt và lý do."
+        return f"Kiểm định **{test}** cho **{meta.get('col','')}** theo nhóm **{grp}**{business_txt}: p≈{p:.4f}. Nên xem nhóm khác biệt và lý do."
     if scope == 'regression':
         if meta.get('model') == 'linear':
             r2 = meta.get('r2'); rmse = meta.get('rmse')
             return f"Hồi quy tuyến tính cho **{col or name}**{business_txt}: R²≈{r2:.3f}, RMSE≈{rmse:.3f}. Dùng để xác định yếu tố ảnh hưởng chính."
         else:
             auc = meta.get('auc'); acc = meta.get('acc')
-            return f"Hồi quy logistic (phân loại): AUC≈{auc:.3f}, Acc≈{acc:.3f}. Theo dõi ngưỡng phân loại và rò rỉ tín hiệu (leakage)."
+            return f"Hồi quy logistic (phân loại): AUC≈{auc:.3f}, Acc≈{acc:.3f}. Theo dõi ngưỡng phân loại và rò rỉ tín hiệu."
     return name
 
-# ------------------------------ Ingest (CSV/XLSX) ------------------------------
+def _next_tests_for_signal(scope: str, meta: dict) -> List[str]:
+    """Produce actionable 'next tests' suggestions per signal."""
+    out = []
+    if scope == 'benford':
+        out += ["Drill-down theo kỳ M/Q/Y ở Tab Benford", "So sánh theo nhóm danh mục có MAD cao", "Kiểm tra rounding/near-threshold trong Tab Flags"]
+    elif scope == 'flags':
+        cat = meta.get('cat')
+        if cat == 'zeros':
+            out += ["Chạy proportion z-test về tỷ lệ 0 giữa các nhóm", "Rà soát quy tắc nhập liệu/ghi nhận 0"]
+        elif cat == 'rounding':
+            out += ["Kiểm tra heaping (đỉnh ở .00/.0) theo nhóm", "So sánh pattern giữa ca/ngày"]
+        elif cat == 'tail':
+            out += ["Mann–Whitney giữa nhóm tail cao vs thấp", "Change-point theo thời gian (Tab Corr/Trend)"]
+        elif cat == 'near':
+            out += ["Phân tích khoảng cận ngưỡng theo người dùng/chi nhánh", "Đối chiếu chính sách phê duyệt theo ngưỡng"]
+        elif cat == 'time':
+            out += ["Phân tích off-hours theo user/ca", "Đối chiếu lịch làm việc & quyền truy cập"]
+        elif cat == 'dups':
+            out += ["Rà soát trùng tổ hợp + chứng từ gốc", "Kiểm tra trùng số tiền theo ngày/người"]
+    elif scope == 'dist':
+        out += ["Sử dụng test phi tham số (Kruskal/Mann–Whitney)", "Kiểm tra Benford & Flags để xác nhận tail/heaping"]
+    elif scope == 'corr':
+        kind = meta.get('kind')
+        if kind == 'trend':
+            out += ["Ước lượng độ dốc Theil–Sen", "Phân đoạn theo kỳ & danh mục để kiểm tra tính ổn định"]
+        elif kind == 'cat_cat':
+            out += ["Phân tích residuals bảng chéo", "Kiểm tra nhóm có tỷ lệ bất thường bằng Fisher/Chi-square chi tiết"]
+        else:
+            out += ["Kiểm tra đa cộng tuyến (VIF)", "Chạy hồi quy kiểm soát biến gây nhiễu"]
+    elif scope == 'htest':
+        test = meta.get('test','')
+        if test in ('ANOVA','Kruskal'):
+            out += ["Post-hoc (Tukey/Dunn) tìm nhóm khác biệt", "Kiểm tra hiệu ứng theo thời gian/seasonality"]
+        elif test == 'Chi-square':
+            out += ["Residuals và standardized residuals theo ô", "Gộp nhóm hiếm và test lại"]
+    elif scope == 'regression':
+        if meta.get('model') == 'linear':
+            out += ["Kiểm tra phân phối residuals/outliers", "Thêm biến giải thích (loại/seasonality)"]
+        else:
+            auc = meta.get('auc') or 0.0
+            if auc < 0.7:
+                out += ["Cân bằng lớp (class weighting/SMOTE)", "Tối ưu ngưỡng theo ROC/PR"]
+            elif auc > 0.95:
+                out += ["Rà soát rò rỉ tín hiệu (data leakage)", "Đánh giá tính khái quát hóa bằng k-fold"]
+    return out
+
+# ------------------------------ Ingest ------------------------------
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def list_sheets_xlsx(file_bytes: bytes) -> List[str]:
     from openpyxl import load_workbook
@@ -338,7 +384,7 @@ def _df_full() -> pd.DataFrame:
         return df
     return pd.DataFrame()
 
-# ------------------------------ UI Sidebar ------------------------------
+# ------------------------------ Sidebar ------------------------------
 st.sidebar.title('Workflow')
 with st.sidebar.expander('0) Ingest data', expanded=False):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key=_k('sb','uploader'))
@@ -359,12 +405,10 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
         st.cache_data.clear()
         st.rerun()
 
-    SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True),
-                                       help='Giữ kết quả tạm khi chuyển tab.')
+    SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True))
 
 with st.sidebar.expander('2) Risk & Advanced', expanded=False):
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
-    st.caption('Bật log Rule Engine tự động:')
     SS['auto_log_signals'] = st.checkbox('Auto push signals → Rule Engine', value=SS.get('auto_log_signals', True))
 
 with st.sidebar.expander('3) Cache', expanded=False):
@@ -375,13 +419,13 @@ with st.sidebar.expander('3) Cache', expanded=False):
         st.cache_data.clear(); st.toast('Cache cleared', icon='🧹')
 
 with st.sidebar.expander('4) Template & Validation', expanded=False):
-    st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
+    st.caption('Tạo TEMPLATE và/hoặc xác nhận dữ liệu đầu vào.')
     default_tpl = (list(SS.get('df_preview').columns) if isinstance(SS.get('df_preview'), pd.DataFrame) else
                    (list(SS.get('df').columns) if isinstance(SS.get('df'), pd.DataFrame) else
                     ['Posting Date','Document No','Customer','Product','Quantity','Weight','Net Sales revenue','Sales Discount','Type','Region','Branch','Salesperson']))
-    tpl_text = st.text_area('Header TEMPLATE (CSV, cho phép sửa)', ','.join(SS.get('v28_template_cols', default_tpl)), height=60, key=_k('sb','tpl_text'))
+    tpl_text = st.text_area('Header TEMPLATE (CSV, chỉnh được)', ','.join(SS.get('v28_template_cols', default_tpl)), height=60, key=_k('sb','tpl_text'))
     SS['v28_template_cols'] = [c.strip() for c in tpl_text.split(',') if c.strip()]
-    SS['v28_validate_on_load'] = st.checkbox('Bật xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False))
+    SS['v28_validate_on_load'] = st.checkbox('Xác nhận header khi nạp dữ liệu', value=SS.get('v28_validate_on_load', False))
     SS['v28_strict_types'] = st.checkbox('Kiểm tra kiểu dữ liệu (beta)', value=SS.get('v28_strict_types', False))
 
 # ------------------------------ Header ------------------------------
@@ -401,6 +445,7 @@ if SS.get('file_bytes'):
     fb = SS['file_bytes']
     sheets = []
     try:
+        from openpyxl import load_workbook  # noqa
         sheets = list_sheets_xlsx(fb)
     except Exception:
         sheets = []
@@ -550,14 +595,14 @@ def tabQ_data_quality():
                 fig = px.bar(per.dropna(), title='Số bản ghi theo kỳ')
                 fig.update_layout(margin=dict(l=10,r=10,t=40,b=10))
                 st_plotly(fig)
-            st.caption('Biểu đồ count per period: kiểm tra phân bố dữ liệu theo thời gian (trống, lệch).')
+            st.caption('Biểu đồ count per period: kiểm tra phân bố dữ liệu theo thời gian.')
         else:
             st.info('Không tìm thấy cột thời gian phù hợp.')
     bio = io.StringIO()
     prof.to_csv(bio, index=False)
     st.download_button('⬇️ Export CSV thống kê', data=bio.getvalue(), file_name='data_quality_stats.csv', mime='text/csv')
 
-# ------------------------------ TAB0 — Overview (Sales activity) ------------------------------
+# ------------------------------ TAB0 — Overview ------------------------------
 def tab0_overview():
     st.subheader('📍 Overview — Sales activity')
     if not require_full_data(): return
@@ -594,7 +639,7 @@ def tab0_overview():
                 fig = px.line(g, x='period', y='value', title=f'{goal} theo {period}')
                 fig.update_layout(margin=dict(l=10,r=10,t=40,b=10))
                 st_plotly(fig)
-            st.caption('Đường thời gian: mức độ và diễn biến hoạt động bán hàng theo chu kỳ.')
+            st.caption('Đường thời gian theo chu kỳ.')
         group_col = st.selectbox('Phân tách theo', [guess['customer'], guess['product'], cat_split] + CAT_COLS, index=0, key=_k('0','split'))
         if group_col:
             top = df.groupby(group_col)[val_col].sum(numeric_only=True).sort_values(ascending=False).head(20).reset_index()
@@ -602,7 +647,7 @@ def tab0_overview():
                 fig = px.bar(top, x='value' if 'value' in top.columns else val_col, y=group_col, orientation='h', title='Top breakdown')
                 fig.update_layout(margin=dict(l=10,r=10,t=40,b=10), yaxis={'categoryorder':'total ascending'})
                 st_plotly(fig)
-            st.caption('Top breakdown: xác định khách hàng/sản phẩm/nhóm giao dịch đóng góp lớn nhất.')
+            st.caption('Top breakdown theo mục tiêu.')
 
     elif goal == 'Khách hàng':
         col = guess['customer'] or (CAT_COLS[0] if CAT_COLS else None)
@@ -612,7 +657,7 @@ def tab0_overview():
             fig = px.bar(vc, x='count', y=col, orientation='h', title='Top khách hàng theo số dòng')
             fig.update_layout(margin=dict(l=10,r=10,t=40,b=10), yaxis={'categoryorder':'total ascending'})
             st_plotly(fig)
-        st.caption('Tần suất theo khách hàng: gợi ý Pareto/HHI cho rủi ro tập trung.')
+        st.caption('Tần suất theo khách hàng.')
 
     elif goal == 'Sản phẩm':
         col = guess['product'] or (CAT_COLS[0] if CAT_COLS else None)
@@ -622,7 +667,7 @@ def tab0_overview():
             fig = px.bar(vc, x='count', y=col, orientation='h', title='Top sản phẩm theo số dòng')
             fig.update_layout(margin=dict(l=10,r=10,t=40,b=10), yaxis={'categoryorder':'total ascending'})
             st_plotly(fig)
-        st.caption('Tần suất theo sản phẩm: theo dõi rủi ro tập trung danh mục.')
+        st.caption('Tần suất theo sản phẩm.')
 
     elif goal == 'Thời điểm':
         if not time_col: st.warning('Chưa có cột thời gian.'); return
@@ -632,9 +677,9 @@ def tab0_overview():
             fig = px.bar(vc, title='Số dòng theo kỳ')
             fig.update_layout(margin=dict(l=10,r=10,t=40,b=10))
             st_plotly(fig)
-        st.caption('Khối lượng giao dịch theo thời gian: phát hiện kỳ bất thường.')
+        st.caption('Khối lượng giao dịch theo thời gian.')
 
-# ------------------------------ TAB1 — Distribution & Shape (log to Rule Engine) ------------------------------
+# ------------------------------ TAB1 — Distribution & Shape (refined scoring) ------------------------------
 def _series_numeric(df, col):
     s = pd.to_numeric(df[col], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
     return s
@@ -674,6 +719,29 @@ def _outlier_share_iqr(s: pd.Series) -> float:
     lo, hi = q1 - 1.5*iqr, q3 + 1.5*iqr
     return float(((s<lo) | (s>hi)).mean())
 
+def _score_piecewise(x: float, knots: List[Tuple[float, float]]) -> float:
+    """Generic piecewise linear mapping; knots = [(x0,y0),(x1,y1),...]; clamps [0,1]."""
+    if x!=x: return 0.0
+    if not knots: return 0.0
+    if x <= knots[0][0]: return knots[0][1]
+    for (xa,ya),(xb,yb) in zip(knots[:-1], knots[1:]):
+        if xa <= x <= xb:
+            if xb==xa: return ya
+            t = (x - xa)/(xb - xa)
+            return float(np.clip(ya + t*(yb-ya), 0.0, 1.0))
+    return knots[-1][1]
+
+def _score_distribution(p: Optional[float], skew: Optional[float], kurt: Optional[float], out_share: Optional[float]) -> float:
+    # Components: normality(0.35), skew(0.25), kurtosis(0.2), outliers(0.2)
+    s_norm = 0.0 if (p is None or p!=p) else (1.0 - min(1.0, p/0.05))  # p<.05 -> ~1, p>.05 -> 0
+    s_skew = _score_piecewise(abs(skew) if (skew==skew) else np.nan,
+                              [(0.0,0.0),(0.5,0.0),(1.0,0.4),(2.0,1.0)])
+    s_kurt = _score_piecewise(abs(kurt) if (kurt==kurt) else np.nan,
+                              [(0.0,0.0),(1.0,0.0),(3.0,0.6),(5.0,1.0)])
+    s_out  = _score_piecewise(out_share if (out_share==out_share) else np.nan,
+                              [(0.00,0.0),(0.05,0.0),(0.10,0.4),(0.30,1.0)])
+    return float(0.35*s_norm + 0.25*s_skew + 0.20*s_kurt + 0.20*s_out)
+
 def tab1_distribution():
     st.subheader('📐 Distribution & Shape')
     if not require_full_data(): return
@@ -693,29 +761,27 @@ def tab1_distribution():
             c1, c2 = st.columns(2); c3, c4 = st.columns(2)
             bins = st.slider('Số bins', 10, 200, 50, 5, key=_k('1','bins'))
             log_scale = st.checkbox('Log-scale', value=False, key=_k('1','log'))
-            # figures
             if HAS_PLOTLY:
                 with c1:
                     fig = px.histogram(s, nbins=bins, histnorm='probability density', title='Histogram + KDE (xấp xỉ)')
                     if log_scale: fig.update_xaxes(type='log')
-                    mu, sd = float(s.mean()), float(s.std(ddof=1)) if len(s)>1 else 0.0
+                    mu = float(s.mean())
                     fig.add_vline(x=mu, line_dash='dash', annotation_text='Mean')
-                    st_plotly(fig); st.caption('Histogram + KDE (xấp xỉ): nhìn trung tâm và tail.')
+                    st_plotly(fig); st.caption('Histogram + KDE (xấp xỉ).')
                 with c2:
                     fig2 = go.Figure(); fig2.add_trace(go.Box(x=s, boxmean='sd', name=col, orientation='h'))
                     fig2.update_layout(title='Box')
-                    st_plotly(fig2); st.caption('Box: Median, IQR và outliers (IQR).')
+                    st_plotly(fig2); st.caption('Box plot (IQR & outliers).')
                 with c3:
                     try:
-                        osm, osr = stats.probplot(s, dist='norm', fit=False) if HAS_SCIPY else (None, None)
                         if HAS_SCIPY:
+                            osm, osr = stats.probplot(s, dist='norm', fit=False)
                             fig3 = go.Figure()
                             fig3.add_trace(go.Scatter(x=osm[0], y=osr, mode='markers', name='Data'))
                             slope, intercept = np.polyfit(osm[0], osr, 1)
                             line_x = np.array([min(osm[0]), max(osm[0])])
                             fig3.add_trace(go.Scatter(x=line_x, y=slope*line_x+intercept, mode='lines', name='Ref'))
-                            fig3.update_layout(title='QQ-plot')
-                            st_plotly(fig3)
+                            fig3.update_layout(title='QQ-plot'); st_plotly(fig3)
                         else:
                             st.info('Cần scipy để vẽ QQ-plot.')
                     except Exception:
@@ -725,18 +791,13 @@ def tab1_distribution():
                     xs = np.sort(s.values); ys = np.arange(1, len(xs)+1)/len(xs)
                     fig4 = go.Figure(); fig4.add_trace(go.Scatter(x=xs, y=ys, mode='markers', name='ECDF'))
                     fig4.update_layout(xaxis_title='Value', yaxis_title='ECDF', title='ECDF')
-                    st_plotly(fig4); st.caption('ECDF: nhìn tail và phần trăm.')
-            # ---- Rule Engine logging (Numeric)
+                    st_plotly(fig4); st.caption('ECDF: nhìn tail & phần trăm.')
+            # ---- Rule Engine logging (Numeric) with refined score
             if SS.get('auto_log_signals', True):
                 skew = float(stats_df.loc['Skewness','Value']) if 'Skewness' in stats_df.index else float('nan')
                 kurt = float(stats_df.loc['Kurtosis','Value']) if 'Kurtosis' in stats_df.index else float('nan')
                 out_share = _outlier_share_iqr(s)
-                score = max(
-                    (1 - min(1, (p if p==p else 1.0)/0.05)) if method!='N/A' else 0.0,
-                    min(abs(skew)/3.0, 1.0) if skew==skew else 0.0,
-                    min(max(kurt,0.0)/10.0, 1.0) if kurt==kurt else 0.0,
-                    min(out_share/0.3, 1.0) if out_share==out_share else 0.0
-                )
+                score = _score_distribution(p if p==p else None, skew, kurt, out_share)
                 _log_signal('dist', f'Distribution — {col}', score=score, weight=1.0,
                             meta={'col': col, 'p': p if p==p else None, 'skew': skew if skew==skew else None,
                                   'kurt': kurt if kurt==kurt else None, 'outlier_share': out_share if out_share==out_share else None})
@@ -756,7 +817,6 @@ def tab1_distribution():
                     vc2 = t.dt.dayofweek.value_counts().sort_index()
                     fig2 = px.bar(vc2, title='Phân bố theo thứ (0=Mon)'); st_plotly(fig2)
                     st.caption('Phân bố thứ: phát hiện weekend.')
-            # Log light weight (avoid double count with Flags)
             if SS.get('auto_log_signals', True):
                 off = float(((t.dt.hour<8)|(t.dt.hour>20)).mean())
                 wknd = float((t.dt.dayofweek>=5).mean())
@@ -776,12 +836,12 @@ def tab1_distribution():
                 fig = px.bar(top_df, x='count', y=col, orientation='h', title='Top categories')
                 fig.update_layout(yaxis={'categoryorder':'total ascending'})
                 st_plotly(fig)
-            st.caption('Tần suất danh mục: dùng HHI/Chi-square ở các tab khác để định lượng.')
+            st.caption('Tần suất danh mục & mức độ tập trung.')
             if SS.get('auto_log_signals', True) and top_share==top_share:
-                score = min(max(top_share-0.4, 0)/0.4, 1.0)  # >40% concentration starts to score
+                score = _score_piecewise(top_share, [(0.0,0.0),(0.4,0.0),(0.6,0.5),(0.8,1.0)])
                 _log_signal('dist', f'Category concentration — {col}', score=score, weight=0.8, meta={'col': col, 'top_share': top_share})
 
-# ------------------------------ TAB2 — Correlation Studio & Trend (log) ------------------------------
+# ------------------------------ TAB2 — Correlation Studio & Trend (add Cramér’s V) ------------------------------
 def _drop_constant_numeric(df: pd.DataFrame, cols: List[str]) -> List[str]:
     keep = []
     for c in cols:
@@ -794,17 +854,21 @@ def cramers_v(x, y):
     if not HAS_SCIPY:
         return np.nan
     tbl = pd.crosstab(x, y)
+    if tbl.empty: return np.nan
     chi2 = stats.chi2_contingency(tbl)[0]
     n = tbl.values.sum()
+    if n <= 0: return np.nan
     r, k = tbl.shape
-    return math.sqrt((chi2/n) / (min(k-1, r-1) or 1))
+    denom = max(min(k-1, r-1), 1)
+    return math.sqrt((chi2/n) / denom)
 
 def eta_squared(cat, y):
     if not HAS_SCIPY: return np.nan
     df_ = pd.DataFrame({'cat':cat, 'y':pd.to_numeric(y, errors='coerce')}).dropna()
     if df_.empty: return np.nan
     groups = [g['y'].values for _, g in df_.groupby('cat')]
-    f, p = stats.f_oneway(*groups) if len(groups)>1 else (np.nan, np.nan)
+    if len(groups) < 2: return np.nan
+    f, p = stats.f_oneway(*groups)
     grand_mean = df_['y'].mean()
     ss_between = sum([len(g)*(g.mean()-grand_mean)**2 for _, g in df_.groupby('cat')])
     ss_total = ((df_['y'] - grand_mean)**2).sum()
@@ -832,7 +896,7 @@ def tab2_corr_trend():
         if sub and HAS_PLOTLY:
             corr = df[sub].corr(method=method)
             fig = px.imshow(corr, text_auto=True, title=f'Correlation ({method})'); st_plotly(fig)
-            st.caption('Heatmap tương quan: loại bỏ cột constant trước khi tính.')
+            st.caption('Heatmap tương quan (đã loại constant).')
             # Log strongest pair
             try:
                 corr_vals = corr.replace(1.0, np.nan).abs().unstack().dropna()
@@ -840,7 +904,7 @@ def tab2_corr_trend():
                 r = float(corr.loc[mx[0], mx[1]])
                 score = min(abs(r), 1.0)
                 if SS.get('auto_log_signals', True):
-                    _log_signal('corr', f'High correlation — {mx[0]}~{mx[1]}', score=score, weight=0.8, meta={'x': str(mx[0]), 'y': str(mx[1]), 'r': r, 'kind': 'pair'})
+                    _log_signal('corr', f'Correlation — {mx[0]}~{mx[1]}', score=score, weight=0.8, meta={'x': str(mx[0]), 'y': str(mx[1]), 'r': r, 'kind': 'pair'})
             except Exception:
                 pass
     with c2:
@@ -852,7 +916,7 @@ def tab2_corr_trend():
                 out = mann_kendall_trend(sX, sY)
                 if HAS_PLOTLY:
                     fig = px.line(pd.DataFrame({'x':pd.to_datetime(sX, errors='coerce'), 'y':sY}).dropna(), x='x', y='y', title='Trend over time'); st_plotly(fig)
-                st.caption(f"Mann–Kendall (proxy Kendall τ): τ={out.get('tau', np.nan):.3f}, p={out.get('p', np.nan):.4f}")
+                st.caption(f"Mann–Kendall: τ={out.get('tau', np.nan):.3f}, p={out.get('p', np.nan):.4f}")
                 if SS.get('auto_log_signals', True) and out.get('p')==out.get('p'):
                     score = (1 - min(1, (out['p']/0.05))) * min(abs(out.get('tau') or 0), 1.0)
                     _log_signal('corr', f'Trend — {y} vs time', score=score, weight=1.0, meta={'col': y, 'tau': out.get('tau'), 'p': out.get('p'), 'kind': 'trend'})
@@ -860,7 +924,6 @@ def tab2_corr_trend():
                 if HAS_PLOTLY:
                     fig = px.scatter(df, x=x, y=y, trendline='ols', title='Scatter with OLS trendline')
                     st_plotly(fig)
-                # Log Pearson r
                 try:
                     r = float(df[[x,y]].corr(method='pearson').iloc[0,1])
                     if SS.get('auto_log_signals', True) and r==r:
@@ -875,7 +938,36 @@ def tab2_corr_trend():
                 if SS.get('auto_log_signals', True) and e2==e2:
                     _log_signal('corr', f'Cat→Num effect — {x}→{y}', score=min(e2,1.0), weight=0.7, meta={'x': x, 'y': y, 'eta2': e2, 'kind':'cat_num'})
 
-# ------------------------------ TAB3 — Benford (kept from previous patched version) ------------------------------
+    # Categorical↔Categorical — Cramér’s V
+    with st.expander('Categorical ↔ Categorical — Cramér’s V', expanded=False):
+        cats_sel = st.multiselect('Chọn cột Categorical (≥2)', CAT_COLS, default=CAT_COLS[:min(5, len(CAT_COLS))], key=_k('2','cats'))
+        if len(cats_sel) >= 2:
+            # Build matrix
+            mat = pd.DataFrame(index=cats_sel, columns=cats_sel, dtype=float)
+            for i,a in enumerate(cats_sel):
+                for j,b in enumerate(cats_sel):
+                    if j < i:
+                        mat.loc[a,b] = mat.loc[b,a]
+                        continue
+                    if a == b:
+                        mat.loc[a,b] = 1.0
+                    else:
+                        mat.loc[a,b] = cramers_v(df[a].astype('object'), df[b].astype('object'))
+            if HAS_PLOTLY:
+                fig = px.imshow(mat.astype(float), text_auto=".2f", title="Cramér’s V (cat–cat)"); st_plotly(fig)
+            st.caption('Cramér’s V đo mức liên hệ giữa hai biến danh mục.')
+            # Log strongest off-diagonal
+            try:
+                triu = mat.where(~np.tril(np.ones(mat.shape, dtype=bool)))
+                stack = triu.stack().dropna().replace(1.0, np.nan).dropna()
+                if not stack.empty:
+                    (a,b), vmax = stack.abs().sort_values(ascending=False).index[0], float(stack.abs().sort_values(ascending=False).iloc[0])
+                    if SS.get('auto_log_signals', True):
+                        _log_signal('corr', f'Cat–Cat — {a}~{b}', score=min(vmax, 1.0), weight=0.8, meta={'x': a, 'y': b, 'V': vmax, 'kind':'cat_cat'})
+            except Exception:
+                pass
+
+# ------------------------------ TAB3 — Benford (as before) ------------------------------
 def _digits_only_str(x: float) -> str:
     xs = f"{float(x):.15g}"
     return re.sub(r"[^0-9]", "", xs).lstrip('0')
@@ -951,7 +1043,7 @@ def tab3_benford():
             fig.add_trace(go.Scatter(x=tbl['digit'], y=tbl['expected_p'], mode='lines+markers', name='Expected'))
             fig.update_layout(title=f'Benford 1D — n={r1.get("n",0)}, p≈{r1.get("p",np.nan):.4f}, MAD≈{r1.get("MAD",np.nan):.4f}')
             st_plotly(fig)
-            st.caption('Benford 1D: kỳ vọng chữ số đầu theo log10(1+1/d).')
+            st.caption('Benford 1D: kỳ vọng chữ số đầu.')
             if SS.get('auto_log_signals', True):
                 _log_signal('benford', f'Benford 1D — {col}', score=_mad_to_score(r1['MAD']), weight=SS.get('weights',{}).get('category',{}).get('benford',0.25),
                             meta={'col': col, 'n': r1['n'], 'MAD': r1['MAD'], 'p': r1['p']})
@@ -963,7 +1055,7 @@ def tab3_benford():
             fig.add_trace(go.Scatter(x=tbl2['digit'], y=tbl2['expected_p'], mode='lines+markers', name='Expected'))
             fig.update_layout(title=f'Benford 2D — n={r2.get("n",0)}, p≈{r2.get("p",np.nan):.4f}, MAD≈{r2.get("MAD",np.nan):.4f}')
             st_plotly(fig)
-            st.caption('Benford 2D: kiểm tra 2 chữ số đầu (10–99).')
+            st.caption('Benford 2D: 2 chữ số đầu.')
             if SS.get('auto_log_signals', True):
                 _log_signal('benford', f'Benford 2D — {col}', score=_mad_to_score(r2['MAD']), weight=SS.get('weights',{}).get('category',{}).get('benford',0.25),
                             meta={'col': col, 'n': r2['n'], 'MAD': r2['MAD'], 'p': r2['p']})
@@ -1003,7 +1095,7 @@ def tab3_benford():
                 elif digit_mode == '2D: chọn hai chữ số' and chosen_digits:
                     subs = subs[subs[col].apply(lambda v: _first2(v) in set(chosen_digits))]
                 st_df(subs.head(int(sample_max)))
-                st.caption('Mẫu bản ghi thuộc nhóm chọn và (nếu có) điều kiện chữ số.')
+                st.caption('Mẫu bản ghi thuộc nhóm chọn & điều kiện chữ số (nếu có).')
                 if not subs.empty:
                     csv = subs.head(int(sample_max)).to_csv(index=False)
                     st.download_button('⬇️ Download CSV mẫu', data=csv, file_name='benford_drilldown_sample.csv', mime='text/csv')
@@ -1024,7 +1116,7 @@ def tab3_benford():
                 elif digit_mode == '2D: chọn hai chữ số' and chosen_digits:
                     subs = subs[subs[col].apply(lambda v: _first2(v) in set(chosen_digits))]
                 st_df(subs.head(int(sample_max)))
-                st.caption('Mẫu bản ghi theo nhóm danh mục và (nếu có) điều kiện chữ số.')
+                st.caption('Mẫu bản ghi theo nhóm danh mục & điều kiện chữ số (nếu có).')
                 if not subs.empty:
                     csv = subs.head(int(sample_max)).to_csv(index=False)
                     st.download_button('⬇️ Download CSV mẫu', data=csv, file_name='benford_drilldown_sample.csv', mime='text/csv')
@@ -1164,7 +1256,7 @@ def tab6_flags():
         thr_round = st.number_input('Tỉ lệ số tròn tối đa (%.0f, %.00)', 0.0, 1.0, SS.get('thr_round', 0.6), 0.05, key=_k('6','round'))
         tail_p = st.slider('Ngưỡng tail P99 (so sánh với median)', 1.0, 20.0, SS.get('tailP99', 5.0), 0.5, key=_k('6','tail'))
         near_eps = st.slider('Vùng cận ngưỡng (±%)', 0.1, 5.0, SS.get('near_eps_pct', 1.0), 0.1, key=_k('6','eps'))
-        dup_min = st.number_input('Min. group size để xem trùng tổ hợp', 2, 100, SS.get('dup_min', 3), 1, key=_k('6','dup'))
+        dup_min = st.number_input('Min. group size để xem trùng tổ hợp', 2, 100, SS.get('dup_min', 3), 1, key=__k('6','dup'))
         SS.update({'thr_zero':thr_zero, 'thr_round':thr_round, 'tailP99':tail_p, 'near_eps_pct':near_eps, 'dup_min':dup_min})
     rows = []
 
