@@ -1804,6 +1804,50 @@ with TAB0:
 
 
 
+
+        # --- Data Type & Pivot (group-by) ---
+        st.markdown('---')
+        st.subheader('🧩 Data type & Pivot (“group by”)')
+        try:
+            import pandas as pd, numpy as np, plotly.express as px
+            # Auto-detect types with override
+            num_cols = [c for c in _df.columns if pd.api.types.is_numeric_dtype(_df[c])]
+            dt_cols  = [c for c in _df.columns if str(getattr(_df[c], 'dtype', '')).startswith('datetime')]
+            cat_cols = [c for c in _df.columns if (c not in num_cols + dt_cols)]
+            c1, c2, c3 = st.columns([2,2,1])
+            with c1:
+                group_by = st.multiselect('Group by (categorical/datetime)', options=dt_cols + cat_cols, key='ov_gb')
+            with c2:
+                metric_col = st.selectbox('Value (numeric)', options=(num_cols or ['(no numeric)']), key='ov_val')
+            with c3:
+                aggfunc = st.selectbox('Aggregation', options=['sum','mean','count','nunique','median'], index=0, key='ov_agg')
+            if isinstance(metric_col, str) and metric_col in _df.columns:
+                dfp = _df.copy()
+                if group_by:
+                    if aggfunc in ['sum','mean','median']:
+                        pv = dfp.groupby(group_by, dropna=False)[metric_col].agg(aggfunc).reset_index()
+                    elif aggfunc in ['count']:
+                        pv = dfp.groupby(group_by, dropna=False)[metric_col].count().reset_index().rename(columns={metric_col:'count'})
+                    else: # nunique
+                        pv = dfp.groupby(group_by, dropna=False)[metric_col].nunique().reset_index().rename(columns={metric_col:'nunique'})
+                else:
+                    if aggfunc in ['sum','mean','median']:
+                        pv = pd.DataFrame({metric_col:[getattr(dfp[metric_col], aggfunc)()]})
+                    elif aggfunc=='count':
+                        pv = pd.DataFrame({'count':[int(dfp[metric_col].count())]})
+                    else:
+                        pv = pd.DataFrame({'nunique':[int(dfp[metric_col].nunique())]})
+                st.dataframe(pv, use_container_width=True, height=min(360, 60+24*min(len(pv), 12)))
+                try:
+                    if group_by:
+                        fig = px.bar(pv, x=group_by[0], y=pv.columns[-1], color=(group_by[1] if len(group_by)>1 else None),
+                                     title='Tổng hợp theo nhóm', barmode='group')
+                        st_plotly(fig)
+                except Exception:
+                    pass
+                st.caption('Chọn nhóm (group by) và cột giá trị để xem tổng hợp kiểu pivot.')
+        except Exception as _e:
+            st.warning(f'Không thể hiển thị Pivot: {_e}')
 # ---- (moved) Data Quality ----
 with TABQ:
     st.subheader('🧪 Data Quality')
@@ -1888,6 +1932,13 @@ with TAB1:
         import pandas as pd, numpy as np, plotly.express as px, plotly.graph_objects as go
         col = st.selectbox('Chọn cột', list(_df.columns))
         s = _df[col]
+    run_tab1 = st.button('▶️ Run Test (Distribution & Shape)', key='btn_run_tab1', use_container_width=True)
+    if not (run_tab1 or SS.get('_ran_tab1')):
+        st.info('Chọn cột và bấm **Run Test** để chạy thống kê & biểu đồ.')
+        SS['_ran_tab1'] = False
+        st.stop()
+    else:
+        SS['_ran_tab1'] = True
         # Numeric
         if _is_num(s):
             c1,c2 = st.columns(2)
@@ -2330,6 +2381,80 @@ with TAB3:
     require_full_data()
     st.subheader('🔢 Benford Law — 1D & 2D')
 
+    # Column selection & run controls
+    import pandas as pd, numpy as np
+    _df_bf = _df_full_safe()
+    NUMS = [c for c in _df_bf.columns if pd.api.types.is_numeric_dtype(_df_bf[c])]
+    if not NUMS:
+        st.info('Không có cột numeric để chạy Benford.')
+    else:
+        c1,c2,c3 = st.columns([2,1.2,1.2])
+        with c1:
+            bf_col = st.selectbox('Chọn cột numeric để chạy Benford', NUMS, key='bf_col')
+        with c2:
+            mode = st.radio('Chế độ', ['1D (leading digit)','2D (leading pair)'], horizontal=True, index=0, key='bf_mode')
+        with c3:
+            btn1 = st.button('▶️ Run Benford', key='btn_run_bf', use_container_width=True)
+        # Core functions
+        def _leading_digits(x: pd.Series, k: int = 1) -> pd.Series:
+            s = pd.to_numeric(x, errors='coerce').astype(float).abs()
+            s = s.replace([np.inf, -np.inf], np.nan).dropna()
+            s = s[s > 0]
+            z = s.astype(str).str.replace(r'[^0-9]', '', regex=True).str.lstrip('0')
+            return z.str[:k].str.pad(k, fillchar='0')
+        def _benford_expected_1d():
+            import numpy as _np, pandas as _pd
+            d = _np.arange(1,10)
+            p = _np.log10(1 + 1/d)
+            return _pd.Series(p, index=[str(i) for i in d], name='exp')
+        def _chi2(obs: pd.Series, exp: pd.Series):
+            import numpy as _np
+            obs = obs.reindex(exp.index).fillna(0.0)
+            E = exp * max(obs.sum(), 1.0)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                chi2 = _np.where(E>0, (obs - E)**2 / E, 0).sum()
+            df = max(len(exp)-1, 1)
+            try:
+                from scipy.stats import chi2 as _chi2
+                p = 1 - _chi2.cdf(chi2, df)
+            except Exception:
+                p = float('nan')
+            return float(chi2), float(p), int(df)
+        if btn1:
+            try:
+                k = 1 if mode.startswith('1D') else 2
+                digs = _leading_digits(_df_bf[bf_col], k=k).dropna()
+                if k==1:
+                    obs = digs.value_counts().sort_index()
+                    exp = _benford_expected_1d()
+                else:
+                    # expected for 2D: P(AB) = log10(1 + 1/(10a+b))
+                    import numpy as _np, pandas as _pd
+                    pairs = [f"{a}{b}" for a in range(1,10) for b in range(0,10)]
+                    obs = digs.value_counts().reindex(pairs).fillna(0.0)
+                    exp = _pd.Series([_np.log10(1 + 1/((10*a)+b)) for a in range(1,10) for b in range(0,10)], index=pairs, name='exp')
+                # normalize
+                total = max(float(obs.sum()), 1.0)
+                obs_pct = (obs/total).rename('obs')
+                dfb = pd.concat([obs_pct, exp], axis=1).fillna(0.0)
+                dfb['diff_pct'] = (dfb['obs'] - dfb['exp']).abs()
+                # MAD (mean absolute deviation in % points)
+                MAD = float((dfb['diff_pct']).mean())
+                chi2, p, df = _chi2(obs_pct, exp)
+                st.caption(f"n = {int(total):,} • χ²={chi2:.3f} (df={df}) • p={p:.4f} • MAD={MAD:.4f}")
+                st.dataframe(dfb.head(20), use_container_width=True)
+                if HAS_PLOTLY:
+                    import plotly.express as px
+                    fig = px.bar(dfb.reset_index().rename(columns={'index':'digit'}), x='digit', y=['obs','exp'],
+                                 barmode='group', title='Benford — Observed vs Expected')
+                    st_plotly(fig)
+                # Save signal
+                try: _sig_set('benford_mad', MAD, note=f'{bf_col}', severity = 1.0 if MAD>SS.get('risk_diff_threshold',0.05) else 0.3)
+                except Exception: pass
+            except Exception as e:
+                st.error(f'Lỗi chạy Benford: {e}')
+
+
 # ---------------- : Benford (combined 1D+2D) & Drill-down ----------------
 # ------------------------------- 
     # --- Benford by Time (Month/Quarter/Year) ---
@@ -2382,6 +2507,46 @@ with TAB3:
                             figc.update_layout(barmode='group', title=f'Benford 1D so sánh {a} vs {b}', height=360)
                             st_plotly(figc)
 # ---------------- TAB 4: Tests ----------------
+    with st.expander('🔍 Drill-down (Benford)', expanded=False):
+        try:
+            import pandas as pd
+            df = _df_full_safe()
+            amt_col = bf_col if ('bf_col' in SS or isinstance(bf_col, str)) else None
+            if not amt_col:
+                # heuristic if user hasn't chosen yet
+                for c in df.columns:
+                    if pd.api.types.is_numeric_dtype(df[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','giá','thu']):
+                        amt_col = c; break
+            date_col = None
+            for c in df.columns:
+                if str(df[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
+                    date_col = c; break
+            if date_col and not str(df[date_col].dtype).startswith('datetime'):
+                with contextlib.suppress(Exception):
+                    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            digit = st.selectbox('Chọn chữ số (leading) muốn drill‑down', list(range(1,10)), index=0, key='bf_digit2')
+            if amt_col:
+                vals = pd.to_numeric(df[amt_col], errors='coerce').abs()
+                lead = vals.astype(str).str.replace(r'[^0-9]', '', regex=True).str.lstrip('0').str[0]
+                mask = lead == str(digit)
+                sub = _safe_loc_bool(df, mask)
+                st.write(f'Số dòng có leading digit = {digit}: {len(sub):,}')
+                if date_col:
+                    rng = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_period2')
+                    if rng=='Tháng':
+                        sub['__per'] = sub[date_col].dt.to_period('M').astype(str)
+                    elif rng=='Quý':
+                        sub['__per'] = sub[date_col].dt.to_period('Q').astype(str)
+                    else:
+                        sub['__per'] = sub[date_col].dt.to_period('Y').astype(str)
+                    agg = sub.groupby('__per')[amt_col].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
+                    st.dataframe(agg, use_container_width=True)
+                st.dataframe(sub.head(500), use_container_width=True)
+            else:
+                st.info('Chưa chọn được cột Amount để drill‑down.')
+        except Exception as e:
+            st.warning(f'Drill-down lỗi: {e}')
+
 with TAB4:
 
     try:
@@ -3006,48 +3171,3 @@ with TAB7:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
 
 # End of file
-
-    # ---- Drill-down for abnormal Benford digits ----
-    with st.expander('🔍 Drill-down (Benford)', expanded=False):
-        df = _df_copy_safe(DF_FULL)
-        tmp_df = _df_base()
-        if tmp_df is None or getattr(tmp_df, 'empty', False):
-            tmp_df = _df_full_safe()
-        df = tmp_df
-        import pandas as pd
-        cols = pd.Index([str(c) for c in df.columns]).str.lower()
-        # heuristics
-        amt_col = None
-        for c in _df_full_safe().columns:
-            if pd.api.types.is_numeric_dtype(_df_full_safe()[c]) and any(k in c.lower() for k in ['amount','revenue','sales','value','gia','thu']):
-                amt_col = c; break
-        date_col = None
-        for c in _df_full_safe().columns:
-            if str(_df_full_safe()[c].dtype).startswith('datetime') or any(k in c.lower() for k in ['date','pstg','post','invoice']):
-                date_col = c; break
-        if date_col and not str(df[date_col].dtype).startswith('datetime'):
-            try: df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            except Exception: pass
-
-        digit = st.selectbox('Chọn chữ số (leading) muốn drill‑down', list(range(1,10)), index=0, key='bf_digit')
-        # Filter rows by leading digit of absolute amount
-        if amt_col:
-            vals = pd.to_numeric(df[amt_col], errors='coerce').abs()
-            lead = vals.astype(str).str.replace(r'[^0-9]', '', regex=True).str.lstrip('0').str[0]
-            mask = lead == str(digit)
-            sub = _safe_loc_bool(df, mask)
-            st.write(f'Số dòng có leading digit = {digit}: {len(sub):,}')
-            # Period filter
-            if date_col:
-                rng = st.selectbox('Giai đoạn', ['Tháng','Quý','Năm'], index=0, key='bf_period')
-                if rng=='Tháng':
-                    sub['__per'] = sub[date_col].dt.to_period('M').astype(str)
-                elif rng=='Quý':
-                    sub['__per'] = sub[date_col].dt.to_period('Q').astype(str)
-                else:
-                    sub['__per'] = sub[date_col].dt.to_period('Y').astype(str)
-                agg = sub.groupby('__per')[amt_col].agg(['count','sum','mean']).reset_index().rename(columns={'__per':'period'})
-                st.dataframe(agg, use_container_width=True)
-            st.dataframe(sub.head(500), use_container_width=True)
-        else:
-            st.info('Không tìm thấy cột số tiền phù hợp để drill‑down.')
