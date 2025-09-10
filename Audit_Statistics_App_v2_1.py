@@ -188,7 +188,7 @@ SS.setdefault('ingest_ready', False)
 
 st.sidebar.title('Workflow')
 
-with st.sidebar.expander('0) Ingest data', expanded=False):
+with st.sidebar.expander('0) Ingest data', expanded=False, key=_k('sb','ingest')):
     up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key=_k('ingest','uploader'))
     if up is not None:
         fb = up.read()
@@ -208,10 +208,10 @@ with st.sidebar.expander('0) Ingest data', expanded=False):
     with c2:
         SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True))
 
-with st.sidebar.expander('2) Risk & Advanced', expanded=False):
+with st.sidebar.expander('2) Risk & Advanced', expanded=False, key=_k('sb','risk')):
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
 
-with st.sidebar.expander('3) Cache', expanded=False):
+with st.sidebar.expander('3) Cache', expanded=False, key=_k('sb','cache')):
     if not ARROW_OK:
         st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
     SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and ARROW_OK)
@@ -251,7 +251,7 @@ def v28_validate_headers(df_in: pd.DataFrame) -> Tuple[bool,str]:
     except Exception as e:
         return False, f"Lỗi kiểm tra TEMPLATE: {e}"
 
-with st.sidebar.expander('4) Template & Validation', expanded=False):
+with st.sidebar.expander('4) Template & Validation', expanded=False, key=_k('sb','tpl')):
     st.caption('Tạo file TEMPLATE và/hoặc bật xác nhận dữ liệu đầu vào khớp Template.')
     tpl_text_default = ','.join(SS.get('v28_template_cols', _default_template_cols()))
     tpl_text = st.text_area('Header TEMPLATE (CSV, cho phép sửa)', tpl_text_default, height=60, key=_k('tpl','text'))
@@ -321,7 +321,7 @@ def cast_frame(df: pd.DataFrame, dayfirst=True) -> pd.DataFrame:
         # datetime cast heuristic
         if s.dtype==object and s.astype(str).str.contains(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}', regex=True).mean()>0.3:
             try:
-                out[c] = pd.to_datetime(s, errors='coerce', dayfirst=dayfirst, infer_datetime_format=True)
+                out[c] = pd.to_datetime(s, errors='coerce', dayfirst=dayfirst)
                 continue
             except Exception:
                 out[c] = pd.to_datetime(s, errors='coerce')
@@ -360,7 +360,7 @@ if fb:
             except Exception as e:
                 st.error(f'Lỗi đọc CSV: {e}'); SS['df_preview']=None
         if isinstance(SS.get('df_preview'), pd.DataFrame):
-            st.dataframe(SS['df_preview'], use_container_width=True, height=280)
+            st_dataframe_safe(SS['df_preview'], use_container_width=True, height=280)
             headers = list(SS['df_preview'].columns)
             selected = st.multiselect('Columns to load', headers, default=headers, key=_k('ingest','cols_csv'))
             SS['col_whitelist'] = selected if selected else headers
@@ -385,7 +385,7 @@ if fb:
         except Exception:
             sheets = []
 
-with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
+with st.expander('📁 Select sheet & header (XLSX)', expanded=False, key=_k('main','xls')):
     if fb:
         c1,c2,c3 = st.columns([2,1,1])
         idx=0 if sheets else 0
@@ -403,7 +403,7 @@ with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
                 SS['df_preview'] = prev
             except Exception as e:
                 st.error(f'Lỗi đọc XLSX: {e}'); prev=pd.DataFrame()
-            st.dataframe(prev, use_container_width=True, height=280)
+            st_dataframe_safe(prev, use_container_width=True, height=280)
             headers=list(prev.columns)
             st.caption(f'Columns: {len(headers)} • SHA12={sha}')
             col_filter = st.text_input('🔎 Filter columns', SS.get('col_filter',''), key=_k('xls','fcol'))
@@ -775,6 +775,60 @@ def derive_period(df: pd.DataFrame, dt_col: str, gran: str) -> pd.Series:
         per = t.dt.to_period('Y').astype(str)   # '2025'
     return pd.Series(per.values, index=df.index, name='period')
 
+
+# ---------------- Streamlit DataFrame Sanitizer ----------------
+def _sanitize_for_streamlit(df: pd.DataFrame) -> pd.DataFrame:
+    """Make DF Arrow/Streamlit-safe by fixing problematic object columns (bytes/mixed types)."""
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    out = df.copy()
+    for c in out.columns:
+        s = out[c]
+        if s.dtype == 'object':
+            # If any bytes present, decode to UTF-8 (fallback latin-1) else hex
+            if s.map(lambda v: isinstance(v, (bytes, bytearray))).any():
+                def _decode(v):
+                    if isinstance(v, (bytes, bytearray)):
+                        for enc in ('utf-8', 'latin-1', 'cp1252'):
+                            try: return v.decode(enc, errors='ignore')
+                            except Exception: pass
+                        return v.hex()
+                    return v
+                out[c] = s.map(_decode)
+                s = out[c]
+            # If mixed types (numbers + strings), coerce to str to avoid ArrowType errors
+            try:
+                smp = s.dropna().iloc[:1000]
+            except Exception:
+                smp = s.dropna()
+            if len(smp)>0:
+                has_num = any(isinstance(x, (int, float, np.integer, np.floating)) for x in smp)
+                has_str = any(isinstance(x, str) for x in smp)
+                has_other = any(isinstance(x, (dict, list, set, tuple)) for x in smp)
+                if has_other or (has_num and has_str):
+                    out[c] = out[c].astype(str)
+    return out
+
+def st_dataframe_safe(df: pd.DataFrame, **kwargs):
+    """Wrapper around st.dataframe with sanitization and new width API."""
+    safe = _sanitize_for_streamlit(df)
+    # Migrate use_container_width -> width
+    if 'use_container_width' in kwargs:
+        if kwargs.pop('use_container_width'):
+            kwargs['width'] = 'stretch'
+        else:
+            kwargs['width'] = 'content'
+    if 'width' not in kwargs:
+        kwargs['width'] = 'stretch'
+    try:
+        st_dataframe_safe(safe, **kwargs)
+    except Exception as e:
+        st.warning(f'Không hiển thị được bảng bằng Arrow: {e}. Thử dạng text/table.')
+        try:
+            st.write(safe.head(200))
+        except Exception:
+            st.text(safe.to_string(max_rows=50, max_cols=20))
+
 # ---------------- Reusable Plot wrapper with caption ----------------
 def plotly_show(fig, caption: str, key: Optional[str]=None):
     if not PLOTLY_OK:
@@ -824,7 +878,7 @@ def tabQ_data_quality():
             'std': std, 'skew': skew, 'kurt': kurt
         })
     qtbl = pd.DataFrame(rows)
-    st.dataframe(qtbl, use_container_width=True, height=360)
+    st_dataframe_safe(qtbl, use_container_width=True, height=360)
     st.caption('Bảng thống kê chất lượng dữ liệu: dtype, thiếu/blank/zero, unique và mô tả thống kê.')
 
     # Export CSV of table
@@ -834,7 +888,7 @@ def tabQ_data_quality():
     # By-period charts
     dt_cols = _dt_cols(df)
     if dt_cols:
-        with st.expander('📈 Thống kê theo kỳ (M/Q/Y)'):
+        with st.expander('📈 Thống kê theo kỳ (M/Q/Y)', key=_k('tabQ','per')):
             c1,c2 = st.columns([1,1])
             with c1:
                 dt_col = st.selectbox('Cột thời gian', dt_cols, index=0, key=_k('tabQ','dtcol'))
@@ -883,7 +937,7 @@ def tab0_overview():
     goal = st.radio('Mục tiêu', ['Doanh thu','KH','Số lượng','Sản phẩm'], horizontal=True, key=_k('tab0','goal'))
     dt_col = st.selectbox('Cột thời gian', [hints['date']]+[c for c in _dt_cols(df) if c!=hints['date']], index=0 if hints['date'] else 0, key=_k('tab0','dt'))
     # Filters
-    with st.expander('🔎 Bộ lọc'):
+    with st.expander('🔎 Bộ lọc', key=_k('tab0','filters')):
         dims = [c for c in [hints['region'], hints['type'], hints['product'], hints['customer'], hints['salesperson']] if c]
         dims += [c for c in _cat_cols(df) if c not in dims][:3]  # add a few more
         filters = {}
@@ -1007,7 +1061,7 @@ def tab1_distribution():
                 log_scale = st.checkbox('Log-scale', value=False, key=_k('tab1','log'))
             s = pd.to_numeric(df[col], errors='coerce').dropna()
             st.markdown('**Descriptive statistics**')
-            st.dataframe(numeric_summary(s), use_container_width=True)
+            st_dataframe_safe(numeric_summary(s), use_container_width=True)
             method, statv, p = normality_method_p(s)
             st.caption(f"Normality test: {method} • statistic={statv:.3f} • p={p:.4f} • α=0.05")
             try:
@@ -1101,7 +1155,7 @@ def tab1_distribution():
                 topn = st.slider('Top N', 5, 50, 20, key=_k('tab1','topn'))
             vc = df[ccol].astype('object').value_counts(dropna=True).head(topn).reset_index()
             vc.columns = [ccol, 'count']
-            st.dataframe(vc, use_container_width=True, height=300)
+            st_dataframe_safe(vc, use_container_width=True, height=300)
             if PLOTLY_OK and not vc.empty:
                 fig = px.bar(vc, x='count', y=ccol, orientation='h')
                 plotly_show(fig, 'Tần suất danh mục (Top N).')
@@ -1306,7 +1360,7 @@ def tab3_benford():
     res2 = benford_2d(df[val_col])
     if res1:
         st.markdown('**Benford 1D**')
-        st.dataframe(res1['table'], use_container_width=True, height=280)
+        st_dataframe_safe(res1['table'], use_container_width=True, height=280)
         st.caption(f"n={res1['n']:,} • χ²={res1['chi2']:.2f} • p={res1['p']:.4f} • MAD={res1['MAD']:.4f}")
         try:
             sig_set('benford_1d_MAD', float(res1['MAD']), severity=min(1.0, res1['MAD']/0.03), note=f'{val_col}')
@@ -1319,7 +1373,7 @@ def tab3_benford():
             plotly_show(fig, 'Benford 1D: quan sát vs kỳ vọng.')
     if res2:
         st.markdown('**Benford 2D**')
-        st.dataframe(res2['table'].head(20), use_container_width=True, height=260)
+        st_dataframe_safe(res2['table'].head(20), use_container_width=True, height=260)
         st.caption(f"n={res2['n']:,} • χ²={res2['chi2']:.2f} • p={res2['p']:.4f} • MAD={res2['MAD']:.4f}")
         try:
             sig_set('benford_2d_MAD', float(res2['MAD']), severity=min(1.0, res2['MAD']/0.02), note=f'{val_col}')
@@ -1328,7 +1382,7 @@ def tab3_benford():
             pass
     # By period
     if dt_col and dt_col!='<none>':
-        with st.expander('📆 Theo chu kỳ (M/Q/Y)'):
+        with st.expander('📆 Theo chu kỳ (M/Q/Y)', key=_k('tab3','per')):
             gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, key=_k('tab3','gran'))
             per = derive_period(df, dt_col, gran)
             rows = []
@@ -1352,7 +1406,7 @@ def tab4_hypothesis():
     st.markdown('**Quick‑nav (chọn mục tiêu):**')
     goal = st.radio('Mục tiêu test', ['Khác biệt trung bình','Khác biệt tỷ lệ','Liên hệ hai biến phân loại','Phân phối khác nhau (2 nhóm)'], horizontal=True, key=_k('tab4','goal'))
     # Checklist (no Run button)
-    with st.expander('✅ Checklist — đã kiểm tra đủ chưa?'):
+    with st.expander('✅ Checklist — đã kiểm tra đủ chưa?', key=_k('tab4','chk')):
         st.checkbox('Đã lọc đúng tập dữ liệu cần so sánh?', value=False, key='tests_chk_1')
         st.checkbox('Các nhóm độc lập và phân phối phù hợp?', value=False, key='tests_chk_2')
         st.checkbox('Đã kiểm tra ngoại lệ/outliers?', value=False, key='tests_chk_3')
@@ -1569,7 +1623,7 @@ def tab6_flags():
                 flags.append({'flag':'off_hours', 'value': offh, 'note': 'Trước 8h / sau 18h (T2‑T6)'})
             if wend>=0.2:
                 flags.append({'flag':'weekend', 'value': wend, 'note': 'T7‑CN cao'})
-    st.dataframe(pd.DataFrame(flags), use_container_width=True, height=260)
+    st_dataframe_safe(pd.DataFrame(flags), use_container_width=True, height=260)
     for f in flags:
         sig_set(f"flag_{f['flag']}", f['value'], note=f.get('note'))
 
@@ -1631,20 +1685,20 @@ def tab7_risk_export():
         st.info('Chưa có signal nào. Hãy chạy các tab trước để sinh signal.')
     else:
         df_sig = pd.DataFrame([{'key':k, 'value':v.get('value'), 'note':v.get('note',''), 'severity':v.get('severity','')} for k,v in sigs.items()])
-        st.dataframe(df_sig, use_container_width=True, height=260)
+        st_dataframe_safe(df_sig, use_container_width=True, height=260)
         st.caption('Tổng hợp tín hiệu (signals) từ các tab → hỗ trợ đánh giá rủi ro & đề xuất test tiếp theo.')
 
 # Rules & Next tests synthesis
 applied = apply_rules(SS.get('signals'))
 if applied is not None and not applied.empty:
     st.markdown('**📌 Áp dụng luật & mức độ nghiêm trọng (severity)**')
-    st.dataframe(applied, use_container_width=True, height=300)
+    st_dataframe_safe(applied, use_container_width=True, height=300)
     overall = float(np.clip(applied['score'].mean(), 0, 1)) if 'score' in applied else 0.0
     st.info(f"Overall severity score ≈ {overall:.2f} → mức: {'HIGH' if overall>=0.75 else ('MED' if overall>=0.5 else ('LOW' if overall>0 else 'NIL'))}")
     st.markdown('**🧭 Next tests — đề xuất theo ưu tiên**')
     nxt = synthesize_next_tests(applied, topk=10)
     if nxt is not None and not nxt.empty:
-        st.dataframe(nxt, use_container_width=True, height=260)
+        st_dataframe_safe(nxt, use_container_width=True, height=260)
     else:
         st.caption('Không có đề xuất bổ sung — hãy chạy thêm các tab để sinh signals.')
 
