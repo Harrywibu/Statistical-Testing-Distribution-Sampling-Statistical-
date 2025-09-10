@@ -499,7 +499,7 @@ if SS.get('file_bytes'):
                 df_cached = read_parquet_cache(SS.get('sha12',''), key) if SS.get('use_parquet_cache') else None
                 if df_cached is None:
                     df_full = read_csv_fast(fb, usecols=(SS['col_whitelist'] or None), dtype_map=dtype_map)
-        df_full = _enforce_types_on_load(df_full)
+                    df_full = _enforce_types_on_load(df_full)
                     df_full = _ensure_unique_columns(df_full)
                     if SS.get('use_parquet_cache'): write_parquet_cache(df_full, SS.get('sha12',''), key)
                 else:
