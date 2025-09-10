@@ -1715,8 +1715,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     df['sev_rank'] = df['severity'].map(SEV_ORDER).fillna(0)
     df = df.sort_values(['sev_rank','scope','name'], ascending=[False, True, True]).drop(columns=['sev_rank'])
     return df
-
-(TABQ, TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Data Quality', 'Overview', 'Distribution & Shape', 'Correlation & Trend', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
+    (TABQ, TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7) = st.tabs(['Data Quality', 'Overview', 'Distribution & Shape', 'Correlation & Trend', 'Hypothesis Tests', 'Regression', 'Flags', 'Risk & Export'])
 
 with TAB0:
     st.subheader('📈 Overview — Sales activity')
