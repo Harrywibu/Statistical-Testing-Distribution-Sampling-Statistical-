@@ -1224,7 +1224,7 @@ def tab5_regression():
             # Good fit → lower risk; use (1-R2) as "riskful signal"
             _log_signal('regression', f'Linear Regression — {target}', score=max(0.0, 1-float(r2)), weight=0.7, meta={'model':'linear','col': target, 'r2': float(r2), 'rmse': float(rmse)})
     else:
-        if set(pd.unique(y))..issubset({0,1}) or len(pd.unique(y))==2:
+        if set(pd.unique(y)).issubset({0,1}) or len(pd.unique(y))==2:
             proba = model.predict_proba(X_test)[:,1]
             auc = roc_auc_score(y_test, proba) if len(np.unique(y_test))==2 else float('nan')
             acc = accuracy_score(y_test, y_pred)
