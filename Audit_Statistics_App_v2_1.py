@@ -211,14 +211,14 @@ if up is not None:
         st.caption(f"Đã nhận file: **{up.name}** • SHA12={SS['sha12']} • gợi ý: enc={enc_auto}, delim={delim_auto}")
 
 
-c1,c2 = st.columns(2)
-    with c1:
-        if st.button('Clear file', key=_k('ingest','clear')):
-            for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist','ingest_ready']:
-                SS[k] = None if k!='uploaded_name' else ''
-            st.rerun()
-    with c2:
-        SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True))
+        c1,c2 = st.columns(2)
+        with c1:
+            if st.button('Clear file', key=_k('ingest','clear')):
+                for k in ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist','ingest_ready']:
+                    SS[k] = None if k!='uploaded_name' else ''
+                st.rerun()
+        with c2:
+            SS['preserve_results'] = st.toggle('Giữ kết quả giữa các tab', value=SS.get('preserve_results', True))
 
 with sidebar_expander('2) Risk & Advanced', expanded=False, key=_k('sb','risk')):
     SS['advanced_visuals'] = st.checkbox('Advanced visuals (Violin, Lorenz/Gini)', value=SS.get('advanced_visuals', False))
