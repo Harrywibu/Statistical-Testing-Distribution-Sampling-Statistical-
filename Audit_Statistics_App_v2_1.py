@@ -310,28 +310,66 @@ def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None, header_row: int 
                        skiprows=skiprows, dtype=dtype_map, engine='openpyxl')
     return _downcast_numeric(df)
 
+
+def _smart_numeric_coerce(s: pd.Series) -> pd.Series:
+    """Coerce strings like '1.234,56', '1,234.56', '(1,200)', '1 234,56', '1.234' into numbers robustly."""
+    if not isinstance(s, pd.Series) or s.dtype != object:
+        return pd.to_numeric(s, errors='coerce')
+    ss = s.astype(str).str.strip()
+    # remove currency and spaces
+    ss = ss.str.replace(r'[\u00A0\s]', '', regex=True)
+    ss = ss.str.replace(r'[$€£₫₩¥]', '', regex=True)
+    # parentheses for negatives
+    neg_mask = ss.str.match(r'^\(.*\)$')
+    ss = ss.str.replace(r'[\(\)]', '', regex=True)
+    # detect decimal separator
+    sample = ss.replace('', pd.NA).dropna().head(500)
+    comma_dec = sample.str.contains(r'^\d{1,3}(\.\d{3})*,\d{1,6}$').mean() > 0.2
+    dot_dec   = sample.str.contains(r'^\d{1,3}(,\d{3})*\.\d{1,6}$').mean() > 0.2
+    if comma_dec and not dot_dec:
+        ss = ss.str.replace('.', '', regex=False)
+        ss = ss.str.replace(',', '.', regex=False)
+    else:
+        ss = ss.str.replace(r',(?!\d{1,6}$)', '', regex=True)
+    out = pd.to_numeric(ss, errors='coerce')
+    out[neg_mask & out.notna()] = -out[neg_mask & out.notna()]
+    return out
+
+def _smart_datetime_coerce(s: pd.Series, dayfirst=True) -> pd.Series:
+    """Coerce strings & excel-serial-like numbers to datetime robustly."""
+    t = pd.to_datetime(s, errors='coerce', dayfirst=dayfirst)
+    if t.isna().all():
+        sn = pd.to_numeric(s, errors='coerce')
+        if sn.notna().any():
+            try:
+                base = pd.Timestamp('1899-12-30')
+                t = base + pd.to_timedelta(sn.round().astype('Int64'), unit='D')
+            except Exception:
+                pass
+    return t
+
 def cast_frame(df: pd.DataFrame, dayfirst=True) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     out = df.copy()
+    low = {c: c.lower() for c in out.columns}
     for c in out.columns:
         s = out[c]
-        if pd.api.types.is_datetime64_any_dtype(s):
+        if pd.api.types.is_datetime64_any_dtype(s) or pd.api.types.is_numeric_dtype(s):
             continue
-        # datetime cast heuristic
-        if s.dtype==object and s.astype(str).str.contains(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}', regex=True).mean()>0.3:
-            try:
-                out[c] = pd.to_datetime(s, errors='coerce', dayfirst=dayfirst)
-                continue
-            except Exception:
-                out[c] = pd.to_datetime(s, errors='coerce')
-                continue
-        # numeric cast
-        if not pd.api.types.is_numeric_dtype(s):
-            s_num = pd.to_numeric(s, errors='coerce')
-            if s_num.notna().mean()>0.6:
-                out[c] = s_num
-    return _ensure_unique_columns(out)
+        lc = low[c]
+        if any(k in lc for k in ['date','ngày','ngay','posting','invoice','created','time']):
+            out[c] = _smart_datetime_coerce(s, dayfirst=dayfirst)
+            continue
+        s_obj = s.astype(str)
+        num_like = s_obj.str.match(r'^[\(\)\-\+\s]*[\d\.,\s]+$').mean() > 0.6
+        if num_like:
+            out[c] = _smart_numeric_coerce(s)
+            continue
+        date_like = s_obj.str.contains(r'\d{1,4}[-/]\d{1,2}[-/]\d{1,4}').mean() > 0.3
+        if date_like:
+            out[c] = _smart_datetime_coerce(s, dayfirst=dayfirst)
+    return _ensure_unique_columns(_downcast_numeric(out))
 
 # ---------------- Top header ----------------
 st.title('📊 Audit Statistics — v2.8')
