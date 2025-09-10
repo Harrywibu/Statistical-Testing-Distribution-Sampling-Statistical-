@@ -168,35 +168,6 @@ def sanitize_for_arrow(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = col.astype(str)
     return df
 
-
-# --- Enforce types on load (datetime, numeric, text) ---
-def _enforce_types_on_load(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or getattr(df, 'empty', True):
-        return df
-    out = df.copy()
-    # Datetime coercion by header & content ratio
-    dt_like = []
-    for c in out.columns:
-        s = out[c]
-        if pd.api.types.is_datetime64_any_dtype(s):
-            dt_like.append(c); continue
-        name = str(c).lower()
-        if any(k in name for k in ['date','posting','invoice','doc','time']):
-            t = pd.to_datetime(s, errors='coerce')
-            if float(t.notna().mean()) >= 0.6:
-                out[c] = t; dt_like.append(c); continue
-    # Numeric coercion if mostly numeric strings
-    for c in out.columns:
-        if c in dt_like: continue
-        s = out[c]
-        if pd.api.types.is_numeric_dtype(s):
-            continue
-        s2 = s.astype('object').astype(str).str.replace(',', '', regex=False).str.replace(' ', '', regex=False)
-        num = pd.to_numeric(s2, errors='coerce')
-        if float(num.notna().mean()) >= 0.8:
-            out[c] = num
-    return _downcast_numeric(out)
-
 # ------------------------------ Disk cache (Parquet) ------------------------------
 def _parquet_cache_path(sha: str, key: str) -> str:
     return os.path.join(tempfile.gettempdir(), f"astats_v28_{sha}_{key}.parquet")
@@ -270,7 +241,7 @@ def _clear_signals(scope: Optional[str] = None):
 def _explain_signal(scope: str, name: str, meta: dict, goals: dict) -> str:
     col = meta.get('col') or meta.get('y') or ''
     business = []
-    if col:
+    if col and col in df.columns:
         if col == goals.get('revenue'): business.append('doanh thu')
         if col == goals.get('quantity'): business.append('số lượng')
         if col == goals.get('time'): business.append('thời gian giao dịch')
@@ -383,17 +354,18 @@ def list_sheets_xlsx(file_bytes: bytes) -> List[str]:
         return []
 
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
-def read_csv_fast(file_bytes: bytes, usecols=None, dtype_map=None) -> pd.DataFrame:
+def read_csv_fast(file_bytes: bytes, usecols=None) -> pd.DataFrame:
     bio = io.BytesIO(file_bytes)
     try:
-        df = pd.read_csv(bio, usecols=usecols, engine='pyarrow', dtype=dtype_map)
+        df = pd.read_csv(bio, usecols=usecols, engine='pyarrow')
     except Exception:
         bio.seek(0)
-        df = pd.read_csv(bio, usecols=usecols, low_memory=False, memory_map=True, dtype=dtype_map)
+        df = pd.read_csv(bio, usecols=usecols, low_memory=False, memory_map=True)
     return _downcast_numeric(df)
 
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None, header_row: int = 1, skip_top: int = 0, dtype_map=None) -> pd.DataFrame:
+    header_row = int(header_row or 1); skip_top = int(skip_top or 0);
     skiprows = list(range(header_row, header_row + skip_top)) if skip_top > 0 else None
     bio = io.BytesIO(file_bytes)
     df = pd.read_excel(bio, sheet_name=sheet, usecols=usecols, header=header_row - 1,
@@ -498,8 +470,7 @@ if SS.get('file_bytes'):
                 key=f"csv_{hashlib.sha1(sel_key.encode()).hexdigest()[:10]}"
                 df_cached = read_parquet_cache(SS.get('sha12',''), key) if SS.get('use_parquet_cache') else None
                 if df_cached is None:
-                    df_full = read_csv_fast(fb, usecols=(SS['col_whitelist'] or None), dtype_map=dtype_map)
-                    df_full = _enforce_types_on_load(df_full)
+                    df_full = read_csv_fast(fb, usecols=(SS['col_whitelist'] or None))
                     df_full = _ensure_unique_columns(df_full)
                     if SS.get('use_parquet_cache'): write_parquet_cache(df_full, SS.get('sha12',''), key)
                 else:
@@ -510,36 +481,27 @@ if SS.get('file_bytes'):
     else:
         with st.expander('📁 Select sheet & header (XLSX)', expanded=False):
             c1,c2,c3 = st.columns([2,1,1])
-SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=0, key=_k('xl','sheet'))
-hrow_default = int(SS.get('header_row',1) or 1)
-skip_default = int(SS.get('skip_top',0) or 0)
-SS['header_row'] = c2.number_input('Header row (1-based)', 1, 100, hrow_default, key=_k('xl','hdr'))
-SS['skip_top']   = c3.number_input('Skip N rows after header', 0, 1000, skip_default, key=_k('xl','skip'))
-raw_dtype_xl = st.text_area('dtype mapping (JSON, optional)', SS.get('dtype_choice',''), height=60, key=_k('xl','dtype'))
-SS['dtype_choice'] = raw_dtype_xl if raw_dtype_xl is not None else ''
-dtype_map = None
-val = (SS.get('dtype_choice') or '').strip()
-if val:
-    try: dtype_map = json.loads(val)
-    except Exception as e: st.warning(f'Không đọc được dtype JSON: {e}')
-try:
-    prev = read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=int(SS['header_row']), skip_top=int(SS['skip_top']), dtype_map=dtype_map).head(SS['pv_n'])
-    prev = _ensure_unique_columns(prev)
-    SS['df_preview'] = prev; SS['last_good_preview'] = prev
-except Exception as e:
-    st.error(f'Lỗi đọc XLSX: {e}'); prev = pd.DataFrame()
-    st_df(prev, height=260)
-    headers=list(prev.columns)
-    SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''), key=_k('xl','filter'))
-    filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
-    selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers, key=_k('xl','selcols'))
+            SS['xlsx_sheet'] = c1.selectbox('Sheet', sheets, index=0, key=_k('xl','sheet'))
+            SS['header_row'] = c2.number_input('Header row (1-based)', 1, 100, SS.get('header_row',1), key=_k('xl','hdr'))
+            SS['skip_top'] = c3.number_input('Skip N rows after header', 0, 1000, SS.get('skip_top',0), key=_k('xl','skip'))
+            dtype_map = None
+            try:
+                prev = read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=None, header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=dtype_map).head(SS['pv_n'])
+                prev = _ensure_unique_columns(prev)
+                SS['df_preview'] = prev; SS['last_good_preview'] = prev
+            except Exception as e:
+                st.error(f'Lỗi đọc XLSX: {e}'); prev = pd.DataFrame()
+            st_df(prev, height=260)
+            headers=list(prev.columns)
+            SS['col_filter'] = st.text_input('🔎 Filter columns', SS.get('col_filter',''), key=_k('xl','filter'))
+            filtered = [h for h in headers if SS['col_filter'].lower() in h.lower()] if SS['col_filter'] else headers
+            selected = st.multiselect('🧮 Columns to load', filtered if filtered else headers, default=filtered if filtered else headers, key=_k('xl','selcols'))
             if st.button('📥 Load full data', key=_k('xl','load')):
                 key_tuple=(SS['xlsx_sheet'], SS['header_row'], SS['skip_top'], tuple(selected) if selected else ('ALL',))
                 key=f"xlsx_{hashlib.sha1(str(key_tuple).encode()).hexdigest()[:10]}"
                 df_cached = read_parquet_cache(SS.get('sha12',''), key) if SS.get('use_parquet_cache') else None
                 if df_cached is None:
-                    df_full = read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=(selected or None), header_row=int(SS['header_row']), skip_top=int(SS['skip_top']), dtype_map=dtype_map)
-                df_full = _enforce_types_on_load(df_full)
+                    df_full = read_xlsx_fast(fb, SS['xlsx_sheet'], usecols=(selected or None), header_row=SS['header_row'], skip_top=SS['skip_top'], dtype_map=None)
                     df_full = _ensure_unique_columns(df_full)
                     if SS.get('use_parquet_cache'): write_parquet_cache(df_full, SS.get('sha12',''), key)
                 else:
@@ -590,106 +552,7 @@ def _guess_goal_columns(df: pd.DataFrame) -> Dict[str,str]:
     }
     return {k:(v[0] if v else '') for k,v in g.items()}
 
-
-# --- Sales schema guesser & risk summary ---
-def _first_match(cols, names):
-    for n in names:
-        for c in cols:
-            if str(c).strip().lower() == str(n).strip().lower():
-                return c
-    for n in names:
-        for c in cols:
-            if n.lower() in str(c).lower():
-                return c
-    return None
-
-@st.cache_data(ttl=900, show_spinner=False, max_entries=32)
-def compute_sales_flags(df: pd.DataFrame) -> dict:
-    out = {'summary': {}, 'flags': []}
-    if df is None or df.empty:
-        return out
-    cols = list(df.columns)
-    c_date   = _first_match(cols, ['Posting date','Posting Date','Document Date','Ngày hạch toán','Posting','Date','Ngày'])
-    c_prod   = _first_match(cols, ['Product','Material','Mã hàng','Item'])
-    c_cust   = _first_match(cols, ['Customer','Khách hàng','Sold-to'])
-    c_order  = _first_match(cols, ['Order','Số đơn','SO','Doc no','Document','Document No'])
-    c_qty    = _first_match(cols, ['Sales Quantity','Quantity','Số lượng'])
-    c_weight = _first_match(cols, ['Sales weight','Weight','Trọng lượng'])
-    c_uqty   = _first_match(cols, ['Unit Sales Qty','Unit Qty','Số lượng/đơn vị'])
-    c_uw     = _first_match(cols, ['Unit Sales weig','Unit weight','Kg/đv','Khối lượng/đơn vị'])
-    c_rev    = _first_match(cols, ['Net Sales revenue','Net Revenue','Doanh thu thuần','Sales Revenue','Revenue'])
-    c_disc   = _first_match(cols, ['Sales Discount','Chiết khấu','Discount'])
-
-    def as_num(s):
-        return pd.to_numeric(s, errors='coerce').replace([np.inf, -np.inf], np.nan)
-
-    weekend_share = None
-    if c_date and c_date in df:
-        t = pd.to_datetime(df[c_date], errors='coerce')
-        weekend_share = float(((t.dt.dayofweek>=5)).mean()) if t.notna().any() else None
-    disc_share = None
-    if c_disc in df and c_rev in df:
-        d = as_num(df[c_disc]); base = as_num(df[c_rev])
-        bs = base.abs().sum()
-        disc_share = float(d.sum()/bs) if bs>0 else None
-    price_cv_max = None
-    if c_rev in df and ((c_weight in df) or (c_qty in df)) and c_prod in df:
-        w = as_num(df[c_weight]) if c_weight in df else as_num(df[c_qty])
-        r = as_num(df[c_rev])
-        price = r.divide(w).replace([np.inf,-np.inf], np.nan)
-        tmp = pd.DataFrame({'prod': df[c_prod].astype('object'), 'p': price})
-        grp = tmp.dropna().groupby('prod')['p']
-        if not grp.size().empty:
-            cv = grp.std()/grp.mean().replace(0, np.nan)
-            cv = cv.replace([np.inf,-np.inf], np.nan).dropna()
-            price_cv_max = float(cv.max()) if not cv.empty else None
-    weight_mismatch = 0
-    if (c_weight in df) and (c_uqty in df) and (c_uw in df):
-        W = as_num(df[c_weight])
-        expW = as_num(df[c_uqty]) * as_num(df[c_uw])
-        tol = 0.05
-        mis = (W.notna() & expW.notna()) & ((W-expW).abs() > tol * W.abs().replace(0, np.nan))
-        weight_mismatch = int(mis.sum())
-        if weight_mismatch>0:
-            out['flags'].append({'flag': 'Weight mismatch (>5%)', 'count': int(mis.sum())})
-    dup_cnt = 0
-    if c_order in df:
-        d = df[c_order].astype('object')
-        vc = d.value_counts(); dups = vc[vc>1]
-        dup_cnt = int(dups.sum()) if not dups.empty else 0
-        if dup_cnt>0:
-            out['flags'].append({'flag': 'Duplicate by Order', 'count': dup_cnt})
-
-    out['summary'] = {
-        'weekend_share': weekend_share if weekend_share is not None else 0.0,
-        'disc_share':    disc_share if disc_share is not None else 0.0,
-        'price_cv_max':  price_cv_max if price_cv_max is not None else 0.0,
-        'weight_mismatch': weight_mismatch,
-        'dup_cnt': dup_cnt,
-    }
-    return out
-
 GOALS = _guess_goal_columns(DF_FULL)
-# Sales insights on FULL data & Rule Engine logging
-try:
-    _sales = compute_sales_flags(DF_FULL)
-    SS['sales_summary'] = _sales.get('summary', {})
-    if SS.get('auto_log_signals', True):
-        ss = SS['sales_summary']
-        wk = float(ss.get('weekend_share', 0.0))
-        _log_signal('flags', 'Sales — Weekend share', score=min(max(wk/0.5,0.0),1.0), weight=0.6, meta={'column': GOALS.get('time',''), 'raw': wk, 'cat':'time'})
-        dc = float(ss.get('disc_share', 0.0))
-        _log_signal('flags', 'Sales — Discount share', score=min(dc/0.3, 1.0), weight=0.7, meta={'column': GOALS.get('revenue',''), 'raw': dc, 'cat':'near'})
-        cv = float(ss.get('price_cv_max', 0.0))
-        _log_signal('dist', 'Sales — Price CV (max by product)', score=min(cv/1.0,1.0), weight=0.6, meta={'col': GOALS.get('revenue','')})
-        wm = float(ss.get('weight_mismatch', 0.0))
-        if wm>0:
-            _log_signal('flags', 'Sales — Weight mismatch', score=1.0, weight=1.0, meta={'column': GOALS.get('product',''), 'raw': wm, 'cat':'tail'})
-        dp = float(ss.get('dup_cnt', 0.0))
-        if dp>0:
-            _log_signal('flags', 'Sales — Duplicate orders', score=1.0, weight=1.0, meta={'column': GOALS.get('customer',''), 'raw': dp, 'cat':'dups'})
-except Exception:
-    pass
 
 # ------------------------------ TABQ — Data Quality ------------------------------
 def tabQ_data_quality():
@@ -789,7 +652,7 @@ def tab0_overview():
 
     elif goal == 'Khách hàng':
         col = guess['customer'] or (CAT_COLS[0] if CAT_COLS else None)
-        if not col: st.warning('Chưa có cột khách hàng.'); return
+        if (not col) or (col not in df.columns): st.warning('Chưa có cột khách hàng.'); return
         vc = df[col].astype('object').value_counts().head(20).reset_index().rename(columns={'index':col, col:'count'})
         if HAS_PLOTLY:
             fig = px.bar(vc, x='count', y=col, orientation='h', title='Top khách hàng theo số dòng')
@@ -799,7 +662,7 @@ def tab0_overview():
 
     elif goal == 'Sản phẩm':
         col = guess['product'] or (CAT_COLS[0] if CAT_COLS else None)
-        if not col: st.warning('Chưa có cột sản phẩm.'); return
+        if (not col) or (col not in df.columns): st.warning('Chưa có cột sản phẩm.'); return
         vc = df[col].astype('object').value_counts().head(20).reset_index().rename(columns={'index':col, col:'count'})
         if HAS_PLOTLY:
             fig = px.bar(vc, x='count', y=col, orientation='h', title='Top sản phẩm theo số dòng')
@@ -888,8 +751,8 @@ def tab1_distribution():
     tabs = st.tabs(['Numeric','Datetime','Categorical'])
     # Numeric
     with tabs[0]:
-        col = st.selectbox('Chọn cột numeric', NUM_COLS, key=_k('1','num'))
-        if col:
+        col = st.selectbox('Chọn cột numeric', NUM_COLS if NUM_COLS else ['<None>'], index=0, key=_k('1','num'))
+        if col and col in df.columns:
             s = _series_numeric(df, col)
             st.markdown('**Descriptive statistics**')
             stats_df = _summary_stats(s); st_df(stats_df, height=280)
@@ -942,8 +805,8 @@ def tab1_distribution():
 
     # Datetime
     with tabs[1]:
-        col = st.selectbox('Chọn cột thời gian', DT_COLS, key=_k('1','dt'))
-        if col:
+        col = st.selectbox('Chọn cột thời gian', DT_COLS if DT_COLS else ['<None>'], index=0, key=_k('1','dt'))
+        if col and col in df.columns:
             t = pd.to_datetime(df[col], errors='coerce')
             c1,c2 = st.columns(2)
             if HAS_PLOTLY:
@@ -956,15 +819,15 @@ def tab1_distribution():
                     fig2 = px.bar(vc2, title='Phân bố theo thứ (0=Mon)'); st_plotly(fig2)
                     st.caption('Phân bố thứ: phát hiện weekend.')
             if SS.get('auto_log_signals', True):
-                off = float(((t.dt.hour<8)|(t.dt.hour>20)).mean())
+                off = float(((t.dt.hour<8) | (t.dt.hour>20)).mean())
                 wknd = float((t.dt.dayofweek>=5).mean())
                 score = min(max(off, wknd)/0.5, 1.0)
                 _log_signal('dist', f'Datetime pattern — {col}', score=score, weight=0.5, meta={'col': col, 'off_hours': off, 'weekend': wknd})
 
     # Categorical
     with tabs[2]:
-        col = st.selectbox('Chọn cột phân loại/text', CAT_COLS, key=_k('1','cat'))
-        if col:
+        col = st.selectbox('Chọn cột phân loại/text', CAT_COLS if CAT_COLS else ['<None>'], index=0, key=_k('1','cat'))
+        if col and col in df.columns:
             s = df[col].astype('object')
             vc = s.value_counts()
             top_share = float(vc.iloc[0]/vc.sum()) if len(vc)>0 else float('nan')
@@ -1162,8 +1025,8 @@ def tab3_benford():
     st.subheader('🔢 Benford — 1D & 2D (auto-run + drill-down)')
     if not require_full_data(): return
     df = DF_FULL
-    col = st.selectbox('Chọn cột numeric để kiểm tra', NUM_COLS, key=_k('3','col'))
-    if not col:
+    col = st.selectbox('Chọn cột numeric để kiểm tra', NUM_COLS if NUM_COLS else ['<None>'], index=0, key=_k('3','col'))
+    if (not col) or (col not in df.columns):
         st.info('Chọn cột để chạy.'); return
     s = pd.to_numeric(df[col], errors='coerce')
     n_pos = int((s>0).sum())
