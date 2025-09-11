@@ -10,6 +10,13 @@ import streamlit as st
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
 
+def require_full_data(banner='Chưa có dữ liệu FULL. Hãy dùng **Load full data** trước khi chạy tab này.'):
+    df = SS.get('df')
+    import pandas as pd
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        st.info(banner); st.stop()
+    return df
+    
 def _first_match(colnames, patterns):
     cols = [c for c in colnames]
     low = {c: str(c).lower() for c in cols}
@@ -761,15 +768,14 @@ if SS['df'] is None and SS['df_preview'] is None:
     st.stop()
 
 # Source & typing
-candidates = (SS.get(k) for k in ('df', 'df_preview', 'last_good_df', 'last_good_preview'))
-df_src = next((d for d in candidates if isinstance(d, pd.DataFrame) and not d.empty), None)
-if df_src is None:
-    st.info('Chưa có dữ liệu sẵn sàng. Hãy upload hoặc load full/preview.')
-    st.stop()
-ALL_COLS = [c for c in df_src.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-DT_COLS = [c for c in ALL_COLS if is_datetime_like(c, df_src[c])]
-NUM_COLS = df_src[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
-CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+DF_FULL = require_full_data('Chưa có dữ liệu FULL. Hãy dùng **Load full data**.')
+DF_VIEW = DF_FULL  # alias để không phá code cũ
+
+ALL_COLS = list(DF_FULL.columns)
+DT_COLS  = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
+NUM_COLS = DF_FULL[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
+CAT_COLS = DF_FULL[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
+VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 # Downsample view for visuals
 DF_VIEW = df_src
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
@@ -1081,7 +1087,7 @@ with TAB0:
 with TAB1:
     st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
 
-    base_df = SS.get('df') if SS.get('df') is not None else DF_FULL
+    base_df = DF_FULL
     if base_df is None or len(base_df) == 0:
         st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi sử dụng TAB 1.')
     else:
