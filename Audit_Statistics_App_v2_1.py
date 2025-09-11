@@ -1291,7 +1291,7 @@ with TAB1:
             st.caption('Top khách hàng theo cột Y đã chọn.')
         else:
             st.info('Không có dữ liệu hợp lệ cho biểu đồ Top Customer.')
-                    _plot(figC); st.caption('Top khách hàng theo cột Y đã chọn.')
+
         
         # ============ BIỂU ĐỒ 4: DOANH THU THEO REGION (X/Y chọn) ===================
         st.markdown('#### 🗺️ Doanh thu theo Region')
