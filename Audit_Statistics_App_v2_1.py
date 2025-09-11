@@ -1219,28 +1219,28 @@ with TAB1:
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc theo thời gian.')
 
 with TAB2:
-st.subheader('📈 Profiling/Distribution')
-    navL, navR = st.columns([2,3])
-    with navL:
-        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
-        s_nav = DF_VIEW[col_nav]
-        if col_nav in NUM_COLS: dtype_nav='Numeric'
-        elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
-        else: dtype_nav='Categorical'
-        st.write(f'**Loại dữ liệu:** {dtype_nav}')
-    with navR:
-        sugg=[]
-        if dtype_nav=='Numeric':
-            sugg += ['Histogram + KDE', 'Box/ECDF/QQ', 'Outlier review (IQR)', 'Benford 1D/2D (giá trị > 0)']
-        elif dtype_nav=='Categorical':
-            sugg += ['Top‑N + Pareto', 'Chi‑square GoF vs Uniform', "Rare category flag/Group 'Others'"]
-        else:
-            sugg += ['Weekday/Hour distribution', 'Seasonality (Month/Quarter)', 'Gap/Sequence test']
-        st.write('**Gợi ý test:**')
-        for si in sugg: st.write(f'- {si}')
-    st.divider()
-
-    sub_num, sub_cat, sub_dt = st.tabs(["Numeric","Categorical","Datetime"])
+    st.subheader('📈 Profiling/Distribution')
+        navL, navR = st.columns([2,3])
+        with navL:
+            col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
+            s_nav = DF_VIEW[col_nav]
+            if col_nav in NUM_COLS: dtype_nav='Numeric'
+            elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
+            else: dtype_nav='Categorical'
+            st.write(f'**Loại dữ liệu:** {dtype_nav}')
+        with navR:
+            sugg=[]
+            if dtype_nav=='Numeric':
+                sugg += ['Histogram + KDE', 'Box/ECDF/QQ', 'Outlier review (IQR)', 'Benford 1D/2D (giá trị > 0)']
+            elif dtype_nav=='Categorical':
+                sugg += ['Top‑N + Pareto', 'Chi‑square GoF vs Uniform', "Rare category flag/Group 'Others'"]
+            else:
+                sugg += ['Weekday/Hour distribution', 'Seasonality (Month/Quarter)', 'Gap/Sequence test']
+            st.write('**Gợi ý test:**')
+            for si in sugg: st.write(f'- {si}')
+        st.divider()
+    
+        sub_num, sub_cat, sub_dt = st.tabs(["Numeric","Categorical","Datetime"])
 
     # ---------- Numeric ----------
     with sub_num:
