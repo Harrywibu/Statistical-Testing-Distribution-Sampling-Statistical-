@@ -1111,22 +1111,6 @@ with TAB1:
         if s_time_valid.empty:
             st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
 
-        # ---- Chu kỳ + khoảng thời gian (guard 1 ngày) ----
-        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
-        dmin, dmax = s_time_valid.min(), s_time_valid.max()
-        if dmin.normalize() == dmax.normalize():
-            st.slider('Khoảng thời gian', min_value=dmin.to_pydatetime(),
-                      max_value=dmax.to_pydatetime(), value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                      disabled=True, key='ov1_daterng')
-            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** → bỏ qua bộ lọc thời gian.')
-            v_from, v_to = dmin, dmax
-        else:
-            v_from, v_to = st.slider('Khoảng thời gian',
-                                     min_value=dmin.to_pydatetime(),
-                                     max_value=dmax.to_pydatetime(),
-                                     value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                                     key='ov1_daterng')
-
         # ---- Bộ lọc giá trị (layout như hình) ----
         st.markdown('### 🔍 Bộ lọc dữ liệu')
         r1c1, r1c2, r1c3 = st.columns([1.2,1,1])   # hàng 1
