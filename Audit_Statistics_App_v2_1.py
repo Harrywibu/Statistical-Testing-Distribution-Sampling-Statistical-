@@ -1059,35 +1059,35 @@ with TAB0:
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
     
-st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
-import pandas as pd, numpy as np
-import plotly.express as px
-
-# Source
-_base = SS.get('df') if SS.get('df') is not None else DF_FULL
-if _base is None or len(_base)==0:
-    st.info('Chưa có dữ liệu. Hãy Load full data trước.')
-else:
-    _df = _base.copy()  # tuyệt đối không thêm cột vào dataframe gốc
-
-    # --- Auto-detect datetime column or try by name hints (date/pstg/post/invoice) ---
-    ALL_COLS = list(_df.columns)
-    DT_COLS = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
-    def _auto_pick_dt():
-        if DT_COLS:
-            return DT_COLS[0]
-        hints = ['date','pstg','post','invoice']
-        for c in ALL_COLS:
-            lc = str(c).lower()
-            if any(h in lc for h in hints):
-                # thử parse cột này như datetime (không ghi đè df gốc)
-                try:
-                    tmp = pd.to_datetime(_df[c], errors='coerce')
-                    if tmp.notna().any():
-                        return c
-                except Exception:
-                    pass
-        return None
+    st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
+    import pandas as pd, numpy as np
+    import plotly.express as px
+    
+    # Source
+    _base = SS.get('df') if SS.get('df') is not None else DF_FULL
+    if _base is None or len(_base)==0:
+        st.info('Chưa có dữ liệu. Hãy Load full data trước.')
+    else:
+        _df = _base.copy()  # tuyệt đối không thêm cột vào dataframe gốc
+    
+        # --- Auto-detect datetime column or try by name hints (date/pstg/post/invoice) ---
+        ALL_COLS = list(_df.columns)
+        DT_COLS = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
+        def _auto_pick_dt():
+            if DT_COLS:
+                return DT_COLS[0]
+            hints = ['date','pstg','post','invoice']
+            for c in ALL_COLS:
+                lc = str(c).lower()
+                if any(h in lc for h in hints):
+                    # thử parse cột này như datetime (không ghi đè df gốc)
+                    try:
+                        tmp = pd.to_datetime(_df[c], errors='coerce')
+                        if tmp.notna().any():
+                            return c
+                    except Exception:
+                        pass
+            return None
 
     dt_col_guess = _auto_pick_dt()
     dt_col = st.selectbox('🗓️ Cột thời gian (datetime)', [dt_col_guess] + [c for c in ALL_COLS if c!=dt_col_guess] if dt_col_guess else ALL_COLS, index=0 if dt_col_guess else 0, key='ov2_dt_col')
