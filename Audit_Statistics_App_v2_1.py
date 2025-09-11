@@ -1118,7 +1118,7 @@ with TAB1:
         col_branch= _pick(CAT_COLS, ['branch','chi nhánh','outlet','store','warehouse','site'], prefer_numeric=False)
         col_type  = _pick(CAT_COLS, ['type','loại','category','transaction','trans_type','operation'], prefer_numeric=False)
         col_chan  = _pick(CAT_COLS, ['channel','kênh','distribution channel'], prefer_numeric=False)
-        dt_guess  = _pick(DT_COLS if DT_COLS else ALL_COLS, ['posting','date','time','pstg','invoice']
+        dt_guess  = _pick(DT_COLS if DT_COLS else ALL_COLS, ['posting','date','time','pstg','invoice'])
 
         # ---- Bộ lọc dữ liệu (gộp Cột thời gian + Chu kỳ + Slider) ----
         # Gợi ý cột datetime
