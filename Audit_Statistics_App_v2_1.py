@@ -1111,21 +1111,25 @@ with TAB1:
         if s_time_valid.empty:
             st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
 
-        # ---- Chu kỳ + khoảng thời gian (guard 1 ngày) ----
+        # ---- Chu kỳ + khoảng thời gian (guard 1 ngày/mốc duy nhất) ----
         gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
+        
         dmin, dmax = s_time_valid.min(), s_time_valid.max()
-        if dmin.normalize() == dmax.normalize():
-            st.slider('Khoảng thời gian', min_value=dmin.to_pydatetime(),
-                      max_value=dmax.to_pydatetime(), value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                      disabled=True, key='ov1_daterng')
-            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** → bỏ qua bộ lọc thời gian.')
-            v_from, v_to = dmin, dmax
+        # Chuẩn hoá về ngày để nhận diện "chỉ 1 ngày"
+        same_day = pd.Timestamp(dmin).normalize() == pd.Timestamp(dmax).normalize()
+        
+        if same_day or dmin == dmax:
+            # KHÔNG vẽ slider vì min==max sẽ gây lỗi
+            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** (hoặc 1 mốc thời gian) → bỏ qua bộ lọc thời gian.')
+            v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
         else:
-            v_from, v_to = st.slider('Khoảng thời gian',
-                                     min_value=dmin.to_pydatetime(),
-                                     max_value=dmax.to_pydatetime(),
-                                     value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                                     key='ov1_daterng')
+            v_from, v_to = st.slider(
+                'Khoảng thời gian',
+                min_value=dmin.to_pydatetime(),
+                max_value=dmax.to_pydatetime(),
+                value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
+                key='ov1_daterng'
+            )
 
         # ---- Bộ lọc giá trị (layout như hình) ----
         st.markdown('### 🔍 Bộ lọc dữ liệu')
