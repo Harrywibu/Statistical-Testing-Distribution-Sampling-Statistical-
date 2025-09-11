@@ -1145,25 +1145,6 @@ with TAB1:
         if not tt.empty:
             figT = px.bar(tt, x=col_type, y=col_amt, title='Revenue by Transaction type')
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
-    # --- Chart palette & selectors ---
-    import plotly.express as px
-    st.markdown('### Bộ biểu đồ tổng quan')
-    chart_type = st.radio('Loại biểu đồ cho phân tích Top/Phân tách', ['Bar (Column/Clustered)','Treemap','Pie'], horizontal=True, index=0, key='ov_chart_kind')
-
-    # Choose measure (numeric) and dimensions (categorical)
-    NUM_COLS_OV = _df.select_dtypes(include=['number']).columns.tolist()
-    CAT_COLS_OV = [c for c in _df.columns if c not in NUM_COLS_OV]
-    with st.expander('Chọn cột sử dụng cho biểu đồ'):
-        c1,c2,c3 = st.columns(3)
-        with c1:
-            measure_col = st.selectbox('Measure (doanh thu/số đo)', [col_amt] + [c for c in NUM_COLS_OV if c != col_amt] if col_amt else NUM_COLS_OV, key='ov_measure')
-            dim_product = st.selectbox('Cột Sản phẩm', [col_prod] + [c for c in CAT_COLS_OV if c != col_prod] if col_prod else CAT_COLS_OV, key='ov_dim_prod')
-        with c2:
-            dim_customer = st.selectbox('Cột Khách hàng', [col_cust] + [c for c in CAT_COLS_OV if c != col_cust] if col_cust else CAT_COLS_OV, key='ov_dim_cust')
-            dim_region   = st.selectbox('Cột Vùng/Region', [col_reg] + [c for c in CAT_COLS_OV if c != col_reg] if col_reg else CAT_COLS_OV, key='ov_dim_reg')
-        with c3:
-            dim_type     = st.selectbox('Cột Loại giao dịch', [col_type] + [c for c in CAT_COLS_OV if c != col_type] if col_type else CAT_COLS_OV, key='ov_dim_type')
-            compare_opt  = st.multiselect('So sánh chu kỳ', ['YoY','MoM','QoQ'], default=['YoY'], key='ov_cmp_opt')
 
     # --- Revenue by period (M/Q/Y) + comparison (YoY/MoM/QoQ) ---
     if dt_selected and measure_col:
@@ -1237,10 +1218,6 @@ with TAB1:
             else:
                 figT = px.pie(tt, names=dim_type, values=measure_col, title='Doanh thu theo Loại giao dịch (Pie)')
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
-    
-
-    st.markdown('---')
-    st.caption('AB0 — Overview (Sales activity): Bộ lọc chung ở trên áp dụng cho tất cả biểu đồ. Các chart đều có chú giải ngắn ngay dưới.')
 
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
