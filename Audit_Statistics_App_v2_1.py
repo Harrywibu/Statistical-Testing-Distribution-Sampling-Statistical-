@@ -1059,7 +1059,7 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
-with TAB2:
+with TAB1:
     # ===== AB0 — Overview (Sales activity) =====
     import pandas as pd, numpy as np, plotly.express as px, contextlib
     base_df = SS['df'] if SS.get('df') is not None else DF_FULL
@@ -1092,7 +1092,6 @@ with TAB2:
     col_channel = _pick(ALL_COLS, ['channel','kenh','sale_channel','distr'], prefer_numeric=False)
     col_type = _pick(ALL_COLS, ['type','loai','category','transaction','trans_type','operation'], prefer_numeric=False)
     
-with TAB1:
     with st.expander('🔎 Bộ lọc dữ liệu'):
         c1,c2,c3 = st.columns(3)
         with c1:
