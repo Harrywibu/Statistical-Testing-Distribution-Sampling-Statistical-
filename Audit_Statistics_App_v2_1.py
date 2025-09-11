@@ -997,10 +997,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
- '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
-])
-
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) Tests', '6) Regression', '7) Flags & Risk/Export'])
 # ---- TAB 0: Data Quality (FULL) ----
 with TAB0:
     st.subheader('🧪 Data Quality — FULL dataset')
@@ -1239,10 +1236,8 @@ with TAB1:
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
     
 
-    st.markdown('---')
-    st.caption('AB0 — Overview (Sales activity): Bộ lọc chung ở trên áp dụng cho tất cả biểu đồ. Các chart đều có chú giải ngắn ngay dưới.')
-
-    st.subheader('📈 Distribution & Shape')
+   with TAB2:
+    st.subheader('📈 Profiling/Distribution')
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
@@ -1493,7 +1488,7 @@ with TAB1:
                         st_plotly(figH)
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
-with TAB2:
+with TAB3:
     st.subheader('📈 Trend & 🔗 Correlation')
     trendL, trendR = st.columns(2)
     with trendL:
@@ -1566,9 +1561,9 @@ with TAB2:
                         st.write('Không có cặp đáng kể.')
 
 # ------------------------------- TAB 3: Benford -------------------------------
-for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
-    if k not in SS: SS[k]=None
-with TAB3:
+with TAB4:
+    for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
+        if k not in SS: SS[k]=None
     st.subheader('🔢 Benford Law — 1D & 2D')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
@@ -1628,8 +1623,9 @@ with TAB3:
                 elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
+
 # ------------------------------- TAB 4: Tests --------------------------------
-with TAB4:
+with TAB5:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
@@ -1734,7 +1730,7 @@ with TAB4:
         else:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
-with TAB5:
+with TAB6:
     st.subheader('📘 Regression (Linear / Logistic)')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
@@ -1897,7 +1893,7 @@ with TAB5:
         else:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
-with TAB6:
+with TAB7:
 
     # === Rule Engine v2 (FULL dataset) ===
     try:
@@ -2071,7 +2067,7 @@ with TAB6:
         else:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
-with TAB7:
+with TAB8:
 
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
