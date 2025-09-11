@@ -2149,8 +2149,7 @@ with TAB7:
         else:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
-with TAB8:
-
+with TAB7:
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
     if RE2 is not None and not RE2.empty:
