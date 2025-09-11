@@ -997,10 +997,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
- '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
-])
-
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) Tests', '6) Regression', '7) Flags & Risk/Export'])
 # ---- TAB 0: Data Quality (FULL) ----
 with TAB0:
     st.subheader('🧪 Data Quality — FULL dataset')
@@ -1058,168 +1055,268 @@ with TAB0:
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
-# --------------------------- TAB 1: Distribution ------------------------------
+# ---- TAB 1: Overview (Sales activity) ----
 with TAB1:
-    # ===== AB0 — Overview (Sales activity) =====
-    import pandas as pd, numpy as np, plotly.express as px, contextlib
-    base_df = SS['df'] if SS.get('df') is not None else DF_FULL
-    _df = base_df.copy()
-    def _pick(cols, keys, prefer_numeric=None):
-        for c in cols:
-            lc=str(c).lower()
-            if any(k in lc for k in keys):
-                if prefer_numeric is None: return c
-                ok = pd.api.types.is_numeric_dtype(_df[c])
-                if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
-                    return c
-        return cols[0] if cols else None
-    ALL_COLS = list(_df.columns)
-    NUM_COLS = _df.select_dtypes(include=[np.number]).columns.tolist()
-    DT_COLS  = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
+    st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
 
-    col_date = _pick(DT_COLS, ['date','pstg','post','invoice']) if DT_COLS else None
-    if col_date is None:
-        col_date = _pick(ALL_COLS, ['date','pstg','post','invoice'])
-        with contextlib.suppress(Exception):
-            _df[col_date] = pd.to_datetime(_df[col_date], errors='coerce')
+    base_df = SS.get('df') if SS.get('df') is not None else DF_FULL
+    if base_df is None or len(base_df) == 0:
+        st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi sử dụng TAB 1.')
+    else:
+        import pandas as pd, numpy as np
+        try:
+            import plotly.express as px
+        except Exception:
+            st.error('Plotly chưa sẵn sàng.'); st.stop()
 
-    col_amt = _pick(NUM_COLS, ['amount','revenue','sales','gross','net'], prefer_numeric=True)
-    col_qty = _pick(NUM_COLS, ['qty','quantity','so_luong','sl'], prefer_numeric=True)
-    col_cust = _pick(ALL_COLS, ['customer','cust','khach','client','buyer','account'], prefer_numeric=False)
-    col_prod = _pick(ALL_COLS, ['product','sku','item','hang'], prefer_numeric=False)
-    col_reg  = _pick(ALL_COLS, ['region','vung','area','zone','province','state'], prefer_numeric=False)
-    col_branch = _pick(ALL_COLS, ['branch','store','warehouse','location','site'], prefer_numeric=False)
-    col_channel = _pick(ALL_COLS, ['channel','kenh','sale_channel','distr'], prefer_numeric=False)
-    col_type = _pick(ALL_COLS, ['type','loai','category','transaction','trans_type','operation'], prefer_numeric=False)
+        _df = base_df.copy()
+        ALL_COLS = list(_df.columns)
 
-    with st.expander('🔎 Bộ lọc dữ liệu'):
-        c1,c2,c3 = st.columns(3)
-        with c1:
-            dt_selected = st.selectbox('Cột thời gian', [c for c in [col_date] if c] + DT_COLS, index=0 if col_date else 0, key='ov_dt')
-            gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov_gran')
-        with c2:
-            prod_sel = st.multiselect('Sản phẩm', sorted(_df[col_prod].dropna().unique()) if col_prod else [], key='ov_prod')
-            cust_sel = st.multiselect('Khách hàng', sorted(_df[col_cust].dropna().unique()) if col_cust else [], key='ov_cust')
-            type_sel = st.multiselect('Loại giao dịch', sorted(_df[col_type].dropna().unique()) if col_type else [], key='ov_type')
-        with c3:
-            reg_sel  = st.multiselect('Vùng/Region', sorted(_df[col_reg].dropna().unique()) if col_reg else [], key='ov_reg')
-            br_sel   = st.multiselect('Chi nhánh/Branch', sorted(_df[col_branch].dropna().unique()) if col_branch else [], key='ov_branch')
-            ch_sel   = st.multiselect('Kênh bán/Channel', sorted(_df[col_channel].dropna().unique()) if col_channel else [], key='ov_channel')
+        # ---- Helper: auto-pick column by name hints ----
+        def _pick(cols, keys, prefer_numeric=None):
+            for c in cols:
+                lc = str(c).lower()
+                if any(k in lc for k in keys):
+                    if prefer_numeric is None:
+                        return c
+                    ok = pd.api.types.is_numeric_dtype(_df[c])
+                    if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
+                        return c
+            return cols[0] if cols else None
 
-    dfF = _df.copy()
-    if col_prod and prod_sel: dfF = dfF[dfF[col_prod].isin(prod_sel)]
-    if col_cust and cust_sel: dfF = dfF[dfF[col_cust].isin(cust_sel)]
-    if col_type and type_sel: dfF = dfF[dfF[col_type].isin(type_sel)]
-    if col_reg and reg_sel:   dfF = dfF[dfF[col_reg].isin(reg_sel)]
-    if col_branch and br_sel: dfF = dfF[dfF[col_branch].isin(br_sel)]
-    if col_channel and ch_sel: dfF = dfF[dfF[col_channel].isin(ch_sel)]
+        # ---- Detect candidate columns ----
+        NUM_COLS = _df.select_dtypes(include=[np.number]).columns.tolist()
+        col_amt   = _pick(NUM_COLS, ['amount','revenue','sales','gross','net','doanh thu'], prefer_numeric=True)
+        col_prod  = _pick(ALL_COLS, ['product','sku','item','mã hàng','sản phẩm'], prefer_numeric=False)
+        col_cust  = _pick(ALL_COLS, ['customer','cust','khách','client','buyer','account'], prefer_numeric=False)
+        col_reg   = _pick(ALL_COLS, ['region','vùng','area','zone','province','state'], prefer_numeric=False)
+        col_branch= _pick(ALL_COLS, ['branch','chi nhánh','outlet','store','warehouse','site'], prefer_numeric=False)
+        col_type  = _pick(ALL_COLS, ['type','loại','category','transaction','trans_type','operation','nghiệp vụ'], prefer_numeric=False)
+        col_chan  = _pick(ALL_COLS, ['channel','kênh','distribution channel','distr. channel'], prefer_numeric=False)
 
-    if dt_selected and col_amt and dt_selected in dfF.columns and col_amt in dfF.columns:
-        with contextlib.suppress(Exception):
-            dfF[dt_selected] = pd.to_datetime(dfF[dt_selected], errors='coerce')
-        rev = dfF.assign(__per=dfF[dt_selected].dt.to_period(gran).astype(str)).groupby('__per')[col_amt].sum().reset_index().rename(columns={'__per':'period', col_amt:'amount'})
-        if not rev.empty:
-            fig = px.line(rev, x='period', y='amount', markers=True, title='Doanh thu theo kỳ')
-            st_plotly(fig); st.caption('Doanh thu theo ' + ('tháng' if gran=='M' else 'quý' if gran=='Q' else 'năm') + ' sau lọc.')
+        # ---- Chọn cột thời gian + guard ----
+        # Ưu tiên cột chứa "date/time" hoặc đã được map 'posting_date'
+        dt_guess = None
+        dt_hints = ['posting_date','date','time','pstg','post','invoice']
+        for h in dt_hints:
+            for c in ALL_COLS:
+                if h in str(c).lower():
+                    dt_guess = c; break
+            if dt_guess: break
+        dt_options = [dt_guess] + [c for c in ALL_COLS if c != dt_guess] if dt_guess else ALL_COLS
+        c_time = st.selectbox('🗓️ Cột thời gian (datetime)', dt_options, index=0 if dt_options else 0, key='ov1_dt_col')
 
-    if col_amt and col_prod and col_prod in dfF.columns:
-        tp = dfF.groupby(col_prod, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(20)
-        if not tp.empty:
-            figP = px.bar(tp.iloc[::-1], x=col_amt, y=col_prod, orientation='h', title='Revenue by Product')
-            st_plotly(figP); st.caption('Top sản phẩm theo doanh thu (sau lọc).')
+        s_time = pd.to_datetime(_df[c_time], errors='coerce') if c_time in _df.columns else pd.Series([], dtype='datetime64[ns]')
+        s_time_valid = s_time.dropna()
+        if s_time_valid.empty:
+            st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
 
-    if col_amt and col_cust and col_cust in dfF.columns:
-        tc = dfF.groupby(col_cust, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(20)
-        if not tc.empty:
-            figC = px.bar(tc.iloc[::-1], x=col_amt, y=col_cust, orientation='h', title='Revenue by Customer')
-            st_plotly(figC); st.caption('Top khách hàng theo doanh thu (sau lọc).')
+        # ---- Chu kỳ + khoảng thời gian (guard 1 ngày) ----
+        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
+        dmin, dmax = s_time_valid.min(), s_time_valid.max()
+        if dmin.normalize() == dmax.normalize():
+            st.slider('Khoảng thời gian', min_value=dmin.to_pydatetime(),
+                      max_value=dmax.to_pydatetime(), value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
+                      disabled=True, key='ov1_daterng')
+            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** → bỏ qua bộ lọc thời gian.')
+            v_from, v_to = dmin, dmax
+        else:
+            v_from, v_to = st.slider('Khoảng thời gian',
+                                     min_value=dmin.to_pydatetime(),
+                                     max_value=dmax.to_pydatetime(),
+                                     value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
+                                     key='ov1_daterng')
 
-    if col_amt and col_reg and col_reg in dfF.columns:
-        tr = dfF.groupby(col_reg, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False)
-        if not tr.empty:
-            figR = px.bar(tr, x=col_reg, y=col_amt, title='Revenue by Region')
-            st_plotly(figR); st.caption('Doanh thu theo vùng/khu vực (sau lọc).')
+        # ---- Bộ lọc giá trị (layout như hình) ----
+        st.markdown('### 🔍 Bộ lọc dữ liệu')
+        r1c1, r1c2, r1c3 = st.columns([1.2,1,1])   # hàng 1
+        with r1c1:
+            st.caption('Cột thời gian đã chọn ở trên')
+        with r1c2:
+            vals_prod = []
+            if col_prod and col_prod in _df.columns:
+                opts = sorted(_df[col_prod].dropna().astype(str).unique().tolist())[:5000]
+                vals_prod = st.multiselect('Sản phẩm', opts, placeholder='Choose options', key='ov1_f_prod')
+        with r1c3:
+            vals_reg = []
+            if col_reg and col_reg in _df.columns:
+                opts = sorted(_df[col_reg].dropna().astype(str).unique().tolist())[:5000]
+                vals_reg = st.multiselect('Vùng/Region', opts, placeholder='Choose options', key='ov1_f_reg')
 
-    if col_amt and col_type and col_type in dfF.columns:
-        tt = dfF.groupby(col_type, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False)
-        if not tt.empty:
-            figT = px.bar(tt, x=col_type, y=col_amt, title='Revenue by Transaction type')
-            st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
+        r2c1, r2c2, r2c3 = st.columns([1.2,1,1])   # hàng 2
+        with r2c1:
+            st.caption('Chu kỳ: ' + gran)
+        with r2c2:
+            vals_cust = []
+            if col_cust and col_cust in _df.columns:
+                opts = sorted(_df[col_cust].dropna().astype(str).unique().tolist())[:5000]
+                vals_cust = st.multiselect('Khách hàng', opts, placeholder='Choose options', key='ov1_f_cust')
+        with r2c3:
+            vals_branch = []
+            if col_branch and col_branch in _df.columns:
+                opts = sorted(_df[col_branch].dropna().astype(str).unique().tolist())[:5000]
+                vals_branch = st.multiselect('Chi nhánh/Branch', opts, placeholder='Choose options', key='ov1_f_branch')
 
-    # --- Revenue by period (M/Q/Y) + comparison (YoY/MoM/QoQ) ---
-    if dt_selected and measure_col:
-        ser = pd.to_datetime(dfF[dt_selected], errors='coerce')
-        y = pd.to_numeric(dfF[measure_col], errors='coerce')
-        dfT = pd.DataFrame({'t': ser, 'y': y}).dropna()
-        if not dfT.empty:
+        r3c1, r3c2, _ = st.columns([1,1,1])        # hàng 3
+        with r3c1:
+            vals_type = []
+            if col_type and col_type in _df.columns:
+                opts = sorted(_df[col_type].dropna().astype(str).unique().tolist())[:5000]
+                vals_type = st.multiselect('Loại giao dịch', opts, placeholder='Choose options', key='ov1_f_type')
+        with r3c2:
+            vals_chan = []
+            if col_chan and col_chan in _df.columns:
+                opts = sorted(_df[col_chan].dropna().astype(str).unique().tolist())[:5000]
+                vals_chan = st.multiselect('Kênh bán/Channel', opts, placeholder='Choose options', key='ov1_f_chan')
+
+        # ---- Áp bộ lọc thời gian + dimension ----
+        mask = (s_time >= pd.Timestamp(v_from)) & (s_time <= pd.Timestamp(v_to))
+        dfF = _df.loc[mask].copy()
+        if col_prod and vals_prod:   dfF = dfF[dfF[col_prod].astype(str).isin(vals_prod)]
+        if col_reg and vals_reg:     dfF = dfF[dfF[col_reg].astype(str).isin(vals_reg)]
+        if col_cust and vals_cust:   dfF = dfF[dfF[col_cust].astype(str).isin(vals_cust)]
+        if col_branch and vals_branch: dfF = dfF[dfF[col_branch].astype(str).isin(vals_branch)]
+        if col_type and vals_type:   dfF = dfF[dfF[col_type].astype(str).isin(vals_type)]
+        if col_chan and vals_chan:   dfF = dfF[dfF[col_chan].astype(str).isin(vals_chan)]
+
+        if dfF.empty:
+            st.warning('Không có dữ liệu sau khi áp dụng bộ lọc.'); st.stop()
+
+        if not col_amt:
+            st.warning('Không tìm thấy cột doanh thu/sales thích hợp (amount/revenue/sales/gross/net).'); st.stop()
+
+        # ======================================================================
+        # 1) Revenue theo kỳ (Line/Bar/Area) + caption YoY/MoM/QoQ
+        # ======================================================================
+        st.markdown('---')
+        st.markdown('#### 💵 Revenue theo kỳ')
+        rev_kind = st.radio('Kiểu biểu đồ', ['Line','Bar','Area'], horizontal=True, key='ov1_rev_kind')
+        rev_cmp  = st.multiselect('So sánh', ['YoY','MoM','QoQ'], default=['YoY'], key='ov1_rev_cmp')
+
+        s_dt = pd.to_datetime(dfF[c_time], errors='coerce')
+        y    = pd.to_numeric(dfF[col_amt], errors='coerce')
+        tdf  = pd.DataFrame({'t': s_dt, 'y': y}).dropna()
+        if not tdf.empty:
             freq_map = {'M':'M','Q':'Q','Y':'Y'}
-            grp = dfT.set_index('t')['y'].resample(freq_map.get(gran,'M')).sum().to_frame('value')
-            # Period-over-period comps
+            grp = tdf.set_index('t')['y'].resample(freq_map.get(gran,'M')).sum().to_frame('value')
+
             comps = {}
-            if 'YoY' in compare_opt: comps['YoY'] = grp['value'].pct_change(12).rename('YoY')
-            if 'MoM' in compare_opt and gran=='M': comps['MoM'] = grp['value'].pct_change(1).rename('MoM')
-            if 'QoQ' in compare_opt and gran in ('M','Q'): 
-                step = 3 if gran=='M' else 1
-                comps['QoQ'] = grp['value'].pct_change(step).rename('QoQ')
-            df_line = grp.join(comps.values(), how='left')
-            df_line = df_line.reset_index().rename(columns={'t':'period'})
-            figL = px.line(df_line, x='period', y='value', markers=True, title='Revenue theo kỳ')
-            st_plotly(figL); st.caption('Doanh thu theo ' + ('tháng' if gran=='M' else 'quý' if gran=='Q' else 'năm') + ' sau lọc.')
-            if comps:
-                for k in comps.keys():
-                    pct = df_line[k].iloc[-1] if not df_line[k].isna().all() else None
-                    if pct is not None:
-                        st.caption(f'• {k} thay đổi gần nhất: {pct:.2%}')
+            if 'YoY' in rev_cmp:
+                # shift theo năm: M→12, Q→4, Y→1
+                step = 12 if gran=='M' else (4 if gran=='Q' else 1)
+                comps['YoY'] = grp['value'].pct_change(step).rename('YoY')
+            if 'MoM' in rev_cmp and gran=='M':
+                comps['MoM'] = grp['value'].pct_change(1).rename('MoM')
+            if 'QoQ' in rev_cmp:
+                step = 3 if gran=='M' else (1 if gran=='Q' else None)
+                if step is not None:
+                    comps['QoQ'] = grp['value'].pct_change(step).rename('QoQ')
+
+            dline = grp.join(comps.values(), how='left').reset_index().rename(columns={'t':'period'})
+            if rev_kind == 'Line':
+                fig = px.line(dline, x='period', y='value', markers=True, title='Revenue theo kỳ')
+            elif rev_kind == 'Bar':
+                fig = px.bar(dline, x='period', y='value', title='Revenue theo kỳ')
+            else:
+                fig = px.area(dline, x='period', y='value', title='Revenue theo kỳ')
+            st_plotly(fig)
+
+            caps = []
+            for k in ['YoY','MoM','QoQ']:
+                if k in dline and not dline[k].dropna().empty:
+                    caps.append(f'{k} gần nhất: {dline[k].dropna().iloc[-1]:.2%}')
+            if caps:
+                st.caption(' • ' + ' | '.join(caps))
+
+        # ======================================================================
+        # 2) Top Product (name): Bar/Treemap/Pie
+        # ======================================================================
+        st.markdown('#### 🧱 Top Product (name)')
+        prod_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_prod_kind')
+        if col_prod and col_prod in dfF.columns:
+            topP = (dfF.groupby(col_prod, dropna=False)[col_amt]
+                    .sum().reset_index()
+                    .sort_values(col_amt, ascending=False).head(20))
+            if not topP.empty:
+                if prod_kind == 'Bar':
+                    figP = px.bar(topP.iloc[::-1], x=col_amt, y=col_prod, orientation='h',
+                                  title='Top doanh thu theo Sản phẩm')
+                elif prod_kind == 'Treemap':
+                    figP = px.treemap(topP, path=[col_prod], values=col_amt,
+                                      title='Top doanh thu theo Sản phẩm (Treemap)')
+                else:
+                    figP = px.pie(topP, names=col_prod, values=col_amt,
+                                  title='Top doanh thu theo Sản phẩm (Pie)')
+                st_plotly(figP)
+                st.caption('Top sản phẩm theo doanh thu (sau khi áp bộ lọc).')
+
+        # ======================================================================
+        # 3) Top Customer: Bar/Treemap/Pie
+        # ======================================================================
+        st.markdown('#### 👤 Top Customer')
+        cust_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_cust_kind')
+        if col_cust and col_cust in dfF.columns:
+            topC = (dfF.groupby(col_cust, dropna=False)[col_amt]
+                    .sum().reset_index()
+                    .sort_values(col_amt, ascending=False).head(20))
+            if not topC.empty:
+                if cust_kind == 'Bar':
+                    figC = px.bar(topC.iloc[::-1], x=col_amt, y=col_cust, orientation='h',
+                                  title='Top doanh thu theo Khách hàng')
+                elif cust_kind == 'Treemap':
+                    figC = px.treemap(topC, path=[col_cust], values=col_amt,
+                                      title='Top doanh thu theo Khách hàng (Treemap)')
+                else:
+                    figC = px.pie(topC, names=col_cust, values=col_amt,
+                                  title='Top doanh thu theo Khách hàng (Pie)')
+                st_plotly(figC)
+                st.caption('Top khách hàng theo doanh thu (sau khi áp bộ lọc).')
+
+        # ======================================================================
+        # 4) Doanh thu theo Region: Bar/Treemap/Pie
+        # ======================================================================
+        st.markdown('#### 🗺️ Doanh thu theo Region')
+        reg_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_reg_kind')
+        if col_reg and col_reg in dfF.columns:
+            aggR = (dfF.groupby(col_reg, dropna=False)[col_amt]
+                    .sum().reset_index()
+                    .sort_values(col_amt, ascending=False))
+            if not aggR.empty:
+                if reg_kind == 'Bar':
+                    figR = px.bar(aggR, x=col_reg, y=col_amt, title='Doanh thu theo Region')
+                elif reg_kind == 'Treemap':
+                    figR = px.treemap(aggR, path=[col_reg], values=col_amt,
+                                      title='Doanh thu theo Region (Treemap)')
+                else:
+                    figR = px.pie(aggR, names=col_reg, values=col_amt,
+                                  title='Doanh thu theo Region (Pie)')
+                st_plotly(figR)
+                st.caption('Phân bổ doanh thu theo vùng/khu vực (sau khi áp bộ lọc).')
+
+        # ======================================================================
+        # 5) Doanh thu theo Transaction type: Bar/Treemap/Pie
+        # ======================================================================
+        st.markdown('#### 🔁 Doanh thu theo Transaction type')
+        type_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_type_kind')
+        if col_type and col_type in dfF.columns:
+            aggT = (dfF.groupby(col_type, dropna=False)[col_amt]
+                    .sum().reset_index()
+                    .sort_values(col_amt, ascending=False))
+            if not aggT.empty:
+                if type_kind == 'Bar':
+                    figT = px.bar(aggT, x=col_type, y=col_amt, title='Doanh thu theo Loại giao dịch')
+                elif type_kind == 'Treemap':
+                    figT = px.treemap(aggT, path=[col_type], values=col_amt,
+                                      title='Doanh thu theo Loại giao dịch (Treemap)')
+                else:
+                    figT = px.pie(aggT, names=col_type, values=col_amt,
+                                  title='Doanh thu theo Loại giao dịch (Pie)')
+                st_plotly(figT)
+                st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau khi áp bộ lọc.')
     
-    # --- Top by Product ---
-    if measure_col and dim_product:
-        tp = dfF.groupby(dim_product, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False).head(20)
-        if not tp.empty:
-            if chart_type.startswith('Bar'):
-                figP = px.bar(tp.iloc[::-1], x=measure_col, y=dim_product, orientation='h', title='Top doanh thu theo Sản phẩm')
-            elif chart_type=='Treemap':
-                figP = px.treemap(tp, path=[dim_product], values=measure_col, title='Top doanh thu theo Sản phẩm (Treemap)')
-            else:
-                figP = px.pie(tp, names=dim_product, values=measure_col, title='Top doanh thu theo Sản phẩm (Pie)')
-            st_plotly(figP); st.caption('Top sản phẩm theo doanh thu (sau lọc).')
 
-    # --- Top by Customer ---
-    if measure_col and dim_customer:
-        tc = dfF.groupby(dim_customer, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False).head(20)
-        if not tc.empty:
-            if chart_type.startswith('Bar'):
-                figC = px.bar(tc.iloc[::-1], x=measure_col, y=dim_customer, orientation='h', title='Top doanh thu theo Khách hàng')
-            elif chart_type=='Treemap':
-                figC = px.treemap(tc, path=[dim_customer], values=measure_col, title='Top doanh thu theo Khách hàng (Treemap)')
-            else:
-                figC = px.pie(tc, names=dim_customer, values=measure_col, title='Top doanh thu theo Khách hàng (Pie)')
-            st_plotly(figC); st.caption('Top khách hàng theo doanh thu (sau lọc).')
-
-    # --- Revenue by Region ---
-    if measure_col and dim_region:
-        tr = dfF.groupby(dim_region, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False)
-        if not tr.empty:
-            if chart_type.startswith('Bar'):
-                figR = px.bar(tr, x=dim_region, y=measure_col, title='Doanh thu theo Region')
-            elif chart_type=='Treemap':
-                figR = px.treemap(tr, path=[dim_region], values=measure_col, title='Doanh thu theo Region (Treemap)')
-            else:
-                figR = px.pie(tr, names=dim_region, values=measure_col, title='Doanh thu theo Region (Pie)')
-            st_plotly(figR); st.caption('Doanh thu theo vùng/khu vực (sau lọc).')
-
-    # --- Revenue by Transaction type ---
-    if measure_col and dim_type and dim_type in dfF.columns:
-        tt = dfF.groupby(dim_type, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False)
-        if not tt.empty:
-            if chart_type.startswith('Bar'):
-                figT = px.bar(tt, x=dim_type, y=measure_col, title='Doanh thu theo Loại giao dịch')
-            elif chart_type=='Treemap':
-                figT = px.treemap(tt, path=[dim_type], values=measure_col, title='Doanh thu theo Loại giao dịch (Treemap)')
-            else:
-                figT = px.pie(tt, names=dim_type, values=measure_col, title='Doanh thu theo Loại giao dịch (Pie)')
-            st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
-
-    st.subheader('📈 Distribution & Shape')
+with TAB2:
+    st.subheader('📈 Profiling/Distribution')
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
@@ -1470,7 +1567,7 @@ with TAB1:
                         st_plotly(figH)
 
 # ------------------------ TAB 2: Trend & Correlation --------------------------
-with TAB2:
+with TAB3:
     st.subheader('📈 Trend & 🔗 Correlation')
     trendL, trendR = st.columns(2)
     with trendL:
@@ -1543,9 +1640,9 @@ with TAB2:
                         st.write('Không có cặp đáng kể.')
 
 # ------------------------------- TAB 3: Benford -------------------------------
-for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
-    if k not in SS: SS[k]=None
-with TAB3:
+with TAB4:
+    for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
+        if k not in SS: SS[k]=None
     st.subheader('🔢 Benford Law — 1D & 2D')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
@@ -1605,8 +1702,9 @@ with TAB3:
                 elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
+
 # ------------------------------- TAB 4: Tests --------------------------------
-with TAB4:
+with TAB5:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
@@ -1711,7 +1809,7 @@ with TAB4:
         else:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
-with TAB5:
+with TAB6:
     st.subheader('📘 Regression (Linear / Logistic)')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
@@ -1874,7 +1972,7 @@ with TAB5:
         else:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
-with TAB6:
+with TAB7:
 
     # === Rule Engine v2 (FULL dataset) ===
     try:
@@ -2048,7 +2146,7 @@ with TAB6:
         else:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
-with TAB7:
+with TAB8:
 
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
