@@ -776,12 +776,7 @@ DT_COLS  = [c for c in ALL_COLS if is_datetime_like(c, DF_FULL[c])]
 NUM_COLS = DF_FULL[ALL_COLS].select_dtypes(include=[np.number]).columns.tolist()
 CAT_COLS = DF_FULL[ALL_COLS].select_dtypes(include=['object','category','bool']).columns.tolist()
 VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-# Downsample view for visuals
-DF_VIEW = df_src
-VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
-DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
-DF_VIEW = DF_FULL  # force view=full once loaded
-VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
+
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
