@@ -647,17 +647,23 @@ def guess_datetime_cols(df, check=3000):
     return cols
 
 # -------------------------- Sidebar: Workflow & perf ---------------------------
-st.sidebar.title('Workflow')
-with st.sidebar.expander('0) Ingest data', expanded=True):
-    up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
-    if up is not None:
-        fb = up.read()
-        SS['file_bytes'] = fb
-        SS['uploaded_name'] = up.name
-        SS['sha12'] = file_sha12(fb)
+up = st.file_uploader('Upload file (.csv, .xlsx)', type=['csv','xlsx'], key='ingest')
+if up is not None:
+    fb = up.read()  # có thể dùng up.getvalue() cũng được
+    new_sha = file_sha12(fb)
+    same_file = (SS.get('sha12') == new_sha) and (SS.get('uploaded_name') == up.name)
+
+    # luôn cập nhật metadata/bytes để các bước sau dùng
+    SS['file_bytes'] = fb
+    SS['uploaded_name'] = up.name
+    SS['sha12'] = new_sha
+
+    # 🔒 CHỈ khi đổi file mới reset preview/full
+    if not same_file:
         SS['df'] = None
         SS['df_preview'] = None
-        st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
+
+    st.caption(f"Đã nhận file: {up.name} • SHA12={SS['sha12']}")
 
     if st.button('Clear file', key='btn_clear_file'):
         base_keys = ['file_bytes','uploaded_name','sha12','df','df_preview','col_whitelist']
