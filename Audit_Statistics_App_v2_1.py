@@ -1094,8 +1094,8 @@ with TAB1:
         col_type  = _pick(ALL_COLS, ['type','loại','category','transaction','trans_type','operation','nghiệp vụ'], prefer_numeric=False)
         col_chan  = _pick(ALL_COLS, ['channel','kênh','distribution channel','distr. channel'], prefer_numeric=False)
 
-        # ---- Chọn cột thời gian + guard ----
-        # Ưu tiên cột chứa "date/time" hoặc đã được map 'posting_date'
+        # ---- Bộ lọc dữ liệu (gộp Cột thời gian + Chu kỳ + Slider) ----
+        # Gợi ý cột datetime
         dt_guess = None
         dt_hints = ['posting_date','date','time','pstg','post','invoice']
         for h in dt_hints:
@@ -1104,111 +1104,85 @@ with TAB1:
                     dt_guess = c; break
             if dt_guess: break
         dt_options = [dt_guess] + [c for c in ALL_COLS if c != dt_guess] if dt_guess else ALL_COLS
-        c_time = st.selectbox('🗓️ Cột thời gian (datetime)', dt_options, index=0 if dt_options else 0, key='ov1_dt_col')
-
-        s_time = pd.to_datetime(_df[c_time], errors='coerce') if c_time in _df.columns else pd.Series([], dtype='datetime64[ns]')
-        s_time_valid = s_time.dropna()
-        if s_time_valid.empty:
-            st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
-
-        # ---- Chu kỳ + khoảng thời gian (guard 1 ngày/mốc duy nhất) ----
-        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
         
-        dmin, dmax = s_time_valid.min(), s_time_valid.max()
-        # Chuẩn hoá về ngày để nhận diện "chỉ 1 ngày"
-        same_day = pd.Timestamp(dmin).normalize() == pd.Timestamp(dmax).normalize()
-        
-        if same_day or dmin == dmax:
-            # KHÔNG vẽ slider vì min==max sẽ gây lỗi
-            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** (hoặc 1 mốc thời gian) → bỏ qua bộ lọc thời gian.')
-            v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
-        else:
-            v_from, v_to = st.slider(
-                'Khoảng thời gian',
-                min_value=dmin.to_pydatetime(),
-                max_value=dmax.to_pydatetime(),
-                value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                key='ov1_daterng'
-            )
-
-        # ---- Bộ lọc giá trị (layout như hình) ----
         with st.expander('🔍 Bộ lọc dữ liệu', expanded=True):
-        # Hàng A: Cột thời gian + Chu kỳ
-        a1, a2 = st.columns([1.4, 1])
-        with a1:
-            c_time = st.selectbox('🗓️ Cột thời gian (datetime)', dt_options, index=0 if dt_options else 0, key='ov1_dt_col')
-        with a2:
-            gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
-    
-        # Chuẩn hóa datetime & guard 1 ngày
-        s_time = pd.to_datetime(_df[c_time], errors='coerce') if c_time in _df.columns else pd.Series([], dtype='datetime64[ns]')
-        s_time_valid = s_time.dropna()
-        if s_time_valid.empty:
-            st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
-    
-        dmin, dmax = s_time_valid.min(), s_time_valid.max()
-        same_day = pd.Timestamp(dmin).normalize() == pd.Timestamp(dmax).normalize()
-    
-        # Hàng B: Slider khoảng thời gian (ẩn nếu chỉ 1 ngày)
-        if same_day or dmin == dmax:
-            st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** (hoặc 1 mốc thời gian) → bỏ qua bộ lọc thời gian.')
-            v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
-        else:
-            v_from, v_to = st.slider(
-                'Khoảng thời gian',
-                min_value=dmin.to_pydatetime(),
-                max_value=dmax.to_pydatetime(),
-                value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                key='ov1_daterng'
-            )
-    
-        # Hàng C, D, E: Các bộ lọc dimension như hình
-        c1, c2, c3 = st.columns([1,1,1])
-        with c1:
-            vals_prod = []
-            if col_prod and col_prod in _df.columns:
-                opts = sorted(_df[col_prod].dropna().astype(str).unique().tolist())[:5000]
-                vals_prod = st.multiselect('Sản phẩm', opts, placeholder='Choose options', key='ov1_f_prod')
-        with c2:
-            vals_reg = []
-            if col_reg and col_reg in _df.columns:
-                opts = sorted(_df[col_reg].dropna().astype(str).unique().tolist())[:5000]
-                vals_reg = st.multiselect('Vùng/Region', opts, placeholder='Choose options', key='ov1_f_reg')
-        with c3:
-            vals_cust = []
-            if col_cust and col_cust in _df.columns:
-                opts = sorted(_df[col_cust].dropna().astype(str).unique().tolist())[:5000]
-                vals_cust = st.multiselect('Khách hàng', opts, placeholder='Choose options', key='ov1_f_cust')
-    
-        d1, d2 = st.columns([1,1])
-        with d1:
-            vals_branch = []
-            if col_branch and col_branch in _df.columns:
-                opts = sorted(_df[col_branch].dropna().astype(str).unique().tolist())[:5000]
-                vals_branch = st.multiselect('Chi nhánh/Branch', opts, placeholder='Choose options', key='ov1_f_branch')
-        with d2:
-            vals_type = []
-            if col_type and col_type in _df.columns:
-                opts = sorted(_df[col_type].dropna().astype(str).unique().tolist())[:5000]
-                vals_type = st.multiselect('Loại giao dịch', opts, placeholder='Choose options', key='ov1_f_type')
-    
-        e1 = st.container()
-        with e1:
-            vals_chan = []
-            if col_chan and col_chan in _df.columns:
-                opts = sorted(_df[col_chan].dropna().astype(str).unique().tolist())[:5000]
-                vals_chan = st.multiselect('Kênh bán/Channel', opts, placeholder='Choose options', key='ov1_f_chan')
-
+            # Hàng A: Cột thời gian + Chu kỳ
+            a1, a2 = st.columns([1.4, 1])
+            with a1:
+                c_time = st.selectbox('🗓️ Cột thời gian (datetime)', dt_options, index=0 if dt_options else 0, key='ov1_dt_col')
+            with a2:
+                gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
+        
+            # Chuẩn hóa datetime & guard 1 ngày
+            s_time = pd.to_datetime(_df[c_time], errors='coerce') if c_time in _df.columns else pd.Series([], dtype='datetime64[ns]')
+            s_time_valid = s_time.dropna()
+            if s_time_valid.empty:
+                st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
+        
+            dmin, dmax = s_time_valid.min(), s_time_valid.max()
+            same_day = pd.Timestamp(dmin).normalize() == pd.Timestamp(dmax).normalize()
+        
+            # Hàng B: Slider khoảng thời gian (ẩn nếu chỉ 1 ngày)
+            if same_day or dmin == dmax:
+                st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** (hoặc 1 mốc thời gian) → bỏ qua bộ lọc thời gian.')
+                v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
+            else:
+                v_from, v_to = st.slider(
+                    'Khoảng thời gian',
+                    min_value=dmin.to_pydatetime(),
+                    max_value=dmax.to_pydatetime(),
+                    value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
+                    key='ov1_daterng'
+                )
+        
+            # Hàng C, D, E: Các bộ lọc dimension như hình
+            c1, c2, c3 = st.columns([1,1,1])
+            with c1:
+                vals_prod = []
+                if col_prod and col_prod in _df.columns:
+                    opts = sorted(_df[col_prod].dropna().astype(str).unique().tolist())[:5000]
+                    vals_prod = st.multiselect('Sản phẩm', opts, placeholder='Choose options', key='ov1_f_prod')
+            with c2:
+                vals_reg = []
+                if col_reg and col_reg in _df.columns:
+                    opts = sorted(_df[col_reg].dropna().astype(str).unique().tolist())[:5000]
+                    vals_reg = st.multiselect('Vùng/Region', opts, placeholder='Choose options', key='ov1_f_reg')
+            with c3:
+                vals_cust = []
+                if col_cust and col_cust in _df.columns:
+                    opts = sorted(_df[col_cust].dropna().astype(str).unique().tolist())[:5000]
+                    vals_cust = st.multiselect('Khách hàng', opts, placeholder='Choose options', key='ov1_f_cust')
+        
+            d1, d2 = st.columns([1,1])
+            with d1:
+                vals_branch = []
+                if col_branch and col_branch in _df.columns:
+                    opts = sorted(_df[col_branch].dropna().astype(str).unique().tolist())[:5000]
+                    vals_branch = st.multiselect('Chi nhánh/Branch', opts, placeholder='Choose options', key='ov1_f_branch')
+            with d2:
+                vals_type = []
+                if col_type and col_type in _df.columns:
+                    opts = sorted(_df[col_type].dropna().astype(str).unique().tolist())[:5000]
+                    vals_type = st.multiselect('Loại giao dịch', opts, placeholder='Choose options', key='ov1_f_type')
+        
+            e1 = st.container()
+            with e1:
+                vals_chan = []
+                if col_chan and col_chan in _df.columns:
+                    opts = sorted(_df[col_chan].dropna().astype(str).unique().tolist())[:5000]
+                    vals_chan = st.multiselect('Kênh bán/Channel', opts, placeholder='Choose options', key='ov1_f_chan')
+        
         # ---- Áp bộ lọc thời gian + dimension ----
-        mask = (s_time >= pd.Timestamp(v_from)) & (s_time <= pd.Timestamp(v_to))
+        mask = (pd.to_datetime(_df[c_time], errors='coerce') >= pd.Timestamp(v_from)) & \
+               (pd.to_datetime(_df[c_time], errors='coerce') <= pd.Timestamp(v_to))
         dfF = _df.loc[mask].copy()
-        if col_prod and vals_prod:   dfF = dfF[dfF[col_prod].astype(str).isin(vals_prod)]
-        if col_reg and vals_reg:     dfF = dfF[dfF[col_reg].astype(str).isin(vals_reg)]
-        if col_cust and vals_cust:   dfF = dfF[dfF[col_cust].astype(str).isin(vals_cust)]
+        if col_prod and vals_prod:     dfF = dfF[dfF[col_prod].astype(str).isin(vals_prod)]
+        if col_reg and vals_reg:       dfF = dfF[dfF[col_reg].astype(str).isin(vals_reg)]
+        if col_cust and vals_cust:     dfF = dfF[dfF[col_cust].astype(str).isin(vals_cust)]
         if col_branch and vals_branch: dfF = dfF[dfF[col_branch].astype(str).isin(vals_branch)]
-        if col_type and vals_type:   dfF = dfF[dfF[col_type].astype(str).isin(vals_type)]
-        if col_chan and vals_chan:   dfF = dfF[dfF[col_chan].astype(str).isin(vals_chan)]
-
+        if col_type and vals_type:     dfF = dfF[dfF[col_type].astype(str).isin(vals_type)]
+        if col_chan and vals_chan:     dfF = dfF[dfF[col_chan].astype(str).isin(vals_chan)]
+        
         if dfF.empty:
             st.warning('Không có dữ liệu sau khi áp dụng bộ lọc.'); st.stop()
 
