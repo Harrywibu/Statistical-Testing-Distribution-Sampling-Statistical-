@@ -1546,7 +1546,7 @@ with TAB3:
 # ------------------------------- TAB 3: Benford -------------------------------
 for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
     if k not in SS: SS[k]=None
-with TAB3:
+with TAB4:
     st.subheader('🔢 Benford Law — 1D & 2D')
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
@@ -1607,7 +1607,7 @@ with TAB3:
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
 # ------------------------------- TAB 4: Tests --------------------------------
-with TAB4:
+with TAB5:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
 
@@ -1712,7 +1712,7 @@ with TAB4:
         else:
             st.info('Không có rule nào khớp.')
 # ------------------------------ TAB 5: Regression -----------------------------
-with TAB5:
+with TAB6:
     st.subheader('📘 Regression (Linear / Logistic)')
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
@@ -1875,7 +1875,7 @@ with TAB5:
         else:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
-with TAB6:
+with TAB7:
 
     # === Rule Engine v2 (FULL dataset) ===
     try:
@@ -2049,7 +2049,7 @@ with TAB6:
         else:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
-with TAB7:
+with TAB8:
 
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
