@@ -1236,7 +1236,7 @@ with TAB1:
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
     
 
-   with TAB2:
+with TAB2:
     st.subheader('📈 Profiling/Distribution')
     navL, navR = st.columns([2,3])
     with navL:
