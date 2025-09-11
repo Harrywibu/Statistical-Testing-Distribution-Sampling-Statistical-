@@ -6,9 +6,263 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from inspect import signature
 
-# ---- Arrow sanitization ----
+# ===== Schema Mapping & Rule Engine v2 =====
+import re as _re
+
+def _first_match(colnames, patterns):
+    cols = [c for c in colnames]
+    low = {c: str(c).lower() for c in cols}
+    for p in patterns:
+        p = p.lower()
+        for c in cols:
+            if p in low[c]:
+                return c
+    return None
+
+
+def apply_schema_mapping(df):
+    import pandas as pd, numpy as np
+    if df is None or not hasattr(df, 'columns'):
+        return df, {}
+
+    df = df.copy()
+    cols = list(df.columns)
+    std = {}
+
+    def _first_match(colnames, patterns):
+        low = {c: str(c).lower() for c in colnames}
+        for p in patterns:
+            p = p.lower()
+            for c in colnames:
+                if p in low[c]:
+                    return c
+        return None
+
+    # Posting date → posting_date (day-first)
+    c_date = _first_match(cols, ['posting date','posting_date','pstg','post date','posting'])
+    if c_date is not None:
+        try:
+            df['posting_date'] = pd.to_datetime(df[c_date], errors='coerce', dayfirst=True)
+            std['posting_date'] = 'posting_date'
+        except Exception:
+            pass
+
+    # Customer → customer_id (leading digits) + customer_name (rest)
+    c_cust = _first_match(cols, ['customer','customer name','cust'])
+    if c_cust is not None:
+        try:
+            s = df[c_cust].astype('string')
+            df['customer_id'] = s.str.extract(r'^\s*(\d+)', expand=False)
+            df['customer_name'] = s.str.replace(r'^\s*\d+\s*[-_:\s]*', '', regex=True)
+            std['customer_id'] = 'customer_id'; std['customer_name'] = 'customer_name'
+        except Exception:
+            pass
+
+    # Product + groups
+    c_prod = _first_match(cols, ['product','sku','item'])
+    if c_prod is not None:
+        try:
+            df['product'] = df[c_prod].astype('string')
+            std['product'] = 'product'
+        except Exception:
+            pass
+    for k in range(1,7):
+        ck = _first_match(cols, [f'group {k}', f'prod group {k}', f'product group {k}', f'group{k}'])
+        if ck is not None:
+            try:
+                df[f'product_group_{k}'] = df[ck].astype('string')
+                std[f'product_group_{k}'] = f'product_group_{k}'
+            except Exception:
+                pass
+
+    # Channels/departments
+    ch_map = {
+        'region': ['region','vung','area','zone','province','state'],
+        'distr_channel': ['distr. channel','distribution channel','channel','kenh'],
+        'sales_person': ['sales person','salesperson','sale person','nhan vien','seller'],
+        'business_process': ['business process','process','operation','nghiep vu'],
+        'country_region_key': ['country/region key','country','region key','country key']
+    }
+    for k, pats in ch_map.items():
+        c = _first_match(cols, pats)
+        if c is not None:
+            try:
+                df[k] = df[c]
+                std[k] = k
+            except Exception:
+                pass
+
+    # Measures (coerce numeric where possible) — NO derived columns
+    def copy_first(cands, newname):
+        for cand in cands:
+            c = _first_match(cols, [cand])
+            if c is None:
+                continue
+            try:
+                series = pd.to_numeric(df[c], errors='coerce')
+            except Exception:
+                series = df[c]
+            df[newname] = series
+            std[newname] = newname
+            return True
+        return False
+
+    copy_first(['sales quantity','unit sales qty','qty','quantity','sales qty'], 'qty')
+    copy_first(['sales weight','unit sales weig','weight','kg'], 'weight_kg')
+    copy_first(['sales revenue','gross sales','gross_sales_vnd'], 'gross_sales_vnd')
+    copy_first(['service revenue','service_revenue_vnd'], 'service_revenue_vnd')
+    copy_first(['sales return','returns','returns_vnd'], 'returns_vnd')
+    copy_first(['sales discount','discount','discount_vnd'], 'discount_vnd')
+    copy_first(['net sales revenue','net sales','net_sales_vnd'], 'net_sales_vnd')
+
+    return df, std
+
+
+def run_rule_engine_v2(df, cfg=None):
+    import pandas as pd, numpy as np
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    cfg = cfg or {}
+    tol = cfg.get('pnl_tol_vnd', 1.0)
+    ret_thr = cfg.get('return_rate_thr', 0.2)
+    iqr_k = cfg.get('iqr_k', 1.5)
+
+    rules = []
+
+    ns = df.get('net_sales_vnd')
+    qty = df.get('qty'); wkg = df.get('weight_kg')
+    prod = df.get('product')
+    post = df.get('posting_date')
+    gro  = df.get('gross_sales_vnd'); ret = df.get('returns_vnd'); disc = df.get('discount_vnd')
+    bp   = df.get('business_process') if df.get('business_process') is not None else df.get('operation')
+    typ  = df.get('distr_channel') if df.get('distr_channel') is not None else df.get('type')
+
+    # derived (local only) — DO NOT add to df
+    nd = None
+    try:
+        if ns is not None and (gro is not None or ret is not None or disc is not None):
+            base = (gro.fillna(0) if gro is not None else 0) - (ret.fillna(0) if ret is not None else 0) - (disc.fillna(0) if disc is not None else 0)
+            nd = ns - base
+    except Exception:
+        nd = None
+
+    rr = None
+    try:
+        if ret is not None and gro is not None:
+            denom = gro.replace(0, pd.NA)
+            rr = ret / denom
+    except Exception:
+        rr = None
+
+    nperq = None
+    try:
+        if ns is not None and qty is not None:
+            nperq = ns / qty.replace(0, pd.NA)
+    except Exception:
+        nperq = None
+
+    nperw = None
+    try:
+        if ns is not None and wkg is not None:
+            nperw = ns / wkg.replace(0, pd.NA)
+    except Exception:
+        nperw = None
+
+    def add_rule(mask, rule, sev, note_series=None):
+        if mask is None: return
+        idx = df.index[mask.fillna(False)]
+        if len(idx)==0: return
+        sub = df.loc[idx, :].copy()
+        sub['_rule'] = rule
+        sub['_severity'] = sev
+        if note_series is not None:
+            try:
+                sub['_note'] = note_series.loc[idx]
+            except Exception:
+                sub['_note'] = None
+        rules.append(sub)
+
+    # 1) pnl_inconsistency
+    if nd is not None:
+        add_rule(nd.abs() > tol, 'pnl_inconsistency', 'High', nd)
+
+    # 2) negative_net_sales (exclude discount-like)
+    if ns is not None:
+        mask = ns < 0
+        if bp is not None:
+            mask = mask & (~bp.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
+        elif typ is not None:
+            mask = mask & (~typ.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
+        add_rule(mask, 'negative_net_sales', 'High', ns)
+
+    # 3) discount_without_base
+    if (qty is not None) and (wkg is not None) and ((bp is not None) or (typ is not None)):
+        label = (bp if bp is not None else typ).astype('string').str.lower()
+        mask = label.str.contains('discount', na=False) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
+        add_rule(mask, 'discount_without_base', 'Medium')
+
+    # 4) zero_measures_positive_sales
+    if (ns is not None) and (qty is not None) and (wkg is not None):
+        mask = (ns > 0) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
+        add_rule(mask, 'zero_measures_positive_sales', 'High', ns)
+
+    # 5) unit_mismatch
+    unit_col = None
+    for c in df.columns:
+        lc = str(c).lower()
+        if ('unit' in lc) and any(k in lc for k in ['qty','quantity','uom','unit qty']):
+            unit_col = c; break
+    if (unit_col is not None) and (wkg is not None):
+        u = df[unit_col].astype('string').str.upper()
+        mask = u.isin(['PC','PCS']) & (wkg.fillna(0) > 0)
+        add_rule(mask, 'unit_mismatch', 'Medium', u)
+
+    # 6) price_per_weight_outlier using nperw
+    if (prod is not None) and (nperw is not None):
+        gp = df.groupby(prod.name)
+        bounds = gp[nperw.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
+        bounds['iqr'] = bounds['q3'] - bounds['q1']
+        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
+        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
+        join = pd.DataFrame({'_v': nperw, prod.name: prod}).join(bounds, on=prod.name)
+        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
+        add_rule(mask, 'price_per_weight_outlier', 'Medium', join['_v'])
+
+    # 7) price_per_qty_outlier using nperq
+    if (prod is not None) and (nperq is not None):
+        gp = df.groupby(prod.name)
+        bounds = gp[nperq.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
+        bounds['iqr'] = bounds['q3'] - bounds['q1']
+        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
+        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
+        join = pd.DataFrame({'_v': nperq, prod.name: prod}).join(bounds, on=prod.name)
+        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
+        add_rule(mask, 'price_per_qty_outlier', 'Medium', join['_v'])
+
+    # 8) duplicate_line_same_day
+    if (df.get('customer_id') is not None or df.get('customer_name') is not None) and (prod is not None) and (post is not None) and (ns is not None):
+        key_a = 'customer_id' if df.get('customer_id') is not None else 'customer_name'
+        dup = df.duplicated(subset=[key_a, prod.name, 'posting_date', ns.name], keep=False)
+        add_rule(dup, 'duplicate_line_same_day', 'Medium')
+
+    # 9) posting_date_invalid
+    if post is not None:
+        add_rule(post.isna(), 'posting_date_invalid', 'Low')
+
+    # 10) high_return_rate
+    if rr is not None:
+        add_rule(rr > ret_thr, 'high_return_rate', 'High', rr)
+
+    if len(rules)==0:
+        return pd.DataFrame(columns=['_rule','_severity'])
+    out = pd.concat(rules, axis=0, ignore_index=False)
+    keep = ['_rule','_severity','customer_id','customer_name','product','posting_date','net_sales_vnd','qty','weight_kg','_note']
+    keep = [c for c in keep if c in out.columns]
+    out = out[keep].copy()
+    return out
+
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
         for enc in ('utf-8','latin-1','cp1252'):
@@ -112,6 +366,16 @@ except Exception:
 # --------------------------------- App Config ---------------------------------
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
+
+
+# -- Apply schema mapping once after full data is loaded --
+try:
+    if SS.get('df') is not None and not SS.get('_schema_mapped_v2', False):
+        SS['df'], SS['std_cols'] = apply_schema_mapping(SS['df'])
+        SS['_schema_mapped_v2'] = True
+except Exception as _e:
+    st.warning(f'Schema mapping warning: {str(_e)}')
+
 DEFAULTS = {
     'bins': 50,
     'log_scale': False,
@@ -488,6 +752,8 @@ CAT_COLS = df_src[ALL_COLS].select_dtypes(include=['object','category','bool']).
 DF_VIEW = df_src
 VIEW_COLS = [c for c in DF_VIEW.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 DF_FULL = SS['df'] if SS['df'] is not None else DF_VIEW
+DF_VIEW = DF_FULL  # force view=full once loaded
+VIEW_COLS = [c for c in DF_FULL.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])]
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
@@ -732,7 +998,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
 
 # ----------------------------------- TABS -------------------------------------
 TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([
- '0) Data Quality (FULL)', '1) Profiling', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
+ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Trend & Corr', '3) Benford', '4) Tests', '5) Regression', '6) Flags', '7) Risk & Export'
 ])
 
 # ---- TAB 0: Data Quality (FULL) ----
@@ -794,6 +1060,95 @@ with TAB0:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
+    # ===== AB0 — Overview (Sales activity) =====
+    import pandas as pd, numpy as np, plotly.express as px, contextlib
+    base_df = SS['df'] if SS.get('df') is not None else DF_FULL
+    _df = base_df.copy()
+    def _pick(cols, keys, prefer_numeric=None):
+        for c in cols:
+            lc=str(c).lower()
+            if any(k in lc for k in keys):
+                if prefer_numeric is None: return c
+                ok = pd.api.types.is_numeric_dtype(_df[c])
+                if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
+                    return c
+        return cols[0] if cols else None
+    ALL_COLS = list(_df.columns)
+    NUM_COLS = _df.select_dtypes(include=[np.number]).columns.tolist()
+    DT_COLS  = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
+
+    col_date = _pick(DT_COLS, ['date','pstg','post','invoice']) if DT_COLS else None
+    if col_date is None:
+        col_date = _pick(ALL_COLS, ['date','pstg','post','invoice'])
+        with contextlib.suppress(Exception):
+            _df[col_date] = pd.to_datetime(_df[col_date], errors='coerce')
+
+    col_amt = _pick(NUM_COLS, ['amount','revenue','sales','gross','net'], prefer_numeric=True)
+    col_qty = _pick(NUM_COLS, ['qty','quantity','so_luong','sl'], prefer_numeric=True)
+    col_cust = _pick(ALL_COLS, ['customer','cust','khach','client','buyer','account'], prefer_numeric=False)
+    col_prod = _pick(ALL_COLS, ['product','sku','item','hang'], prefer_numeric=False)
+    col_reg  = _pick(ALL_COLS, ['region','vung','area','zone','province','state'], prefer_numeric=False)
+    col_branch = _pick(ALL_COLS, ['branch','store','warehouse','location','site'], prefer_numeric=False)
+    col_channel = _pick(ALL_COLS, ['channel','kenh','sale_channel','distr'], prefer_numeric=False)
+    col_type = _pick(ALL_COLS, ['type','loai','category','transaction','trans_type','operation'], prefer_numeric=False)
+
+    with st.expander('🔎 Bộ lọc dữ liệu'):
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            dt_selected = st.selectbox('Cột thời gian', [c for c in [col_date] if c] + DT_COLS, index=0 if col_date else 0, key='ov_dt')
+            gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov_gran')
+        with c2:
+            prod_sel = st.multiselect('Sản phẩm', sorted(_df[col_prod].dropna().unique()) if col_prod else [], key='ov_prod')
+            cust_sel = st.multiselect('Khách hàng', sorted(_df[col_cust].dropna().unique()) if col_cust else [], key='ov_cust')
+            type_sel = st.multiselect('Loại giao dịch', sorted(_df[col_type].dropna().unique()) if col_type else [], key='ov_type')
+        with c3:
+            reg_sel  = st.multiselect('Vùng/Region', sorted(_df[col_reg].dropna().unique()) if col_reg else [], key='ov_reg')
+            br_sel   = st.multiselect('Chi nhánh/Branch', sorted(_df[col_branch].dropna().unique()) if col_branch else [], key='ov_branch')
+            ch_sel   = st.multiselect('Kênh bán/Channel', sorted(_df[col_channel].dropna().unique()) if col_channel else [], key='ov_channel')
+
+    dfF = _df.copy()
+    if col_prod and prod_sel: dfF = dfF[dfF[col_prod].isin(prod_sel)]
+    if col_cust and cust_sel: dfF = dfF[dfF[col_cust].isin(cust_sel)]
+    if col_type and type_sel: dfF = dfF[dfF[col_type].isin(type_sel)]
+    if col_reg and reg_sel:   dfF = dfF[dfF[col_reg].isin(reg_sel)]
+    if col_branch and br_sel: dfF = dfF[dfF[col_branch].isin(br_sel)]
+    if col_channel and ch_sel: dfF = dfF[dfF[col_channel].isin(ch_sel)]
+
+    if dt_selected and col_amt and dt_selected in dfF.columns and col_amt in dfF.columns:
+        with contextlib.suppress(Exception):
+            dfF[dt_selected] = pd.to_datetime(dfF[dt_selected], errors='coerce')
+        rev = dfF.assign(__per=dfF[dt_selected].dt.to_period(gran).astype(str)).groupby('__per')[col_amt].sum().reset_index().rename(columns={'__per':'period', col_amt:'amount'})
+        if not rev.empty:
+            fig = px.line(rev, x='period', y='amount', markers=True, title='Doanh thu theo kỳ')
+            st_plotly(fig); st.caption('Doanh thu theo ' + ('tháng' if gran=='M' else 'quý' if gran=='Q' else 'năm') + ' sau lọc.')
+
+    if col_amt and col_prod and col_prod in dfF.columns:
+        tp = dfF.groupby(col_prod, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(20)
+        if not tp.empty:
+            figP = px.bar(tp.iloc[::-1], x=col_amt, y=col_prod, orientation='h', title='Revenue by Product')
+            st_plotly(figP); st.caption('Top sản phẩm theo doanh thu (sau lọc).')
+
+    if col_amt and col_cust and col_cust in dfF.columns:
+        tc = dfF.groupby(col_cust, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False).head(20)
+        if not tc.empty:
+            figC = px.bar(tc.iloc[::-1], x=col_amt, y=col_cust, orientation='h', title='Revenue by Customer')
+            st_plotly(figC); st.caption('Top khách hàng theo doanh thu (sau lọc).')
+
+    if col_amt and col_reg and col_reg in dfF.columns:
+        tr = dfF.groupby(col_reg, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False)
+        if not tr.empty:
+            figR = px.bar(tr, x=col_reg, y=col_amt, title='Revenue by Region')
+            st_plotly(figR); st.caption('Doanh thu theo vùng/khu vực (sau lọc).')
+
+    if col_amt and col_type and col_type in dfF.columns:
+        tt = dfF.groupby(col_type, dropna=False)[col_amt].sum().reset_index().sort_values(col_amt, ascending=False)
+        if not tt.empty:
+            figT = px.bar(tt, x=col_type, y=col_amt, title='Revenue by Transaction type')
+            st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
+
+    st.markdown('---')
+    st.caption('AB0 — Overview (Sales activity): Bộ lọc chung ở trên áp dụng cho tất cả biểu đồ. Các chart đều có chú giải ngắn ngay dưới.')
+
     st.subheader('📈 Distribution & Shape')
     navL, navR = st.columns([2,3])
     with navL:
@@ -1125,10 +1480,9 @@ with TAB3:
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
-        run_on_full = (SS['df'] is not None) and st.checkbox('Use FULL dataset thay vì sample (khuyến nghị cho Benford)', value=True, key='bf_use_full')
-        data_for_benford = DF_FULL if (run_on_full and SS['df'] is not None) else DF_VIEW
-        if (not run_on_full) and (SS['df'] is not None):
-            st.caption('ℹ️ Đang dùng SAMPLE do bạn tắt "Use FULL". Bật lại để kết quả Benford ổn định hơn.')
+        run_on_full = True
+        data_for_benford = DF_FULL
+        # info removed
         c1,c2 = st.columns(2)
         with c1:
             amt1 = st.selectbox('Amount (1D)', NUM_COLS, key='bf1_col')
@@ -1206,7 +1560,7 @@ with TAB4:
             st.write('- DOW/Hour distribution, Seasonality (xem Tab 1)'); st.write('- Gap/Sequence test (khoảng cách thời gian)')
     with navR:
         st.markdown('**Điều khiển chạy test**')
-        use_full = st.checkbox('Dùng FULL dataset (nếu đã load) cho test thời gian/Benford', value=SS['df'] is not None, key='t4_use_full')
+        use_full = True
         run_benford = st.checkbox('Benford 1D/2D (Numeric)', value=(dtype=='Numeric'), key='t4_run_benford')
         run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
         run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
@@ -1216,13 +1570,13 @@ with TAB4:
         if 't4_results' not in SS: SS['t4_results']={}
         if go:
             out={}
-            data_src = DF_FULL if (use_full and SS['df'] is not None) else DF_VIEW
+            data_src = DF_FULL
             if run_benford and dtype=='Numeric':
                 ok,msg = _benford_ready(data_src[selected_col])
                 if not ok: st.warning(msg)
                 else:
                     out['benford']={'r1': _benford_1d(data_src[selected_col]), 'r2': _benford_2d(data_src[selected_col]), 'col': selected_col,
-                                    'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
+                                    'src': 'FULL'}
             if (run_cgof or run_hhi) and dtype=='Categorical':
                 freq = cat_freq(s0.astype(str))
                 if run_cgof and len(freq)>=2:
@@ -1237,7 +1591,7 @@ with TAB4:
                 t = pd.to_datetime(data_src[selected_col], errors='coerce').dropna().sort_values()
                 if len(t)>=3:
                     gaps = (t.diff().dropna().dt.total_seconds()/3600.0)
-                    out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL' if (use_full and SS['df'] is not None) else 'SAMPLE'}
+                    out['gap']={'gaps': pd.DataFrame({'gap_hours':gaps}), 'col': selected_col, 'src': 'FULL'}
                 else:
                     st.warning('Không đủ dữ liệu thời gian để tính khoảng cách (cần ≥3 bản ghi hợp lệ).')
             SS['t4_results']=out
@@ -1292,8 +1646,8 @@ with TAB5:
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
-        use_full_reg = st.checkbox('Dùng FULL dataset cho Regression', value=(SS['df'] is not None), key='reg_use_full')
-        REG_DF = DF_FULL if (use_full_reg and SS['df'] is not None) else DF_VIEW
+        use_full_reg = True
+        REG_DF = DF_FULL
         tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
 
         with tab_lin:
@@ -1451,9 +1805,33 @@ with TAB5:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB6:
+
+    # === Rule Engine v2 (FULL dataset) ===
+    try:
+        _df_full = SS['df'] if SS.get('df') is not None else None
+        if _df_full is not None and len(_df_full)>0:
+            cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+            RE2 = run_rule_engine_v2(_df_full, cfg)
+            SS['rule_engine_v2'] = RE2
+            st.subheader('🧠 Rule Engine v2 — Kết quả')
+            if RE2 is None or RE2.empty:
+                st.success('Không phát hiện flag theo bộ luật v2.')
+            else:
+                st.write('Tổng số dòng flag:', len(RE2))
+                by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
+                st.dataframe(by_rule, use_container_width=True, hide_index=True)
+                pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
+                view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
+                st.dataframe(view, use_container_width=True, height=280)
+                csv = view.to_csv(index=False).encode('utf-8')
+                st.download_button('⬇️ Tải CSV (Rule Engine v2)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
+        else:
+            st.info('Chưa có dữ liệu FULL (hãy Load full data).')
+    except Exception as e:
+        st.warning(f'Rule Engine v2 gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
-    use_full_flags = st.checkbox('Dùng FULL dataset cho Flags', value=(SS['df'] is not None), key='ff_use_full')
-    FLAG_DF = DF_FULL if (use_full_flags and SS['df'] is not None) else DF_VIEW
+    use_full_flags = True
+    FLAG_DF = DF_FULL
     if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
@@ -1601,6 +1979,16 @@ with TAB6:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
+
+    # ---- Risk summary from Rule Engine v2 (if available) ----
+    RE2 = SS.get('rule_engine_v2')
+    if RE2 is not None and not RE2.empty:
+        st.subheader('🧭 Risk Signals (Rule Engine v2)')
+        sev_order = {'High':3,'Medium':2,'Low':1}
+        RE2['_sev_ord'] = RE2['_severity'].map(sev_order).fillna(0)
+        score = RE2.groupby('_rule')['_sev_ord'].sum().sort_values(ascending=False).rename('score').reset_index()
+        st.dataframe(score, use_container_width=True, hide_index=True)
+        st.caption('Điểm rủi ro tổng hợp theo rule (High>Medium>Low).')
     left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
