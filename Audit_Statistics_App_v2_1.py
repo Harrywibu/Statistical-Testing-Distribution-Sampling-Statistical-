@@ -1110,7 +1110,8 @@ with TAB1:
         s_time_valid = s_time.dropna()
         if s_time_valid.empty:
             st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
-
+         # ---- Chu kỳ + khoảng thời gian (guard 1 ngày) ----
+        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
         # ---- Bộ lọc giá trị (layout như hình) ----
         st.markdown('### 🔍 Bộ lọc dữ liệu')
         r1c1, r1c2, r1c3 = st.columns([1.2,1,1])   # hàng 1
