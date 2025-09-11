@@ -1057,66 +1057,109 @@ with TAB0:
             st.error(f'Lỗi Data Quality: {e}')
 # --------------------------- TAB 1: Distribution ------------------------------
 with TAB1:
-   with TAB1:
+    
     st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
     import pandas as pd, numpy as np
     import plotly.express as px
+    import contextlib
 
-    _base = SS.get('df') if SS.get('df') is not None else DF_FULL
-    if _base is None or len(_base)==0:
-        st.info('Chưa có dữ liệu. Hãy Load full data trước.')
-    else:
-        _df = _base.copy()
-
-        ALL_COLS = list(_df.columns)
-        DT_COLS = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
-        def _auto_pick_dt():
-            if DT_COLS: return DT_COLS[0]
-            hints = ['date','pstg','post','invoice']
-            for c in ALL_COLS:
-                lc = str(c).lower()
-                if any(h in lc for h in hints):
-                    try:
-                        tmp = pd.to_datetime(_df[c], errors='coerce')
-                        if tmp.notna().any(): return c
-                    except Exception: pass
-            return None
-
-        dt_col_guess = _auto_pick_dt()
-        dt_options = ALL_COLS if dt_col_guess is None else [dt_col_guess] + [c for c in ALL_COLS if c!=dt_col_guess]
-        dt_col = st.selectbox('🗓️ Cột thời gian (datetime)', dt_options, index=0, key='ov2_dt_col')
-
-        dt_ser = pd.to_datetime(_df[dt_col], errors='coerce') if dt_col in _df.columns else pd.Series([], dtype='datetime64[ns]')
+    base_df = SS['df'] if SS.get('df') is not None else DF_FULL
+    if base_df is None or len(base_df) == 0:
+        st.info('Chưa có dữ liệu. Vui lòng nạp dữ liệu trước.')
+        st.stop()
+    
+    _df = base_df.copy()
+    
+    def _pick(cols, keys, prefer_numeric=None):
+        for c in cols:
+            lc = str(c).lower()
+            if any(k in lc for k in keys):
+                if prefer_numeric is None:
+                    return c
+                ok = pd.api.types.is_numeric_dtype(_df[c])
+                if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
+                    return c
+        return cols[0] if cols else None
+    
+    ALL_COLS = list(_df.columns)
+    NUM_COLS = _df.select_dtypes(include=[np.number]).columns.tolist()
+    DT_COLS  = [c for c in ALL_COLS if str(getattr(_df[c],'dtype','')).startswith('datetime')]
+    
+    # Gợi ý cột thời gian (ưu tiên dtype datetime, nếu không có thì thử parse theo tên)
+    col_date = _pick(DT_COLS, ['date','pstg','post','invoice']) if DT_COLS else None
+    if col_date is None:
+        col_date = _pick(ALL_COLS, ['date','pstg','post','invoice'])
+        with contextlib.suppress(Exception):
+            _df[col_date] = pd.to_datetime(_df[col_date], errors='coerce')
+            if _df[col_date].notna().any():
+                DT_COLS = list(sorted(set(DT_COLS + [col_date])))
+    
+    # Gợi ý các cột measure/dimension thường dùng trong Overview
+    col_amt    = _pick(NUM_COLS, ['amount','revenue','sales','gross','net'], prefer_numeric=True)
+    col_qty    = _pick(NUM_COLS, ['qty','quantity','so_luong','sl'], prefer_numeric=True) if NUM_COLS else None
+    col_cust   = _pick(ALL_COLS, ['customer','cust','khach','client','buyer','account'], prefer_numeric=False)
+    col_prod   = _pick(ALL_COLS, ['product','sku','item','hang'], prefer_numeric=False)
+    col_reg    = _pick(ALL_COLS, ['region','vung','area','zone','province','state'], prefer_numeric=False)
+    col_branch = _pick(ALL_COLS, ['branch','store','warehouse','location','site'], prefer_numeric=False)
+    col_channel= _pick(ALL_COLS, ['channel','kenh','sale_channel','distr'], prefer_numeric=False)
+    col_type   = _pick(ALL_COLS, ['type','loai','category','transaction','trans_type','operation'], prefer_numeric=False)
+    
+    # UI xác nhận/override cột
+    st.markdown('**Chọn cột nền (override nếu cần)**')
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        dt_col = st.selectbox('🗓️ Cột thời gian', DT_COLS or ALL_COLS,
+                              index=((DT_COLS or ALL_COLS).index(col_date) if col_date in (DT_COLS or ALL_COLS) else 0),
+                              key='ov_col_date')
+    with c2:
+        amt_col = st.selectbox('💰 Cột giá trị (Amount/Revenue)', NUM_COLS or ALL_COLS,
+                               index=((NUM_COLS or ALL_COLS).index(col_amt) if col_amt in (NUM_COLS or ALL_COLS) else 0),
+                               key='ov_col_amt')
+    with c3:
+        type_col = st.selectbox('🏷️ Loại giao dịch', [c for c in ALL_COLS if c != amt_col] or ALL_COLS,
+                                index=(([c.lower() for c in ALL_COLS].index(col_type.lower())) if (col_type in ALL_COLS) else 0),
+                                key='ov_col_type')
+    
+    with st.expander('Tùy chỉnh dimension khác (dùng cho Top Product/Customer/Region)'):
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            prod_col = st.selectbox('Sản phẩm', [c for c in ALL_COLS if c != amt_col] or ALL_COLS,
+                                    index=(([c.lower() for c in ALL_COLS].index(col_prod.lower())) if (col_prod in ALL_COLS) else 0),
+                                    key='ov_col_prod')
+        with d2:
+            cust_col = st.selectbox('Khách hàng', [c for c in ALL_COLS if c != amt_col] or ALL_COLS,
+                                    index=(([c.lower() for c in ALL_COLS].index(col_cust.lower())) if (col_cust in ALL_COLS) else 0),
+                                    key='ov_col_cust')
+        with d3:
+            reg_col  = st.selectbox('Region', [c for c in ALL_COLS if c != amt_col] or ALL_COLS,
+                                    index=(([c.lower() for c in ALL_COLS].index(col_reg.lower())) if (col_reg in ALL_COLS) else 0),
+                                    key='ov_col_reg')
+    
+    # Chuẩn hóa datetime & lọc khoảng thời gian (guard cho dữ liệu 1 ngày)
+        dt_ser = pd.to_datetime(_df[dt_col], errors='coerce')
         dt_valid = dt_ser.dropna()
         if dt_valid.empty:
             st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.')
             st.stop()
-
-        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov2_gran')
+        
+        gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov_gran')
         dmin, dmax = dt_valid.min(), dt_valid.max()
-        v_from, v_to = st.slider('Khoảng thời gian', min_value=dmin.to_pydatetime(), max_value=dmax.to_pydatetime(), value=(dmin.to_pydatetime(), dmax.to_pydatetime()), key='ov2_daterng')
-
+        if dmin == dmax:
+            st.info(f'Dữ liệu chỉ có 1 ngày: {dmin.date()}. Tự động dùng toàn kỳ.')
+            v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
+        else:
+            v_from, v_to = st.slider('Khoảng thời gian',
+                                     min_value=dmin.to_pydatetime(),
+                                     max_value=dmax.to_pydatetime(),
+                                     value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
+                                     key='ov_daterng')
+        
         mask = (dt_ser >= pd.Timestamp(v_from)) & (dt_ser <= pd.Timestamp(v_to))
         dfF = _df.loc[mask].copy()
-
-        NUMS = dfF.select_dtypes(include=[np.number]).columns.tolist()
-        def _pick(cols, keys, prefer_numeric=None):
-            for c in cols:
-                lc = str(c).lower()
-                if any(k in lc for k in keys):
-                    if prefer_numeric is None: return c
-                    ok = pd.api.types.is_numeric_dtype(dfF[c])
-                    if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
-                        return c
-            return cols[0] if cols else None
-
-        col_amt = _pick(NUMS, ['amount','revenue','sales','gross','net'], prefer_numeric=True)
-        col_prod = _pick(ALL_COLS, ['product','sku','item','hang'], prefer_numeric=False)
-        col_cust = _pick(ALL_COLS, ['customer','cust','khach','client','buyer','account'], prefer_numeric=False)
-        col_reg  = _pick(ALL_COLS, ['region','vung','area','zone','province','state'], prefer_numeric=False)
-        col_type = _pick(ALL_COLS, ['type','loai','category','transaction','trans_type','operation'], prefer_numeric=False)
-
-        st.markdown('---')
+        
+        # Biến dùng cho các biểu đồ phía dưới (giữ tên rõ ràng)
+        measure_col = amt_col
+        dim_type    = type_col
         # 1) Revenue theo kỳ
         st.markdown('#### Revenue theo kỳ')
         chart_rev = st.radio('Kiểu biểu đồ', ['Line','Bar','Area'], horizontal=True, key='ov2_rev_kind')
@@ -1190,17 +1233,46 @@ with TAB1:
                 else: figT = px.pie(aggT, names=col_type, values=col_amt, title='Doanh thu theo Loại giao dịch (Pie)')
                 st_plotly(figT); st.caption('Phân tách theo loại giao dịch sau lọc theo thời gian.')
 
-    # --- Revenue by Transaction type ---
+        # --- Revenue by Transaction type ---
+        NUMS = dfF.select_dtypes(include=['number']).columns.tolist()
+        ALL  = dfF.columns.tolist()
+        
+        def _pick(cols, keys, prefer_numeric=None):
+            for c in cols:
+                lc = str(c).lower()
+                if any(k in lc for k in keys):
+                    if prefer_numeric is None: 
+                        return c
+                    ok = pd.api.types.is_numeric_dtype(dfF[c])
+                    if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
+                        return c
+            return cols[0] if cols else None
+        
+        _guess_measure = col_amt if 'col_amt' in locals() and col_amt in NUMS else _pick(NUMS, ['amount','revenue','sales','gross','net'], True)
+        _guess_type    = col_type if 'col_type' in locals() and col_type in ALL  else _pick(ALL,  ['type','loai','category','transaction','trans_type','operation'], False)
+        
+        measure_col = st.selectbox('Cột giá trị (Revenue/Amount)', NUMS if NUMS else ALL,
+                                   index=(NUMS.index(_guess_measure) if (_guess_measure in NUMS) else 0),
+                                   key='ov_measure_txn')
+        
+        dim_type    = st.selectbox('Cột loại giao dịch', [c for c in ALL if c != measure_col] or ALL,
+                                   index=(([c.lower() for c in ALL].index(str(_guess_type).lower())) if (_guess_type in ALL) else 0),
+                                   key='ov_dim_type_txn')
+        
+        chart_type  = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov_type_kind_txn')
+        
         if measure_col and dim_type and dim_type in dfF.columns:
             tt = dfF.groupby(dim_type, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False)
             if not tt.empty:
-                if chart_type.startswith('Bar'):
+                if chart_type == 'Bar':
                     figT = px.bar(tt, x=dim_type, y=measure_col, title='Doanh thu theo Loại giao dịch')
-                elif chart_type=='Treemap':
+                elif chart_type == 'Treemap':
                     figT = px.treemap(tt, path=[dim_type], values=measure_col, title='Doanh thu theo Loại giao dịch (Treemap)')
                 else:
                     figT = px.pie(tt, names=dim_type, values=measure_col, title='Doanh thu theo Loại giao dịch (Pie)')
-                st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
+                st_plotly(figT)
+                st.caption('Phân tách theo loại giao dịch (sau lọc thời gian).')
+
     
 
 with TAB2:
