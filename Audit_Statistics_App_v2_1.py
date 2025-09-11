@@ -1335,6 +1335,7 @@ with TAB1:
 
 with TAB2:
     st.subheader('📈 Profiling/Distribution')
+    base_df = DF_FULL
     navL, navR = st.columns([2,3])
     with navL:
         col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
@@ -1587,6 +1588,7 @@ with TAB2:
 # ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB3:
     st.subheader('📈 Trend & 🔗 Correlation')
+    base_df = DF_FULL
     trendL, trendR = st.columns(2)
     with trendL:
         num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
@@ -1662,6 +1664,7 @@ with TAB4:
     for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
         if k not in SS: SS[k]=None
     st.subheader('🔢 Benford Law — 1D & 2D')
+    base_df = DF_FULL
     if not NUM_COLS:
         st.info('Không có cột numeric để chạy Benford.')
     else:
@@ -1725,6 +1728,7 @@ with TAB4:
 with TAB5:
     st.subheader('🧮 Statistical Tests — hướng dẫn & diễn giải')
     st.caption('Tab này chỉ hiển thị output test trọng yếu & diễn giải gọn. Biểu đồ hình dạng và trend/correlation vui lòng xem Tab 1/2/3.')
+    base_df = DF_FULL
 
     def is_numeric_series(s: pd.Series) -> bool: return pd.api.types.is_numeric_dtype(s)
     def is_datetime_series(s: pd.Series) -> bool: return pd.api.types.is_datetime64_any_dtype(s)
@@ -1829,6 +1833,7 @@ with TAB5:
 # ------------------------------ TAB 5: Regression -----------------------------
 with TAB6:
     st.subheader('📘 Regression (Linear / Logistic)')
+    base_df = DF_FULL
     if not HAS_SK:
         st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
     else:
@@ -1991,7 +1996,7 @@ with TAB6:
             st.info('Không có rule nào khớp.')
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
-
+    base_df = DF_FULL
     # === Rule Engine v2 (FULL dataset) ===
     try:
         _df_full = SS['df'] if SS.get('df') is not None else None
@@ -2165,6 +2170,7 @@ with TAB7:
             st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
+    base_df = DF_FULL
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
     if RE2 is not None and not RE2.empty:
