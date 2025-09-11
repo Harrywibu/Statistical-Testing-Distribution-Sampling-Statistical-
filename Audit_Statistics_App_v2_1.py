@@ -1220,7 +1220,7 @@ with TAB1:
 
 with TAB2:
     st.subheader('📈 Profiling/Distribution')
-        navL, navR = st.columns([2,3])
+    navL, navR = st.columns([2,3])
         with navL:
             col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
             s_nav = DF_VIEW[col_nav]
