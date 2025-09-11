@@ -1145,6 +1145,99 @@ with TAB1:
         if not tt.empty:
             figT = px.bar(tt, x=col_type, y=col_amt, title='Revenue by Transaction type')
             st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
+    # --- Chart palette & selectors ---
+    import plotly.express as px
+    st.markdown('### Bộ biểu đồ tổng quan')
+    chart_type = st.radio('Loại biểu đồ cho phân tích Top/Phân tách', ['Bar (Column/Clustered)','Treemap','Pie'], horizontal=True, index=0, key='ov_chart_kind')
+
+    # Choose measure (numeric) and dimensions (categorical)
+    NUM_COLS_OV = _df.select_dtypes(include=['number']).columns.tolist()
+    CAT_COLS_OV = [c for c in _df.columns if c not in NUM_COLS_OV]
+    with st.expander('Chọn cột sử dụng cho biểu đồ'):
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            measure_col = st.selectbox('Measure (doanh thu/số đo)', [col_amt] + [c for c in NUM_COLS_OV if c != col_amt] if col_amt else NUM_COLS_OV, key='ov_measure')
+            dim_product = st.selectbox('Cột Sản phẩm', [col_prod] + [c for c in CAT_COLS_OV if c != col_prod] if col_prod else CAT_COLS_OV, key='ov_dim_prod')
+        with c2:
+            dim_customer = st.selectbox('Cột Khách hàng', [col_cust] + [c for c in CAT_COLS_OV if c != col_cust] if col_cust else CAT_COLS_OV, key='ov_dim_cust')
+            dim_region   = st.selectbox('Cột Vùng/Region', [col_reg] + [c for c in CAT_COLS_OV if c != col_reg] if col_reg else CAT_COLS_OV, key='ov_dim_reg')
+        with c3:
+            dim_type     = st.selectbox('Cột Loại giao dịch', [col_type] + [c for c in CAT_COLS_OV if c != col_type] if col_type else CAT_COLS_OV, key='ov_dim_type')
+            compare_opt  = st.multiselect('So sánh chu kỳ', ['YoY','MoM','QoQ'], default=['YoY'], key='ov_cmp_opt')
+
+    # --- Revenue by period (M/Q/Y) + comparison (YoY/MoM/QoQ) ---
+    if dt_selected and measure_col:
+        ser = pd.to_datetime(dfF[dt_selected], errors='coerce')
+        y = pd.to_numeric(dfF[measure_col], errors='coerce')
+        dfT = pd.DataFrame({'t': ser, 'y': y}).dropna()
+        if not dfT.empty:
+            freq_map = {'M':'M','Q':'Q','Y':'Y'}
+            grp = dfT.set_index('t')['y'].resample(freq_map.get(gran,'M')).sum().to_frame('value')
+            # Period-over-period comps
+            comps = {}
+            if 'YoY' in compare_opt: comps['YoY'] = grp['value'].pct_change(12).rename('YoY')
+            if 'MoM' in compare_opt and gran=='M': comps['MoM'] = grp['value'].pct_change(1).rename('MoM')
+            if 'QoQ' in compare_opt and gran in ('M','Q'): 
+                step = 3 if gran=='M' else 1
+                comps['QoQ'] = grp['value'].pct_change(step).rename('QoQ')
+            df_line = grp.join(comps.values(), how='left')
+            df_line = df_line.reset_index().rename(columns={'t':'period'})
+            figL = px.line(df_line, x='period', y='value', markers=True, title='Revenue theo kỳ')
+            st_plotly(figL); st.caption('Doanh thu theo ' + ('tháng' if gran=='M' else 'quý' if gran=='Q' else 'năm') + ' sau lọc.')
+            if comps:
+                for k in comps.keys():
+                    pct = df_line[k].iloc[-1] if not df_line[k].isna().all() else None
+                    if pct is not None:
+                        st.caption(f'• {k} thay đổi gần nhất: {pct:.2%}')
+    
+    # --- Top by Product ---
+    if measure_col and dim_product:
+        tp = dfF.groupby(dim_product, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False).head(20)
+        if not tp.empty:
+            if chart_type.startswith('Bar'):
+                figP = px.bar(tp.iloc[::-1], x=measure_col, y=dim_product, orientation='h', title='Top doanh thu theo Sản phẩm')
+            elif chart_type=='Treemap':
+                figP = px.treemap(tp, path=[dim_product], values=measure_col, title='Top doanh thu theo Sản phẩm (Treemap)')
+            else:
+                figP = px.pie(tp, names=dim_product, values=measure_col, title='Top doanh thu theo Sản phẩm (Pie)')
+            st_plotly(figP); st.caption('Top sản phẩm theo doanh thu (sau lọc).')
+
+    # --- Top by Customer ---
+    if measure_col and dim_customer:
+        tc = dfF.groupby(dim_customer, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False).head(20)
+        if not tc.empty:
+            if chart_type.startswith('Bar'):
+                figC = px.bar(tc.iloc[::-1], x=measure_col, y=dim_customer, orientation='h', title='Top doanh thu theo Khách hàng')
+            elif chart_type=='Treemap':
+                figC = px.treemap(tc, path=[dim_customer], values=measure_col, title='Top doanh thu theo Khách hàng (Treemap)')
+            else:
+                figC = px.pie(tc, names=dim_customer, values=measure_col, title='Top doanh thu theo Khách hàng (Pie)')
+            st_plotly(figC); st.caption('Top khách hàng theo doanh thu (sau lọc).')
+
+    # --- Revenue by Region ---
+    if measure_col and dim_region:
+        tr = dfF.groupby(dim_region, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False)
+        if not tr.empty:
+            if chart_type.startswith('Bar'):
+                figR = px.bar(tr, x=dim_region, y=measure_col, title='Doanh thu theo Region')
+            elif chart_type=='Treemap':
+                figR = px.treemap(tr, path=[dim_region], values=measure_col, title='Doanh thu theo Region (Treemap)')
+            else:
+                figR = px.pie(tr, names=dim_region, values=measure_col, title='Doanh thu theo Region (Pie)')
+            st_plotly(figR); st.caption('Doanh thu theo vùng/khu vực (sau lọc).')
+
+    # --- Revenue by Transaction type ---
+    if measure_col and dim_type and dim_type in dfF.columns:
+        tt = dfF.groupby(dim_type, dropna=False)[measure_col].sum().reset_index().sort_values(measure_col, ascending=False)
+        if not tt.empty:
+            if chart_type.startswith('Bar'):
+                figT = px.bar(tt, x=dim_type, y=measure_col, title='Doanh thu theo Loại giao dịch')
+            elif chart_type=='Treemap':
+                figT = px.treemap(tt, path=[dim_type], values=measure_col, title='Doanh thu theo Loại giao dịch (Treemap)')
+            else:
+                figT = px.pie(tt, names=dim_type, values=measure_col, title='Doanh thu theo Loại giao dịch (Pie)')
+            st_plotly(figT); st.caption('Phân tách theo loại giao dịch (Sales/Transfer/Discount…) sau lọc.')
+    
 
     st.markdown('---')
     st.caption('AB0 — Overview (Sales activity): Bộ lọc chung ở trên áp dụng cho tất cả biểu đồ. Các chart đều có chú giải ngắn ngay dưới.')
