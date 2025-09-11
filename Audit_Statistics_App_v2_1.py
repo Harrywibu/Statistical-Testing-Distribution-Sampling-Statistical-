@@ -1245,23 +1245,53 @@ with TAB1:
         # ===================== BIỂU ĐỒ 3: TOP CUSTOMER (X/Y chọn) ====================
         st.markdown('#### 👤 Top Customer')
         cust_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_cust_kind')
-        cust_dim = st.selectbox('Cột X (categorical)', CAT_COLS, 
-                                index=(CAT_COLS.index(st.session_state.get('ov1_cust_col')) if st.session_state.get('ov1_cust_col') in CAT_COLS else (CAT_COLS.index(col_cust) if col_cust in CAT_COLS else 0)),
-                                key='ov1_cust_dim')
-        cust_y = st.selectbox('Cột Y (numeric)', NUM_COLS, index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0), key='ov1_cust_y')
-        topC = (dfF.groupby(cust_dim, dropna=False)[cust_y].sum().reset_index().sort_values[cust_y].head(20)
-                if hasattr(pd.DataFrame.sort_values, '__call__') else
-                dfF.groupby(cust_dim, dropna=False)[cust_y].sum().reset_index().sort_values(by=cust_y, ascending=False).head(20))
-        # (đảm bảo tương thích)
-        topC = dfF.groupby(cust_dim, dropna=False)[cust_y].sum().reset_index().sort_values(by=cust_y, ascending=False).head(20)
+        
+        cust_dim = st.selectbox(
+            'Cột X (categorical)',
+            CAT_COLS,
+            index=(CAT_COLS.index(st.session_state.get('ov1_cust_col')) 
+                   if st.session_state.get('ov1_cust_col') in CAT_COLS 
+                   else (CAT_COLS.index(col_cust) if col_cust in CAT_COLS else 0)),
+            key='ov1_cust_dim'
+        )
+        cust_y = st.selectbox(
+            'Cột Y (numeric)',
+            NUM_COLS,
+            index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0),
+            key='ov1_cust_y'
+        )
+        
+        # Ép numeric an toàn rồi group
+        tmp = dfF.assign(__y=pd.to_numeric(dfF[cust_y], errors='coerce'))
+        try:
+            topC = (tmp.groupby(cust_dim, dropna=False)['__y']
+                      .sum(min_count=1)
+                      .reset_index())
+        except TypeError:
+            # phòng trường hợp pandas không hỗ trợ dropna trong groupby
+            topC = (tmp.groupby(cust_dim)['__y']
+                      .sum(min_count=1)
+                      .reset_index())
+        
+        topC = (topC.rename(columns={'__y': cust_y})
+                    .sort_values(by=cust_y, ascending=False)
+                    .head(20))
+        
         if not topC.empty:
             if cust_kind == 'Bar':
-                figC = px.bar(topC.iloc[::-1], x=cust_y, y=cust_dim, orientation='h', title='Top doanh thu theo Khách hàng')
+                figC = px.bar(topC.iloc[::-1], x=cust_y, y=cust_dim, orientation='h',
+                              title='Top doanh thu theo Khách hàng')
             elif cust_kind == 'Treemap':
-                figC = px.treemap(topC, path=[cust_dim], values=cust_y, title='Top doanh thu theo Khách hàng (Treemap)')
+                figC = px.treemap(topC, path=[cust_dim], values=cust_y,
+                                  title='Top doanh thu theo Khách hàng (Treemap)')
             else:
-                figC = px.pie(topC, names=cust_dim, values=cust_y, title='Top doanh thu theo Khách hàng (Pie)')
-            _plot(figC); st.caption('Top khách hàng theo cột Y đã chọn.')
+                figC = px.pie(topC, names=cust_dim, values=cust_y,
+                              title='Top doanh thu theo Khách hàng (Pie)')
+            _plot(figC)
+            st.caption('Top khách hàng theo cột Y đã chọn.')
+        else:
+            st.info('Không có dữ liệu hợp lệ cho biểu đồ Top Customer.')
+                    _plot(figC); st.caption('Top khách hàng theo cột Y đã chọn.')
         
         # ============ BIỂU ĐỒ 4: DOANH THU THEO REGION (X/Y chọn) ===================
         st.markdown('#### 🗺️ Doanh thu theo Region')
