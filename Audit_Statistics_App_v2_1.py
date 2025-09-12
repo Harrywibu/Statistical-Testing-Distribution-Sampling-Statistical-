@@ -2293,5 +2293,11 @@ with TAB7:
                     with open(pth,'rb') as f: st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
+        _df = _df_full_safe()
+        flags = run_core_rules(_df, SS["schema_map"], SS["BATCH_ID"])
+        save_flags(flags)
+        st.success(f"Đã log {len(flags)} flags → CSV/SQLite.")
+        st.dataframe(flags.head(50))
+
 
 # End of file
