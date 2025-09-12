@@ -845,11 +845,9 @@ if base_df is not None:
                     SS["BATCH_ID"] = _sha12_of_df(base_df)
                     SS["DF_FULL"] = base_df.copy()  # ép toàn bộ tabs dùng FULL
                     st.success(f"Đã LOCK ingest. Batch = {SS['BATCH_ID']}")
-else:
-    st.warning("Chưa có dữ liệu.")
 
 # Source & typing
-DF_FULL = require_full_data('Chưa có dữ liệu FULL. Hãy dùng **Load full data**.')
+DF_FULL = require_full_data('Chưa có dữ liệu')
 DF_VIEW = DF_FULL  # alias để không phá code cũ
 
 ALL_COLS = list(DF_FULL.columns)
