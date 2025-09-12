@@ -6,6 +6,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+def get_base_df():
+    for k in ("DF_FULL", "df"):
+        v = SS.get(k)
+        if isinstance(v, pd.DataFrame) and not v.empty:
+            return v
+    return None
+
+base_df = get_base_df()
 
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
