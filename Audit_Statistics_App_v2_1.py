@@ -2237,20 +2237,23 @@ with TAB7:
 
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
-# --------------------------- TAB 7: Flags & Risk/Export -----------------------------
+# --------------------------- TAB 7: Rule Engine — Tổng quan & Chi tiết (HỢP NHẤT) -----------------------------
 with TAB7:
     st.subheader('🧠 Rule Engine — Tổng quan & Chi tiết')
 
     import os, sqlite3
 
-    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
-                "period","metric","threshold","direction","is_alert","created_at"]
-    FLAGS_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id",
-                  "period","metric","threshold","direction","is_alert","note","created_at"]
+    # ---- Chuẩn schema thống nhất ----
+    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id","period",
+                "metric","threshold","direction","is_alert","created_at","source"]
+    HIST_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id",
+                 "period","metric","threshold","direction","is_alert","note","created_at","source"]
 
     def _empty_re2():
-        return pd.DataFrame(columns=RE2_COLS)
+        df = pd.DataFrame(columns=RE2_COLS)
+        return df
 
+    # ---- Lấy DF hiện tại (ưu tiên FULL) ----
     def _get_base_df():
         for k in ("DF_FULL", "df"):
             v = SS.get(k)
@@ -2258,20 +2261,40 @@ with TAB7:
                 return v
         return None
 
-    def _normalize(df_in: pd.DataFrame) -> pd.DataFrame:
-        if df_in is None or not isinstance(df_in, pd.DataFrame) or df_in.empty:
+    # ---- Rule Engine hiện tại (RE2) — luôn trả DataFrame ----
+    def _re2_now(cfg=None) -> pd.DataFrame:
+        try:
+            df0 = _get_base_df()
+            if df0 is None:
+                return _empty_re2()
+            out = run_rule_engine_v2(df0, cfg)  # dùng hàm sẵn có
+            if not isinstance(out, pd.DataFrame) or out.empty:
+                return _empty_re2()
+            out = out.copy()
+            out["source"] = "RE2"
+            # đảm bảo đủ cột
+            for c in RE2_COLS:
+                if c not in out.columns: out[c] = None
+            return out[RE2_COLS]
+        except Exception:
             return _empty_re2()
-        df = df_in.copy()
-        # Chuẩn hoá tên cột nếu load từ bảng flags (SQLite)
-        map_cols = {"rule_name":"_rule","severity":"_severity"}
-        for c_src, c_dst in map_cols.items():
-            if c_src in df.columns and c_dst not in df.columns:
-                df[c_dst] = df[c_src]
+    def _from_other_tabs() -> pd.DataFrame:
+        buf = SS.get("flags_from_tabs")
+        if buf is None:
+            return _empty_re2()
+        # chấp nhận list[dict] hoặc DataFrame
+        df = pd.DataFrame(buf) if not isinstance(buf, pd.DataFrame) else buf.copy()
+        if df.empty:
+            return _empty_re2()
+        # map tên cột → schema chung
+        rename = {"rule_name":"_rule","severity":"_severity"}
+        df.rename(columns=rename, inplace=True)
         for c in RE2_COLS:
-            if c not in df.columns:
-                df[c] = None
+            if c not in df.columns: df[c] = None
+        df["source"] = df.get("source").fillna("TABS")
         return df[RE2_COLS]
 
+    # ---- Lịch sử (SQLite) ----
     def _ensure_sqlite():
         with sqlite3.connect("flags.sqlite") as conn:
             conn.execute("""
@@ -2282,79 +2305,106 @@ with TAB7:
                 is_alert INTEGER, note TEXT, created_at TEXT
             )""")
 
-    def _load_flags_all() -> pd.DataFrame:
+    def _from_history() -> pd.DataFrame:
         try:
             _ensure_sqlite()
-            with sqlite3.connect("flags.sqlite") as conn:
-                df = pd.read_sql_query("SELECT * FROM flags", conn)
-            return df
-        except Exception:
-            return pd.DataFrame(columns=FLAGS_COLS)
-
-    def run_rule_engine_v2_guard(cfg=None) -> pd.DataFrame:
-        """Luôn trả DataFrame; không bao giờ None/Exception."""
-        try:
-            df0 = _get_base_df()
-            if df0 is None:
+            if not os.path.exists("flags.sqlite"):
                 return _empty_re2()
-            out = run_rule_engine_v2(df0, cfg)  # dùng hàm đã có trong file
-            return out if isinstance(out, pd.DataFrame) else _empty_re2()
+            with sqlite3.connect("flags.sqlite") as conn:
+                hist = pd.read_sql_query("SELECT * FROM flags", conn)
+            if hist.empty:
+                return _empty_re2()
+            hist = hist.copy()
+            hist["source"] = "HISTORY"
+            # chuẩn → RE2_COLS
+            out = pd.DataFrame({
+                "_rule":     hist.get("rule_name"),
+                "_severity": hist.get("severity"),
+                "note":      hist.get("note"),
+                "entity_type": hist.get("entity_type"),
+                "entity_id":   hist.get("entity_id"),
+                "period":      hist.get("period"),
+                "metric":      hist.get("metric"),
+                "threshold":   hist.get("threshold"),
+                "direction":   hist.get("direction"),
+                "is_alert":    hist.get("is_alert"),
+                "created_at":  hist.get("created_at"),
+                "source":      hist.get("source"),
+            })
+            for c in RE2_COLS:
+                if c not in out.columns: out[c] = None
+            return out[RE2_COLS]
         except Exception:
             return _empty_re2()
 
-    # === Chạy RE2 (dataset hiện tại) / hoặc gộp lịch sử đã persist ===
+    # ---- Hợp nhất 3 nguồn + dedupe ----
     cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-    use_all = st.checkbox('📦 Gộp lịch sử (all tests) từ SQLite', value=False, key='re2_use_all')
+    use_history = st.checkbox("📦 Gộp lịch sử (flags.sqlite)", value=False, key="unify_hist")
 
-    RE2_CUR = _normalize(run_rule_engine_v2_guard(cfg))
-    RE2_ALL = _normalize(_load_flags_all())
-    INS = RE2_ALL if use_all else RE2_CUR
+    df_re2   = _re2_now(cfg)
+    df_tabs  = _from_other_tabs()
+    frames = [df_re2, df_tabs]
+    if use_history:
+        frames.append(_from_history())
 
-    # === KPI nhanh
-    c1,c2,c3,c4 = st.columns(4)
+    INS = pd.concat(frames, ignore_index=True) if any(len(x)>0 for x in frames) else _empty_re2()
+
+    # dedupe theo khóa: rule + entity + period + note + source
+    if not INS.empty:
+        dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
+        INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
+
+    # ---- KPI ----
+    c1,c2,c3,c4,c5 = st.columns(5)
     c1.metric("Tổng flags", int(len(INS)))
     c2.metric("Rules", int(INS["_rule"].nunique() if not INS.empty else 0))
     c3.metric("High", int((INS["_severity"]=="High").sum()))
     c4.metric("Medium/Low", int((INS["_severity"].isin(["Medium","Low"])).sum()))
+    c5.metric("Nguồn", int(INS["source"].nunique() if not INS.empty else 0))
 
-    # === Bộ lọc + bảng tổng hợp & chi tiết
-    col1,col2,col3,col4 = st.columns([1.2,1.2,1.2,2])
-    sev = col1.multiselect("Severity", ["High","Medium","Low"], default=[], key='re2_sev')
+    # ---- Bộ lọc (có Nguồn) ----
+    col1,col2,col3,col4,col5 = st.columns([1.1,1.3,1.2,1.2,2.0])
+    sources = ["(All)"] + sorted(INS["source"].dropna().unique().tolist())
+    pick_src = col1.selectbox("Nguồn", sources, key="src_pick")
+    sev = col2.multiselect("Severity", ["High","Medium","Low"], default=[], key='sev_pick')
     rules = ["(All)"] + sorted(INS["_rule"].dropna().unique().tolist())
-    pick_rule = col2.selectbox("Rule", rules, key='re2_pick_rule')
+    pick_rule = col3.selectbox("Rule", rules, key='rule_pick')
     entity_types = ["(All)"] + sorted(INS["entity_type"].dropna().unique().tolist())
-    pick_et = col3.selectbox("Entity", entity_types, key='re2_pick_et')
-    kw = col4.text_input("Tìm theo entity_id/note", "", key='re2_kw')
+    pick_et = col4.selectbox("Entity", entity_types, key='et_pick')
+    kw = col5.text_input("Tìm theo entity_id / note", "", key='kw_pick')
 
     view = INS.copy()
+    if pick_src!="(All)": view = view[view["source"]==pick_src]
     if sev: view = view[view["_severity"].isin(sev)]
-    if pick_rule != "(All)": view = view[view["_rule"] == pick_rule]
-    if pick_et != "(All)": view = view[view["entity_type"] == pick_et]
+    if pick_rule!="(All)": view = view[view["_rule"]==pick_rule]
+    if pick_et!="(All)": view = view[view["entity_type"]==pick_et]
     if kw:
         mask = view["entity_id"].astype(str).str.contains(kw, case=False, na=False) | \
                view["note"].astype(str).str.contains(kw, case=False, na=False)
         view = view[mask]
 
+    # ---- Tổng hợp theo Rule ----
     st.markdown("**📊 Tổng hợp theo Rule**")
     if view.empty:
         st.info("Không có flag sau khi lọc.")
     else:
-        by_rule = (view.groupby(["_rule","_severity"])
+        by_rule = (view.groupby(["source","_rule","_severity"])
                         .size().reset_index(name="n")
-                        .sort_values(["n","_rule"], ascending=[False, True]))
+                        .sort_values(["n","source","_rule"], ascending=[False, True, True]))
         st.dataframe(by_rule, use_container_width=True, hide_index=True)
 
-    st.markdown("**🔎 Chi tiết flags**")
+    # ---- Chi tiết ----
+    st.markdown("**🔎 Chi tiết flags (Tổng hợp)**")
     st.dataframe(
-        view[["_rule","_severity","entity_type","entity_id","period","metric","threshold","direction","note","created_at"]],
-        use_container_width=True, height=320, hide_index=True
+        view[["source","_rule","_severity","entity_type","entity_id","period","metric","threshold","direction","note","created_at"]],
+        use_container_width=True, height=330, hide_index=True
     )
 
+    # ---- Tải CSV ----
     csv = view.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Tải CSV (Rule Engine)", data=csv,
-                       file_name="rule_engine_flags.csv", mime="text/csv", key='re2_dl')
+    st.download_button("⬇️ Tải CSV (Rule Engine — Tổng hợp)", data=csv,
+                       file_name="rule_engine_unified.csv", mime="text/csv", key='re2_unified_dl')
 
-    # Export gọn gàng trong expander (thay vì cột phải dễ lệch thụt lề)
     with st.expander("🧾 Export báo cáo (DOCX/PDF)"):
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
         if st.button('🖼️ Export blank shell DOCX/PDF'):
