@@ -817,7 +817,7 @@ if base_df is not None:
     if "schema_map" not in SS:
         SS["schema_map"] = infer_mapping(base_df)
 
-        with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
+    with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
         with st.form(key="ingest_lock_form", clear_on_submit=False):
             
         st.caption("Map lại cột theo vai trò phân tích (có thể để trống nếu không có).")
