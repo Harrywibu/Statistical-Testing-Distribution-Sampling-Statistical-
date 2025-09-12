@@ -820,33 +820,33 @@ if base_df is not None:
     with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
         with st.form(key="ingest_lock_form", clear_on_submit=False):
             
-        st.caption("Map lại cột theo vai trò phân tích (có thể để trống nếu không có).")
-        cols = list(base_df.columns)
-        m = {}
-        for role, current in SS["schema_map"].items():
-            m[role] = st.selectbox(f"{role}", ["(none)"]+cols, index=(cols.index(current)+1 if current in cols else 0))
-            if m[role] == "(none)": m[role] = None
-
-        chk = checklist_columns(base_df, m)
-        st.markdown(
-            f"- Bắt buộc có: **time, amount** → "
-            + ("✅ Ok" if chk["required_ok"] else f"❌ thiếu: {', '.join(chk['missing_required'])}")
-        )
-        if chk["nice_missing"]:
-            st.markdown(f"- Nên có: qty, price, product_code, customer_id, invoice_id → còn thiếu: {', '.join(chk['nice_missing'])}")
-
-        lock = st.form_submit_button("✅ Confirm & LOCK ingest")
-        if lock:
-            if not chk["required_ok"]:
-                st.error("Thiếu cột bắt buộc → chưa thể khóa ingest.")
-            else:
-                SS["schema_map"] = m
-                SS["ingest_locked"] = True
-                SS["BATCH_ID"] = _sha12_of_df(base_df)
-                SS["DF_FULL"] = base_df.copy()  # ép toàn bộ tabs dùng FULL
-                st.success(f"Đã LOCK ingest. Batch = {SS['BATCH_ID']}")
-else:
-    st.warning("Chưa có dữ liệu.")
+            st.caption("Map lại cột theo vai trò phân tích (có thể để trống nếu không có).")
+            cols = list(base_df.columns)
+            m = {}
+            for role, current in SS["schema_map"].items():
+                m[role] = st.selectbox(f"{role}", ["(none)"]+cols, index=(cols.index(current)+1 if current in cols else 0))
+                if m[role] == "(none)": m[role] = None
+    
+            chk = checklist_columns(base_df, m)
+            st.markdown(
+                f"- Bắt buộc có: **time, amount** → "
+                + ("✅ Ok" if chk["required_ok"] else f"❌ thiếu: {', '.join(chk['missing_required'])}")
+            )
+            if chk["nice_missing"]:
+                st.markdown(f"- Nên có: qty, price, product_code, customer_id, invoice_id → còn thiếu: {', '.join(chk['nice_missing'])}")
+    
+            lock = st.form_submit_button("✅ Confirm & LOCK ingest")
+            if lock:
+                if not chk["required_ok"]:
+                    st.error("Thiếu cột bắt buộc → chưa thể khóa ingest.")
+                else:
+                    SS["schema_map"] = m
+                    SS["ingest_locked"] = True
+                    SS["BATCH_ID"] = _sha12_of_df(base_df)
+                    SS["DF_FULL"] = base_df.copy()  # ép toàn bộ tabs dùng FULL
+                    st.success(f"Đã LOCK ingest. Batch = {SS['BATCH_ID']}")
+    else:
+        st.warning("Chưa có dữ liệu.")
 
 # Source & typing
 DF_FULL = require_full_data('Chưa có dữ liệu FULL. Hãy dùng **Load full data**.')
