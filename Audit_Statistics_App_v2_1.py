@@ -2336,7 +2336,7 @@ with TAB7:
             return out[RE2_COLS]
         except Exception:
             return _empty_re2()
-
+    
     # ---- Hợp nhất 3 nguồn + dedupe ----
     cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
     use_history = st.checkbox("📦 Gộp lịch sử (flags.sqlite)", value=False, key="unify_hist")
