@@ -6,15 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-def get_base_df():
-    for k in ("DF_FULL", "df"):
-        v = SS.get(k)
-        if isinstance(v, pd.DataFrame) and not v.empty:
-            return v
-    return None
-
-base_df = get_base_df()
-
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
 
@@ -819,7 +810,16 @@ def checklist_columns(df: pd.DataFrame, mapping: dict):
     }
 
 # --- UI ---
-base_df = SS.get("DF_FULL") or SS.get("df")  # ưu tiên full
+def _pick_base_df() -> pd.DataFrame | None:
+    full = SS.get("DF_FULL")
+    if isinstance(full, pd.DataFrame) and not full.empty:
+        return full
+    df_ = SS.get("df")
+    if isinstance(df_ , pd.DataFrame) and not df_.empty:
+        return df_
+    return None
+
+base_df = _pick_base_df()  # ưu tiên full
 if base_df is not None:
     if "ingest_locked" not in SS: SS["ingest_locked"] = False
     if "schema_map" not in SS:
