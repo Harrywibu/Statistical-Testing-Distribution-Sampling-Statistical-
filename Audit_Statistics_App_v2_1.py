@@ -2074,8 +2074,7 @@ with TAB7:
     base_df = DF_FULL
     # === Rule Engine v2 (FULL dataset) ===
     try:
-        _df_full = SS['df'] if SS.get('df') is not None else None
-        if _df_full is not None and len(_df_full)>0:
+        if base_df is not None and len(base_df) > 0:
             cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
             RE2 = run_rule_engine_v2(_df_full, cfg)  # <-- thay df bằng _df_full
             SS['rule_engine_v2'] = RE2
