@@ -2069,28 +2069,50 @@ with TAB6:
             st_df(df_r, use_container_width=True)
         else:
             st.info('Không có rule nào khớp.')
+RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
+            "period","metric","threshold","direction","is_alert","created_at"]
+
+def _empty_re2():
+    return pd.DataFrame(columns=RE2_COLS)
+
+def _get_base_df():
+    # Ưu tiên FULL; nếu không có thì dùng preview; nếu rỗng → None
+    for k in ("DF_FULL", "df"):
+        v = SS.get(k)
+        if isinstance(v, pd.DataFrame) and len(v) > 0:
+            return v
+    return None
+
+def run_rule_engine_v2_guard(cfg=None):
+    """Gọi Rule Engine an toàn, luôn trả DataFrame (không bao giờ None)."""
+    try:
+        df0 = _get_base_df()
+        if df0 is None:
+            return _empty_re2()
+        out = run_rule_engine_v2(df0, cfg)   # <- dùng hàm bạn đang có
+        return out if isinstance(out, pd.DataFrame) else _empty_re2()
+    except Exception:
+        return _empty_re2()
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
     base_df = DF_FULL
     # === Rule Engine v2 (FULL dataset) ===
     try:
-        _df_full = SS['df'] if SS.get('df') is not None else None
-        if _df_full is not None and len(_df_full)>0:
-            cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-            RE2 = run_rule_engine_v2(_df_full, cfg)  # <-- thay df bằng _df_full
-            SS['rule_engine_v2'] = RE2
-            st.subheader('🧠 Rule Engine v2 — Kết quả')
-            if RE2 is None or RE2.empty:
-                st.success('Không phát hiện flag theo rules.')
-            else:
-                st.write('Tổng số dòng flag:', len(RE2))
-                by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
-                st.dataframe(by_rule, use_container_width=True, hide_index=True)
-                pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
-                view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
-                st.dataframe(view, use_container_width=True, height=280)
-                csv = view.to_csv(index=False).encode('utf-8')
-                st.download_button('⬇️ Tải CSV (Rule Engine)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
+        st.subheader('🧠 Rule Engine — Kết quả')
+        cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+        RE2 = run_rule_engine_v2_guard(cfg)
+        if RE2.empty:
+            st.success('Không phát hiện flag theo rules.')
+        else:
+            st.write('Tổng số dòng flag:', len(RE2))
+            by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
+            st.dataframe(by_rule, use_container_width=True, hide_index=True)
+            pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
+            view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
+            st.dataframe(view, use_container_width=True, height=280)
+            st.download_button('⬇️ Tải CSV (Rule Engine v2)',
+                               data=view.to_csv(index=False).encode('utf-8'),
+                               file_name='rule_engine_v2_flags.csv', mime='text/csv')
         else:
             st.info('Chưa có dữ liệu FULL.')
     except Exception as e:
