@@ -217,7 +217,7 @@ def emit(rule_id, rule_name, severity, entity_type, entity_id, period, metric, t
     except Exception:
         pass
 
-    def run_rule_engine_v2(df, cfg=None):
+def run_rule_engine_v2(df, cfg=None):
         """
         Dùng bộ 15 rules lõi → trả về DataFrame cho UI (cột _rule, _severity, ...),
         đồng thời persist flags vào CSV + SQLite.
