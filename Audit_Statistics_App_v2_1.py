@@ -2113,8 +2113,6 @@ with TAB7:
             st.download_button('⬇️ Tải CSV (Rule Engine v2)',
                                data=view.to_csv(index=False).encode('utf-8'),
                                file_name='rule_engine_v2_flags.csv', mime='text/csv')
-        else:
-            st.info('Chưa có dữ liệu FULL.')
     except Exception as e:
         st.warning(f'Rule Engine gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
