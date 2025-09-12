@@ -817,7 +817,7 @@ if base_df is not None:
     if "schema_map" not in SS:
         SS["schema_map"] = infer_mapping(base_df)
 
-    st.subheader("🔐 Ingest — Schema mapping & Checklist")
+    with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
     with st.form(key="ingest_lock_form", clear_on_submit=False):
         st.caption("Map lại cột theo vai trò phân tích (có thể để trống nếu không có).")
         cols = list(base_df.columns)
@@ -2096,32 +2096,12 @@ def run_rule_engine_v2_guard(cfg=None):
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
     base_df = DF_FULL
-    # === Rule Engine v2 (FULL dataset) ===
-    try:
-        st.subheader('🧠 Rule Engine — Kết quả')
-        cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-        RE2 = run_rule_engine_v2_guard(cfg)
-        if RE2.empty:
-            st.success('Không phát hiện flag theo rules.')
-        else:
-            st.write('Tổng số dòng flag:', len(RE2))
-            by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
-            st.dataframe(by_rule, use_container_width=True, hide_index=True)
-            pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
-            view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
-            st.dataframe(view, use_container_width=True, height=280)
-            st.download_button('⬇️ Tải CSV (Rule Engine v2)',
-                               data=view.to_csv(index=False).encode('utf-8'),
-                               file_name='rule_engine_v2_flags.csv', mime='text/csv')
-    except Exception as e:
-        st.warning(f'Rule Engine gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
     use_full_flags = True
     FLAG_DF = DF_FULL
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
-
     with st.expander('⚙️ Tham số quét cờ (điều chỉnh được)'):
         c1,c2,c3 = st.columns(3)
         with c1:
@@ -2256,12 +2236,7 @@ with TAB7:
             if isinstance(obj, pd.DataFrame):
                 st_df(obj, use_container_width=True, height=min(320, 40+24*min(len(obj),10)))
 
-    with st.expander('🧠 Rule Engine (Flags) — Insights'):
-        ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='flags')
-        if not df_r.empty:
-            st_df(df_r, use_container_width=True)
-        else:
-            st.info('Không có rule nào khớp.')
+
 # --------------------------- TAB 7: Risk & Export -----------------------------
 with TAB7:
     base_df = DF_FULL
@@ -2299,16 +2274,99 @@ with TAB7:
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
         st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
+    st.subheader("🧠 Rule Engine — Tổng quan & Chi tiết")
 
-        with st.expander('🧠 Rule Engine — Insights (All tests)'):
-            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
-            if df_r.empty:
-                st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
-            else:
-                st_df(df_r, use_container_width=True, height=320)
-                st.markdown('**Recommendations:**')
-                for _,row in df_r.iterrows():
-                    st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
+# --- Helpers ---
+RE2_COLS = ["_rule","_severity","note","entity_type","entity_id","period","metric","threshold","direction","is_alert","created_at"]
+FLAGS_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id","period","metric","threshold","direction","is_alert","note","created_at"]
+
+def _empty_re2(): return pd.DataFrame(columns=RE2_COLS)
+
+def _get_re2_current(cfg):
+    # ưu tiên guard nếu có
+    try:
+        return run_rule_engine_v2_guard(cfg)
+    except NameError:
+        # fallback: dùng FULL hoặc preview
+        base_df = SS.get('DF_FULL') or SS.get('df')
+        if base_df is None or len(base_df)==0: return _empty_re2()
+        try:
+            out = run_rule_engine_v2(base_df, cfg)
+            return out if isinstance(out, pd.DataFrame) else _empty_re2()
+        except Exception:
+            return _empty_re2()
+
+def _load_flags_all():
+    if not os.path.exists("flags.sqlite"):
+        return pd.DataFrame(columns=FLAGS_COLS)
+    try:
+        with sqlite3.connect("flags.sqlite") as conn:
+            df = pd.read_sql_query("SELECT * FROM flags", conn)
+        # chuẩn hóa kiểu dữ liệu nhẹ
+        for c in ["metric","is_alert"]: 
+            if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame(columns=FLAGS_COLS)
+
+def _normalize(df):
+    # Chuẩn hóa cột để gộp nguồn hiện tại (RE2) và lịch sử (SQLite)
+    if "_rule" in df.columns:
+        df = df.rename(columns={"_rule":"rule_name","_severity":"severity"})
+    # đảm bảo đủ cột tối thiểu
+    needed = set(["rule_name","severity","entity_type","entity_id","period","metric","direction","threshold","is_alert","note","created_at"])
+    for c in needed:
+        if c not in df.columns: df[c] = None
+    return df
+
+# --- Config + Data source ---
+cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+use_all = st.checkbox("📦 Gộp lịch sử (all test) từ SQLite", value=False)
+
+DF_CUR = _normalize(_get_re2_current(cfg))
+DF_ALL = _normalize(_load_flags_all())
+INS = DF_ALL if use_all else DF_CUR
+
+# --- KPI ---
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("Tổng flags", len(INS))
+c2.metric("High", int((INS["severity"]=="High").sum()))
+c3.metric("Medium", int((INS["severity"]=="Medium").sum()))
+c4.metric("Low", int((INS["severity"]=="Low").sum()))
+
+# --- Filters ---
+fc1,fc2,fc3,fc4 = st.columns(4)
+sev = fc1.multiselect("Mức độ", ["High","Medium","Low"], default=["High","Medium","Low"])
+rules = ["(All)"] + sorted([x for x in INS["rule_name"].dropna().unique().tolist()])
+pick_rule = fc2.selectbox("Rule", rules)
+entity_types = ["(All)"] + sorted([x for x in INS["entity_type"].dropna().unique().tolist()])
+pick_et = fc3.selectbox("Entity", entity_types)
+kw = fc4.text_input("Tìm theo entity_id / note")
+
+view = INS.copy()
+if sev: view = view[view["severity"].isin(sev)]
+if pick_rule!="(All)": view = view[view["rule_name"]==pick_rule]
+if pick_et!="(All)": view = view[view["entity_type"]==pick_et]
+if kw:
+    mask = view["entity_id"].astype(str).str.contains(kw, case=False, na=False) | view["note"].astype(str).str.contains(kw, case=False, na=False)
+    view = view[mask]
+
+# --- Tổng hợp theo rule (insight all test gộp) ---
+by_rule = (view.groupby(["rule_name","severity"])
+                .size().reset_index(name="n")
+                .sort_values(["n","rule_name"], ascending=[False, True]))
+st.markdown("**📊 Tổng hợp theo Rule**")
+st.dataframe(by_rule, use_container_width=True, hide_index=True)
+
+# --- Chi tiết ---
+st.markdown("**🔎 Chi tiết flags**")
+st.dataframe(view[["rule_name","severity","entity_type","entity_id","period","metric","direction","threshold","note","created_at"]],
+             use_container_width=True, hide_index=True, height=320)
+
+# --- Tải CSV ---
+csv = view.to_csv(index=False).encode("utf-8")
+st.download_button("⬇️ Tải CSV (Rule Engine hợp nhất)", data=csv, file_name="rule_engine_unified.csv", mime="text/csv")
+# ==== /TAB7 — Rule Engine: Tổng quan & Chi tiết (hợp nhất) ====
 
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
