@@ -809,21 +809,13 @@ def checklist_columns(df: pd.DataFrame, mapping: dict):
         "nice_missing": [k for k in nice_to_have if not mapping.get(k)]
     }
 
-# --- UI ---
-def _pick_base_df() -> pd.DataFrame | None:
-    full = SS.get("DF_FULL")
-    if isinstance(full, pd.DataFrame) and not full.empty:
-        return full
-    df_ = SS.get("df")
-    if isinstance(df_ , pd.DataFrame) and not df_.empty:
-        return df_
-    return None
-    
-base_df = _pick_base_df()  # ưu tiên full
-    if base_df is not None:
-        if "ingest_locked" not in SS: SS["ingest_locked"] = False
-        if "schema_map" not in SS:
-            SS["schema_map"] = infer_mapping(base_df)
+# --- UI ---    
+_full = SS.get("DF_FULL"); _df = SS.get("df")
+base_df = _full if isinstance(_full, pd.DataFrame) and not _full.empty else (_df if isinstance(_df, pd.DataFrame) and not _df.empty else None)
+if base_df is not None:
+    if "ingest_locked" not in SS: SS["ingest_locked"] = False
+    if "schema_map" not in SS:
+        SS["schema_map"] = infer_mapping(base_df)
     with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
         with st.form(key="ingest_lock_form", clear_on_submit=False):
             
