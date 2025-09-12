@@ -2368,7 +2368,6 @@ st.dataframe(view[["rule_name","severity","entity_type","entity_id","period","me
 csv = view.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Tải CSV (Rule Engine hợp nhất)", data=csv, file_name="rule_engine_unified.csv", mime="text/csv")
 # ==== /TAB7 — Rule Engine: Tổng quan & Chi tiết (hợp nhất) ====
-
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
         # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
