@@ -818,13 +818,12 @@ def _pick_base_df() -> pd.DataFrame | None:
     if isinstance(df_ , pd.DataFrame) and not df_.empty:
         return df_
     return None
-
+    
 base_df = _pick_base_df()  # ưu tiên full
-if base_df is not None:
-    if "ingest_locked" not in SS: SS["ingest_locked"] = False
-    if "schema_map" not in SS:
-        SS["schema_map"] = infer_mapping(base_df)
-
+    if base_df is not None:
+        if "ingest_locked" not in SS: SS["ingest_locked"] = False
+        if "schema_map" not in SS:
+            SS["schema_map"] = infer_mapping(base_df)
     with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
         with st.form(key="ingest_lock_form", clear_on_submit=False):
             
