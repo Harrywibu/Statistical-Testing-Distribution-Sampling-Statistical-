@@ -217,35 +217,40 @@ def emit(rule_id, rule_name, severity, entity_type, entity_id, period, metric, t
     except Exception:
         pass
 
+# đặt cạnh các helper khác (cấp module, thụt lề 0)
+def _guess_mapping_from_df(df: pd.DataFrame):
+    # tái sử dụng suy luận mapping sẵn có
+    return infer_mapping(df)
+
+def sha12_of_df(df: pd.DataFrame):
+    # alias về hàm có sẵn trong file
+    return _sha12_of_df(df)
+
 def run_rule_engine_v2(df, cfg=None):
-        """
-        Dùng bộ 15 rules lõi → trả về DataFrame cho UI (cột _rule, _severity, ...),
-        đồng thời persist flags vào CSV + SQLite.
-        """
-        if df is None or len(df) == 0:
-            return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
-                                         "period","metric","threshold","direction","is_alert","created_at"])
-        mapping = _guess_mapping_from_df(df)
-        batch_id = sha12_of_df(df)
-    
-        flags = run_core_rules(df, mapping, batch_id)
-        save_flags(flags)
-    
-        # View thu gọn cho UI hiện tại (không phá vỡ các gọi sẵn có)
-        view = pd.DataFrame({
-            "_rule":       flags["rule_name"],
-            "_severity":   flags["severity"],
-            "note":        flags["note"],
-            "entity_type": flags["entity_type"],
-            "entity_id":   flags["entity_id"],
-            "period":      flags["period"],
-            "metric":      flags["metric"],
-            "threshold":   flags["threshold"],
-            "direction":   flags["direction"],
-            "is_alert":    flags["is_alert"],
-            "created_at":  flags["created_at"],
-        })
-        return view
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
+                                     "period","metric","threshold","direction","is_alert","created_at"])
+    mapping = _guess_mapping_from_df(df)
+    batch_id = sha12_of_df(df)
+
+    flags = run_core_rules(df, mapping, batch_id)
+    save_flags(flags)
+
+    view = pd.DataFrame({
+        "_rule":       flags["rule_name"],
+        "_severity":   flags["severity"],
+        "note":        flags["note"],
+        "entity_type": flags["entity_type"],
+        "entity_id":   flags["entity_id"],
+        "period":      flags["period"],
+        "metric":      flags["metric"],
+        "threshold":   flags["threshold"],
+        "direction":   flags["direction"],
+        "is_alert":    flags["is_alert"],
+        "created_at":  flags["created_at"],
+    })
+    return view
+
 
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
@@ -2072,9 +2077,9 @@ with TAB7:
         _df_full = SS['df'] if SS.get('df') is not None else None
         if _df_full is not None and len(_df_full)>0:
             cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-            RE2 = run_rule_engine_v2(df, cfg=None)
-            SS['run_rule_engine_v2'] = RE2
-            st.subheader('🧠 Rule Engine — Kết quả')
+            RE2 = run_rule_engine_v2(_df_full, cfg)  # <-- thay df bằng _df_full
+            SS['rule_engine_v2'] = RE2
+            st.subheader('🧠 Rule Engine v2 — Kết quả')
             if RE2 is None or RE2.empty:
                 st.success('Không phát hiện flag theo rules.')
             else:
