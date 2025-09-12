@@ -2072,11 +2072,11 @@ with TAB7:
         _df_full = SS['df'] if SS.get('df') is not None else None
         if _df_full is not None and len(_df_full)>0:
             cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-            RE2 = run_rule_engine_v2(_df_full, cfg)
+            RE2 = run_rule_engine_v2(df, cfg=None)
             SS['rule_engine_v2'] = RE2
-            st.subheader('🧠 Rule Engine v2 — Kết quả')
+            st.subheader('🧠 Rule Engine — Kết quả')
             if RE2 is None or RE2.empty:
-                st.success('Không phát hiện flag theo bộ luật v2.')
+                st.success('Không phát hiện flag theo rules.')
             else:
                 st.write('Tổng số dòng flag:', len(RE2))
                 by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
@@ -2089,7 +2089,7 @@ with TAB7:
         else:
             st.info('Chưa có dữ liệu FULL (hãy Load full data).')
     except Exception as e:
-        st.warning(f'Rule Engine v2 gặp lỗi: {e}')
+        st.warning(f'Rule Engine gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
     use_full_flags = True
     FLAG_DF = DF_FULL
