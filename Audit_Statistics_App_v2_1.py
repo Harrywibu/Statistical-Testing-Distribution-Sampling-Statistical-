@@ -2073,7 +2073,7 @@ with TAB7:
         if _df_full is not None and len(_df_full)>0:
             cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
             RE2 = run_rule_engine_v2(df, cfg=None)
-            SS['rule_engine_v2'] = RE2
+            SS['run_rule_engine_v2'] = RE2
             st.subheader('🧠 Rule Engine — Kết quả')
             if RE2 is None or RE2.empty:
                 st.success('Không phát hiện flag theo rules.')
@@ -2085,15 +2085,14 @@ with TAB7:
                 view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
                 st.dataframe(view, use_container_width=True, height=280)
                 csv = view.to_csv(index=False).encode('utf-8')
-                st.download_button('⬇️ Tải CSV (Rule Engine v2)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
+                st.download_button('⬇️ Tải CSV (Rule Engine)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
         else:
-            st.info('Chưa có dữ liệu FULL (hãy Load full data).')
+            st.info('Chưa có dữ liệu FULL.')
     except Exception as e:
         st.warning(f'Rule Engine gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
     use_full_flags = True
     FLAG_DF = DF_FULL
-    if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
@@ -2244,7 +2243,7 @@ with TAB7:
     # ---- Risk summary from Rule Engine v2 (if available) ----
     RE2 = SS.get('rule_engine_v2')
     if RE2 is not None and not RE2.empty:
-        st.subheader('🧭 Risk Signals (Rule Engine v2)')
+        st.subheader('🧭 Risk Signals (Rule Engine)')
         sev_order = {'High':3,'Medium':2,'Low':1}
         RE2['_sev_ord'] = RE2['_severity'].map(sev_order).fillna(0)
         score = RE2.groupby('_rule')['_sev_ord'].sum().sort_values(ascending=False).rename('score').reset_index()
