@@ -2237,173 +2237,154 @@ with TAB7:
 
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
+# --------------------------- TAB 7: Flags & Risk/Export -----------------------------
 with TAB7:
-    base_df = DF_FULL
-    # ---- Risk summary from Rule Engine v2 (if available) ----
-    RE2 = SS.get('rule_engine_v2')
-    if RE2 is not None and not RE2.empty:
-        st.subheader('🧭 Risk Signals (Rule Engine)')
-        sev_order = {'High':3,'Medium':2,'Low':1}
-        RE2['_sev_ord'] = RE2['_severity'].map(sev_order).fillna(0)
-        score = RE2.groupby('_rule')['_sev_ord'].sum().sort_values(ascending=False).rename('score').reset_index()
-        st.dataframe(score, use_container_width=True, hide_index=True)
-        st.caption('Điểm rủi ro tổng hợp theo rule (High>Medium>Low).')
-    left, right = st.columns([3,2])
-    with left:
-        st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
-        # Quick quality & signals (light)
-        def _quality_report(df_in: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-            rep_rows=[]
-            for c in df_in.columns:
-                s=df_in[c]
-                rep_rows.append({'column':c,'dtype':str(s.dtype),'missing_ratio': round(float(s.isna().mean()),4),
-                                 'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
-            dupes=int(df_in.duplicated().sum())
-            return pd.DataFrame(rep_rows), dupes
-        rep_df, n_dupes = _quality_report(DF_VIEW)
-        signals=[]
-        if n_dupes>0:
-            signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
-        for c in NUM_COLS[:20]:
-            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
-            if len(s)==0: continue
-            zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
-            if zr>0.30:
-                signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
-            if share99>0.02:
-                signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
-        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
-    st.subheader("🧠 Rule Engine — Tổng quan & Chi tiết")
+    st.subheader('🧠 Rule Engine — Tổng quan & Chi tiết')
 
-# --- Helpers ---
-RE2_COLS = ["_rule","_severity","note","entity_type","entity_id","period","metric","threshold","direction","is_alert","created_at"]
-FLAGS_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id","period","metric","threshold","direction","is_alert","note","created_at"]
+    import os, sqlite3
 
-def _empty_re2(): return pd.DataFrame(columns=RE2_COLS)
+    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
+                "period","metric","threshold","direction","is_alert","created_at"]
+    FLAGS_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id",
+                  "period","metric","threshold","direction","is_alert","note","created_at"]
 
-def _get_re2_current(cfg):
-    # ưu tiên guard nếu có
-    try:
-        return run_rule_engine_v2_guard(cfg)
-    except NameError:
-        # fallback: dùng FULL hoặc preview
-        base_df = SS.get('DF_FULL') or SS.get('df')
-        if base_df is None or len(base_df)==0: return _empty_re2()
+    def _empty_re2():
+        return pd.DataFrame(columns=RE2_COLS)
+
+    def _get_base_df():
+        for k in ("DF_FULL", "df"):
+            v = SS.get(k)
+            if isinstance(v, pd.DataFrame) and len(v) > 0:
+                return v
+        return None
+
+    def _normalize(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in is None or not isinstance(df_in, pd.DataFrame) or df_in.empty:
+            return _empty_re2()
+        df = df_in.copy()
+        # Chuẩn hoá tên cột nếu load từ bảng flags (SQLite)
+        map_cols = {"rule_name":"_rule","severity":"_severity"}
+        for c_src, c_dst in map_cols.items():
+            if c_src in df.columns and c_dst not in df.columns:
+                df[c_dst] = df[c_src]
+        for c in RE2_COLS:
+            if c not in df.columns:
+                df[c] = None
+        return df[RE2_COLS]
+
+    def _ensure_sqlite():
+        with sqlite3.connect("flags.sqlite") as conn:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS flags(
+                batch_id TEXT, rule_id TEXT, rule_name TEXT, severity TEXT,
+                entity_type TEXT, entity_id TEXT, period TEXT,
+                metric REAL, threshold TEXT, direction TEXT,
+                is_alert INTEGER, note TEXT, created_at TEXT
+            )""")
+
+    def _load_flags_all() -> pd.DataFrame:
         try:
-            out = run_rule_engine_v2(base_df, cfg)
+            _ensure_sqlite()
+            with sqlite3.connect("flags.sqlite") as conn:
+                df = pd.read_sql_query("SELECT * FROM flags", conn)
+            return df
+        except Exception:
+            return pd.DataFrame(columns=FLAGS_COLS)
+
+    def run_rule_engine_v2_guard(cfg=None) -> pd.DataFrame:
+        """Luôn trả DataFrame; không bao giờ None/Exception."""
+        try:
+            df0 = _get_base_df()
+            if df0 is None:
+                return _empty_re2()
+            out = run_rule_engine_v2(df0, cfg)  # dùng hàm đã có trong file
             return out if isinstance(out, pd.DataFrame) else _empty_re2()
         except Exception:
             return _empty_re2()
 
-def _load_flags_all():
-    if not os.path.exists("flags.sqlite"):
-        return pd.DataFrame(columns=FLAGS_COLS)
-    try:
-        with sqlite3.connect("flags.sqlite") as conn:
-            df = pd.read_sql_query("SELECT * FROM flags", conn)
-        # chuẩn hóa kiểu dữ liệu nhẹ
-        for c in ["metric","is_alert"]: 
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
-        return df
-    except Exception:
-        return pd.DataFrame(columns=FLAGS_COLS)
+    # === Chạy RE2 (dataset hiện tại) / hoặc gộp lịch sử đã persist ===
+    cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+    use_all = st.checkbox('📦 Gộp lịch sử (all tests) từ SQLite', value=False, key='re2_use_all')
 
-def _normalize(df):
-    # Chuẩn hóa cột để gộp nguồn hiện tại (RE2) và lịch sử (SQLite)
-    if "_rule" in df.columns:
-        df = df.rename(columns={"_rule":"rule_name","_severity":"severity"})
-    # đảm bảo đủ cột tối thiểu
-    needed = set(["rule_name","severity","entity_type","entity_id","period","metric","direction","threshold","is_alert","note","created_at"])
-    for c in needed:
-        if c not in df.columns: df[c] = None
-    return df
+    RE2_CUR = _normalize(run_rule_engine_v2_guard(cfg))
+    RE2_ALL = _normalize(_load_flags_all())
+    INS = RE2_ALL if use_all else RE2_CUR
 
-# --- Config + Data source ---
-cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-use_all = st.checkbox("📦 Gộp lịch sử (all test) từ SQLite", value=False)
+    # === KPI nhanh
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Tổng flags", int(len(INS)))
+    c2.metric("Rules", int(INS["_rule"].nunique() if not INS.empty else 0))
+    c3.metric("High", int((INS["_severity"]=="High").sum()))
+    c4.metric("Medium/Low", int((INS["_severity"].isin(["Medium","Low"])).sum()))
 
-DF_CUR = _normalize(_get_re2_current(cfg))
-DF_ALL = _normalize(_load_flags_all())
-INS = DF_ALL if use_all else DF_CUR
+    # === Bộ lọc + bảng tổng hợp & chi tiết
+    col1,col2,col3,col4 = st.columns([1.2,1.2,1.2,2])
+    sev = col1.multiselect("Severity", ["High","Medium","Low"], default=[], key='re2_sev')
+    rules = ["(All)"] + sorted(INS["_rule"].dropna().unique().tolist())
+    pick_rule = col2.selectbox("Rule", rules, key='re2_pick_rule')
+    entity_types = ["(All)"] + sorted(INS["entity_type"].dropna().unique().tolist())
+    pick_et = col3.selectbox("Entity", entity_types, key='re2_pick_et')
+    kw = col4.text_input("Tìm theo entity_id/note", "", key='re2_kw')
 
-# --- KPI ---
-c1,c2,c3,c4 = st.columns(4)
-c1.metric("Tổng flags", len(INS))
-c2.metric("High", int((INS["severity"]=="High").sum()))
-c3.metric("Medium", int((INS["severity"]=="Medium").sum()))
-c4.metric("Low", int((INS["severity"]=="Low").sum()))
+    view = INS.copy()
+    if sev: view = view[view["_severity"].isin(sev)]
+    if pick_rule != "(All)": view = view[view["_rule"] == pick_rule]
+    if pick_et != "(All)": view = view[view["entity_type"] == pick_et]
+    if kw:
+        mask = view["entity_id"].astype(str).str.contains(kw, case=False, na=False) | \
+               view["note"].astype(str).str.contains(kw, case=False, na=False)
+        view = view[mask]
 
-# --- Filters ---
-fc1,fc2,fc3,fc4 = st.columns(4)
-sev = fc1.multiselect("Mức độ", ["High","Medium","Low"], default=["High","Medium","Low"])
-rules = ["(All)"] + sorted([x for x in INS["rule_name"].dropna().unique().tolist()])
-pick_rule = fc2.selectbox("Rule", rules)
-entity_types = ["(All)"] + sorted([x for x in INS["entity_type"].dropna().unique().tolist()])
-pick_et = fc3.selectbox("Entity", entity_types)
-kw = fc4.text_input("Tìm theo entity_id / note")
+    st.markdown("**📊 Tổng hợp theo Rule**")
+    if view.empty:
+        st.info("Không có flag sau khi lọc.")
+    else:
+        by_rule = (view.groupby(["_rule","_severity"])
+                        .size().reset_index(name="n")
+                        .sort_values(["n","_rule"], ascending=[False, True]))
+        st.dataframe(by_rule, use_container_width=True, hide_index=True)
 
-view = INS.copy()
-if sev: view = view[view["severity"].isin(sev)]
-if pick_rule!="(All)": view = view[view["rule_name"]==pick_rule]
-if pick_et!="(All)": view = view[view["entity_type"]==pick_et]
-if kw:
-    mask = view["entity_id"].astype(str).str.contains(kw, case=False, na=False) | view["note"].astype(str).str.contains(kw, case=False, na=False)
-    view = view[mask]
+    st.markdown("**🔎 Chi tiết flags**")
+    st.dataframe(
+        view[["_rule","_severity","entity_type","entity_id","period","metric","threshold","direction","note","created_at"]],
+        use_container_width=True, height=320, hide_index=True
+    )
 
-# --- Tổng hợp theo rule (insight all test gộp) ---
-by_rule = (view.groupby(["rule_name","severity"])
-                .size().reset_index(name="n")
-                .sort_values(["n","rule_name"], ascending=[False, True]))
-st.markdown("**📊 Tổng hợp theo Rule**")
-st.dataframe(by_rule, use_container_width=True, hide_index=True)
+    csv = view.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Tải CSV (Rule Engine)", data=csv,
+                       file_name="rule_engine_flags.csv", mime="text/csv", key='re2_dl')
 
-# --- Chi tiết ---
-st.markdown("**🔎 Chi tiết flags**")
-st.dataframe(view[["rule_name","severity","entity_type","entity_id","period","metric","direction","threshold","note","created_at"]],
-             use_container_width=True, hide_index=True, height=320)
-
-# --- Tải CSV ---
-csv = view.to_csv(index=False).encode("utf-8")
-st.download_button("⬇️ Tải CSV (Rule Engine hợp nhất)", data=csv, file_name="rule_engine_unified.csv", mime="text/csv")
-# ==== /TAB7 — Rule Engine: Tổng quan & Chi tiết (hợp nhất) ====
-with right:
-        st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
-        # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
-        st.caption('Chọn nội dung từ các tab, sau đó xuất báo cáo với tiêu đề tuỳ chỉnh.')
+    # Export gọn gàng trong expander (thay vì cột phải dễ lệch thụt lề)
+    with st.expander("🧾 Export báo cáo (DOCX/PDF)"):
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
-        scale = st.slider('Export scale (DPI factor)', 1.0, 3.0, 2.0, 0.5, key='exp_scale')
-        # For simplicity, take screenshots of figures currently present is not feasible; typical approach is to maintain a registry.
-        # Here we export only a simple PDF/DOCX shell with metadata.
         if st.button('🖼️ Export blank shell DOCX/PDF'):
-            meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'), 'time': datetime.now().isoformat(timespec='seconds')}
-            docx_path=None; pdf_path=None
-            if HAS_DOCX:
-                try:
+            meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'),
+                  'time': datetime.now().isoformat(timespec='seconds')}
+            outs=[]
+            try:
+                if HAS_DOCX:
                     d = docx.Document(); d.add_heading(meta['title'], 0)
                     d.add_paragraph(f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}")
-                    d.add_paragraph('Gợi ý: quay lại các tab để capture hình (kèm Kaleido) và chèn vào báo cáo.')
-                    docx_path = f"report_{int(time.time())}.docx"; d.save(docx_path)
-                except Exception: pass
-            if HAS_PDF:
-                try:
+                    d.add_paragraph('Gợi ý: quay lại các tab để capture hình và chèn vào báo cáo.')
+                    p = f"report_{int(time.time())}.docx"; d.save(p); outs.append(p)
+            except Exception: pass
+            try:
+                if HAS_PDF:
                     doc = fitz.open(); page = doc.new_page(); y=36
                     page.insert_text((36,y), meta['title'], fontsize=16); y+=22
                     page.insert_text((36,y), f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}", fontsize=10); y+=18
-                    page.insert_text((36,y), 'Gợi ý: quay lại các tab để capture hình (Kaleido) và chèn vào báo cáo.', fontsize=10)
-                    pdf_path = f"report_{int(time.time())}.pdf"; doc.save(pdf_path); doc.close()
-                except Exception: pass
-            outs=[p for p in [docx_path,pdf_path] if p]
+                    page.insert_text((36,y), 'Gợi ý: quay lại các tab để chèn hình/biểu đồ.', fontsize=10)
+                    p = f"report_{int(time.time())}.pdf"; doc.save(p); doc.close(); outs.append(p)
+            except Exception: pass
             if outs:
                 st.success('Exported: ' + ', '.join(outs))
                 for pth in outs:
-                    with open(pth,'rb') as f: st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
+                    with open(pth,'rb') as f:
+                        st.download_button(f'⬇️ Download {os.path.basename(pth)}',
+                                           data=f.read(), file_name=os.path.basename(pth))
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
-        _df = _df_full_safe()
-        flags = run_core_rules(_df, SS["schema_map"], SS["BATCH_ID"])
-        save_flags(flags)
-        st.success(f"Đã log {len(flags)} flags → CSV/SQLite.")
-        st.dataframe(flags.head(50))
+
 
 
 # End of file
