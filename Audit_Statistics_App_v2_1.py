@@ -218,34 +218,34 @@ def emit(rule_id, rule_name, severity, entity_type, entity_id, period, metric, t
         pass
 
     def run_rule_engine_v2(df, cfg=None):
-    """
-    Dùng bộ 15 rules lõi → trả về DataFrame cho UI (cột _rule, _severity, ...),
-    đồng thời persist flags vào CSV + SQLite.
-    """
-    if df is None or len(df) == 0:
-        return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
-                                     "period","metric","threshold","direction","is_alert","created_at"])
-    mapping = _guess_mapping_from_df(df)
-    batch_id = sha12_of_df(df)
-
-    flags = run_core_rules(df, mapping, batch_id)
-    save_flags(flags)
-
-    # View thu gọn cho UI hiện tại (không phá vỡ các gọi sẵn có)
-    view = pd.DataFrame({
-        "_rule":       flags["rule_name"],
-        "_severity":   flags["severity"],
-        "note":        flags["note"],
-        "entity_type": flags["entity_type"],
-        "entity_id":   flags["entity_id"],
-        "period":      flags["period"],
-        "metric":      flags["metric"],
-        "threshold":   flags["threshold"],
-        "direction":   flags["direction"],
-        "is_alert":    flags["is_alert"],
-        "created_at":  flags["created_at"],
-    })
-    return view
+        """
+        Dùng bộ 15 rules lõi → trả về DataFrame cho UI (cột _rule, _severity, ...),
+        đồng thời persist flags vào CSV + SQLite.
+        """
+        if df is None or len(df) == 0:
+            return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
+                                         "period","metric","threshold","direction","is_alert","created_at"])
+        mapping = _guess_mapping_from_df(df)
+        batch_id = sha12_of_df(df)
+    
+        flags = run_core_rules(df, mapping, batch_id)
+        save_flags(flags)
+    
+        # View thu gọn cho UI hiện tại (không phá vỡ các gọi sẵn có)
+        view = pd.DataFrame({
+            "_rule":       flags["rule_name"],
+            "_severity":   flags["severity"],
+            "note":        flags["note"],
+            "entity_type": flags["entity_type"],
+            "entity_id":   flags["entity_id"],
+            "period":      flags["period"],
+            "metric":      flags["metric"],
+            "threshold":   flags["threshold"],
+            "direction":   flags["direction"],
+            "is_alert":    flags["is_alert"],
+            "created_at":  flags["created_at"],
+        })
+        return view
 
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
