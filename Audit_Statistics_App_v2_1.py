@@ -6,250 +6,269 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
 
-def require_full_data(banner='Chưa có dữ liệu. Hãy dùng **Load full data** trước khi chạy tab này.'):
+def require_full_data(banner='Chưa có dữ liệu FULL. Hãy dùng **Load full data** trước khi chạy tab này.'):
     df = SS.get('df')
     import pandas as pd
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         st.info(banner); st.stop()
     return df
     
-from typing import List, Dict
-# --- Persist layer ---
-FLAGS_CSV = "flags_log.csv"
-FLAGS_DB  = "flags.sqlite"
+def _first_match(colnames, patterns):
+    cols = [c for c in colnames]
+    low = {c: str(c).lower() for c in cols}
+    for p in patterns:
+        p = p.lower()
+        for c in cols:
+            if p in low[c]:
+                return c
+    return None
 
-def _ensure_sqlite():
-    with sqlite3.connect(FLAGS_DB) as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS flags(
-            batch_id TEXT, rule_id TEXT, rule_name TEXT, severity TEXT,
-            entity_type TEXT, entity_id TEXT, period TEXT,
-            metric REAL, threshold TEXT, direction TEXT,
-            is_alert INTEGER, note TEXT, created_at TEXT
-        )""")
 
-def save_flags(flags_df: pd.DataFrame):
-    if flags_df.empty: return
-    # CSV append
-    write_header = not os.path.exists(FLAGS_CSV)
-    flags_df.to_csv(FLAGS_CSV, mode="a", index=False, header=write_header, encoding="utf-8")
-    # SQLite append
-    _ensure_sqlite()
-    with sqlite3.connect(FLAGS_DB) as conn:
-        flags_df.to_sql("flags", conn, if_exists="append", index=False)
+def apply_schema_mapping(df):
+    import pandas as pd, numpy as np
+    if df is None or not hasattr(df, 'columns'):
+        return df, {}
 
-def _role(m, key): return m.get(key)
+    df = df.copy()
+    cols = list(df.columns)
+    std = {}
 
-def _periodize(s: pd.Series, freq="M"):
-    try:
-        return pd.to_datetime(s).dt.to_period(freq).astype(str)
-    except Exception:
+    def _first_match(colnames, patterns):
+        low = {c: str(c).lower() for c in colnames}
+        for p in patterns:
+            p = p.lower()
+            for c in colnames:
+                if p in low[c]:
+                    return c
         return None
 
-def run_core_rules(df: pd.DataFrame, mapping: Dict, batch_id: str) -> pd.DataFrame:
-    now = datetime.now().isoformat(timespec="seconds")
-    out = []
+    # Posting date → posting_date (day-first)
+    c_date = _first_match(cols, ['posting date','posting_date','pstg','post date','posting'])
+    if c_date is not None:
+        try:
+            df['posting_date'] = pd.to_datetime(df[c_date], errors='coerce', dayfirst=True)
+            std['posting_date'] = 'posting_date'
+        except Exception:
+            pass
 
-def emit(rule_id, rule_name, severity, entity_type, entity_id, period, metric, threshold, direction, is_alert, note):
-    out.append({
-        "batch_id": batch_id,
-        "rule_id": rule_id, "rule_name": rule_name, "severity": severity,
-        "entity_type": entity_type, "entity_id": entity_id or "",
-        "period": period or "", "metric": float(metric) if pd.notna(metric) else None,
-        "threshold": str(threshold), "direction": direction, "is_alert": int(bool(is_alert)),
-        "note": note, "created_at": now
-        })
+    # Customer → customer_id (leading digits) + customer_name (rest)
+    c_cust = _first_match(cols, ['customer','customer name','cust'])
+    if c_cust is not None:
+        try:
+            s = df[c_cust].astype('string')
+            df['customer_id'] = s.str.extract(r'^\s*(\d+)', expand=False)
+            df['customer_name'] = s.str.replace(r'^\s*\d+\s*[-_:\s]*', '', regex=True)
+            std['customer_id'] = 'customer_id'; std['customer_name'] = 'customer_name'
+        except Exception:
+            pass
 
-    # Aliases
-    c_time  = _role(mapping,"time")
-    c_amt   = _role(mapping,"amount")
-    c_qty   = _role(mapping,"qty")
-    c_price = _role(mapping,"price")
-    c_prod  = _role(mapping,"product_code")
-    c_cust  = _role(mapping,"customer_id")
-    c_inv   = _role(mapping,"invoice_id")
-    c_ch    = _role(mapping,"channel")
-    c_ret   = _role(mapping,"return_flag")
+    # Product + groups
+    c_prod = _first_match(cols, ['product','sku','item'])
+    if c_prod is not None:
+        try:
+            df['product'] = df[c_prod].astype('string')
+            std['product'] = 'product'
+        except Exception:
+            pass
+    for k in range(1,7):
+        ck = _first_match(cols, [f'group {k}', f'prod group {k}', f'product group {k}', f'group{k}'])
+        if ck is not None:
+            try:
+                df[f'product_group_{k}'] = df[ck].astype('string')
+                std[f'product_group_{k}'] = f'product_group_{k}'
+            except Exception:
+                pass
 
-    _df = df.copy()
-    _df[c_amt] = pd.to_numeric(_df[c_amt], errors="coerce")
-    if c_qty:   _df[c_qty] = pd.to_numeric(_df[c_qty], errors="coerce")
-    if c_price: _df[c_price] = pd.to_numeric(_df[c_price], errors="coerce")
-    if c_time:  _df[c_time] = pd.to_datetime(_df[c_time], errors="coerce")
-    perM = _periodize(_df[c_time], "M") if c_time else None
+    # Channels/departments
+    ch_map = {
+        'region': ['region','vung','area','zone','province','state'],
+        'distr_channel': ['distr. channel','distribution channel','channel','kenh'],
+        'sales_person': ['sales person','salesperson','sale person','nhan vien','seller'],
+        'business_process': ['business process','process','operation','nghiep vu'],
+        'country_region_key': ['country/region key','country','region key','country key']
+    }
+    for k, pats in ch_map.items():
+        c = _first_match(cols, pats)
+        if c is not None:
+            try:
+                df[k] = df[c]
+                std[k] = k
+            except Exception:
+                pass
 
-    # R1: Amount âm / Qty âm
-    neg_amt = _df[_df[c_amt] < 0]
-    for i in neg_amt.index:
-        emit("R1","Negative amount","High","invoice", _df.loc[i, c_inv] if c_inv else "", perM[i] if perM is not None else "",
-             _df.loc[i, c_amt], ">=0", "below", True, "Doanh thu âm.")
+    # Measures (coerce numeric where possible) — NO derived columns
+    def copy_first(cands, newname):
+        for cand in cands:
+            c = _first_match(cols, [cand])
+            if c is None:
+                continue
+            try:
+                series = pd.to_numeric(df[c], errors='coerce')
+            except Exception:
+                series = df[c]
+            df[newname] = series
+            std[newname] = newname
+            return True
+        return False
 
-    if c_qty:
-        neg_qty = _df[_df[c_qty] < 0]
-        for i in neg_qty.index:
-            emit("R2","Negative quantity","High","invoice", _df.loc[i, c_inv] if c_inv else "", perM[i] if perM is not None else "",
-                 _df.loc[i, c_qty], ">=0", "below", True, "Số lượng âm.")
+    copy_first(['sales quantity','unit sales qty','qty','quantity','sales qty'], 'qty')
+    copy_first(['sales weight','unit sales weig','weight','kg'], 'weight_kg')
+    copy_first(['sales revenue','gross sales','gross_sales_vnd'], 'gross_sales_vnd')
+    copy_first(['service revenue','service_revenue_vnd'], 'service_revenue_vnd')
+    copy_first(['sales return','returns','returns_vnd'], 'returns_vnd')
+    copy_first(['sales discount','discount','discount_vnd'], 'discount_vnd')
+    copy_first(['net sales revenue','net sales','net_sales_vnd'], 'net_sales_vnd')
 
-    # R3: Free item / zero price vs qty>0
-    if c_qty and c_price:
-        z = _df[(pd.notna(_df[c_qty])) & (_df[c_qty] > 0) & (_df[c_price] <= 0)]
-        for i in z.index:
-            emit("R3","Zero/negative price","Medium","invoice", _df.loc[i,c_inv] if c_inv else "",
-                 perM[i] if perM is not None else "", _df.loc[i,c_price], ">0", "below", True, "Đơn giá <= 0 với qty>0.")
+    return df, std
 
-    # R4: Round-number anomaly (amount bội 1,000)
-    mod = _df[c_amt] % 1000
-    r4 = _df[(mod==0)]
-    for i in r4.index:
-        emit("R4","Round amount (x1000)","Low","invoice", _df.loc[i,c_inv] if c_inv else "",
-             perM[i] if perM is not None else "", _df.loc[i,c_amt], "not multiple of 1000", "==", True, "Số làm tròn bội 1,000.")
-
-    # R5: .99 pattern
-    cents = (_df[c_amt].abs()*100).round().astype("Int64") % 100
-    r5 = _df[(cents==99)]
-    for i in r5.index:
-        emit("R5",".99 ending","Low","invoice", _df.loc[i,c_inv] if c_inv else "",
-             perM[i] if perM is not None else "", _df.loc[i,c_amt], "not 0.99 pattern", "==", True, "Đuôi .99 bất thường.")
-
-    # R6: Off-hour posting (ngoài 06–22)
-    if c_time:
-        hh = _df[c_time].dt.hour
-        r6 = _df[(hh<6)|(hh>22)]
-        for i in r6.index:
-            emit("R6","Off-hour posting","Medium","invoice", _df.loc[i,c_inv] if c_inv else "",
-                 perM[i], hh[i], "06–22", "outside", True, "Ghi nhận ngoài giờ làm việc.")
-
-    # R7: Weekend/holiday posting (weekend)
-    if c_time:
-        wd = _df[c_time].dt.dayofweek
-        r7 = _df[(wd>=5)]
-        for i in r7.index:
-            emit("R7","Weekend posting","Low","invoice", _df.loc[i,c_inv] if c_inv else "",
-                 perM[i], wd[i], "Mon–Fri", "outside", True, "Giao dịch cuối tuần.")
-
-    # R8: Duplicate line cùng ngày: (cust,prod,amount) (nới lỏng nếu thiếu cột)
-    keys = [k for k in [c_cust, c_prod, c_amt] if k]
-    if c_time and len(keys)>=2:
-        g = _df.groupby([_df[c_time].dt.date] + keys).size().reset_index(name="n")
-        dup = g[g["n"]>1]
-        for _,row in dup.iterrows():
-            ent = str(row.get(c_cust) or row.get(c_prod) or "")
-            emit("R8","Duplicate lines same-day","Medium","group", ent, str(pd.Period(row[0], freq="D")), row["n"], ">1", ">", True,
-                 f"Trùng {keys} trong ngày.")
-
-    # R9: Price per unit outlier theo SKU (IQR)
-    if c_qty and c_prod:
-        safe_qty = _df[(pd.notna(_df[c_qty])) & (_df[c_qty]!=0)]
-        safe_qty = safe_qty.assign(ppu = safe_qty[c_amt]/safe_qty[c_qty])
-        q = safe_qty.groupby(c_prod)["ppu"].quantile([0.25,0.75]).unstack()
-        q.columns = ["q1","q3"]; q["iqr"] = q["q3"]-q["q1"]
-        bounds = q.assign(lo = q["q1"]-1.5*q["iqr"], hi = q["q3"]+1.5*q["iqr"])
-        merged = safe_qty.merge(bounds[["lo","hi"]], left_on=c_prod, right_index=True, how="left")
-        outl = merged[(merged["ppu"]<merged["lo"])|(merged["ppu"]>merged["hi"])]
-        for _,row in outl.iterrows():
-            emit("R9","PPU outlier by SKU","High","product", row[c_prod], perM.loc[row.name] if perM is not None else "",
-                 row["ppu"], f"[{row['lo']:.2f},{row['hi']:.2f}]", "outside", True, "Đơn giá/đv lệch chuẩn theo SKU.")
-
-    # R10: Discount rate bất thường (> p95 theo kênh/SKU nếu có cột discount)
-    if c_discount := mapping.get("discount"):
-        _df[c_discount] = pd.to_numeric(_df[c_discount], errors="coerce")
-        group_keys = [x for x in [c_ch, c_prod] if x]
-        if group_keys:
-            g = _df.groupby(group_keys)[c_discount].quantile(0.95).reset_index().rename(columns={c_discount:"p95"})
-            j = _df.merge(g, on=group_keys, how="left")
-            abn = j[j[c_discount] > j["p95"]]
-            for _,row in abn.iterrows():
-                ent = " / ".join([str(row.get(k)) for k in group_keys])
-                emit("R10","Abnormal discount","Medium","segment", ent, perM.loc[row.name] if perM is not None else "",
-                     row[c_discount], f">p95={row['p95']:.2f}", ">", True, "Giảm giá vượt ngưỡng p95 theo kênh/SKU.")
-
-    # R11: Return rate cao theo SKU/kênh (nếu có flag return)
-    if c_ret and c_prod:
-        rr = _df.assign(is_ret = _df[c_ret].astype(str).str.lower().isin(["1","true","yes","y","return"]))
-        group_keys = [k for k in [c_prod, c_ch] if k]
-        g = rr.groupby(group_keys)["is_ret"].mean().reset_index(name="ret_rate")
-        p95 = g["ret_rate"].quantile(0.95)
-        high = g[g["ret_rate"]>p95]
-        for _,row in high.iterrows():
-            ent = " / ".join([str(row.get(k)) for k in group_keys])
-            emit("R11","High return rate","High","segment", ent, "", row["ret_rate"], f">p95={p95:.3f}", ">", True,
-                 "Tỉ lệ hàng trả cao bất thường.")
-
-    # R12: Backdated/Future-dated (nếu có posting vs document date)
-    # Nếu chỉ có 1 cột time — bỏ qua; nếu bạn có 'document_date' thì thêm tương quan ở đây.
-
-    # R13: New customer/SKU spike (mốc 30 ngày đầu > p99 toàn cục)
-    if c_time and (c_cust or c_prod):
-        key = c_cust if c_cust else c_prod
-        first_date = _df.groupby(key)[c_time].min().rename("first_date")
-        j = _df.merge(first_date, left_on=key, right_index=True, how="left")
-        first_30 = j[(j[c_time]-j["first_date"]).dt.days<=30]
-        p99 = _df[c_amt].quantile(0.99)
-        spike = first_30[first_30[c_amt]>p99]
-        for _,row in spike.iterrows():
-            emit("R13","New-entity spike","Medium","entity", row[key], perM.loc[row.name] if perM is not None else "",
-                 row[c_amt], f">p99={p99:.2f}", ">", True, "Giá trị lớn trong 30 ngày đầu của thực thể.")
-
-    # R14: Missing master mapping
-    for col, rid, name, sev in [(c_prod,"R14a","Missing product_code","Medium"),
-                                (c_cust,"R14b","Missing customer_id","Medium")]:
-        if col:
-            miss = _df[col].isna() | (_df[col].astype(str).str.strip()=="")
-            for i in _df[miss].index:
-                emit(rid, name, sev, "row", "", perM[i] if perM is not None else "", 1, "not null", "!=", True, f"Thiếu {col}.")
-
-    # R15: Benford 1st-digit lệch (tổng quan) — chỉ log 1 dòng/batch nếu đủ điều kiện
-    # (Chạy khi amount>0 đủ đa dạng)
-    try:
-        pos = _df[_df[c_amt]>0][c_amt].dropna()
-        if len(pos) >= 200:
-            first = pos.astype(float).astype(int).astype(str).str[0].astype(int)
-            obs = first.value_counts(normalize=True).sort_index()
-            ben = pd.Series({d: np.log10(1+1/d) for d in range(1,10)})
-            diff = float((obs-ben).abs().sum())
-            is_alert = diff>0.15  # ngưỡng pilot; chuẩn hóa sau
-            emit("R15","Benford deviation","Low","batch","", "", diff, "Σ|obs-benford|>0.15", ">", is_alert,
-                 "Độ lệch Benford chữ số đầu.")
-    except Exception:
-        pass
-
-# đặt cạnh các helper khác (cấp module, thụt lề 0)
-def _guess_mapping_from_df(df: pd.DataFrame):
-    # tái sử dụng suy luận mapping sẵn có
-    return infer_mapping(df)
-
-def sha12_of_df(df: pd.DataFrame):
-    # alias về hàm có sẵn trong file
-    return _sha12_of_df(df)
 
 def run_rule_engine_v2(df, cfg=None):
-    if df is None or len(df) == 0:
-        return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
-                                     "period","metric","threshold","direction","is_alert","created_at"])
-    mapping = _guess_mapping_from_df(df)
-    batch_id = sha12_of_df(df)
+    import pandas as pd, numpy as np
+    if df is None or df.empty:
+        return pd.DataFrame()
 
-    flags = run_core_rules(df, mapping, batch_id)
-    save_flags(flags)
+    cfg = cfg or {}
+    tol = cfg.get('pnl_tol_vnd', 1.0)
+    ret_thr = cfg.get('return_rate_thr', 0.2)
+    iqr_k = cfg.get('iqr_k', 1.5)
 
-    view = pd.DataFrame({
-        "_rule":       flags["rule_name"],
-        "_severity":   flags["severity"],
-        "note":        flags["note"],
-        "entity_type": flags["entity_type"],
-        "entity_id":   flags["entity_id"],
-        "period":      flags["period"],
-        "metric":      flags["metric"],
-        "threshold":   flags["threshold"],
-        "direction":   flags["direction"],
-        "is_alert":    flags["is_alert"],
-        "created_at":  flags["created_at"],
-    })
-    return view
+    rules = []
 
+    ns = df.get('net_sales_vnd')
+    qty = df.get('qty'); wkg = df.get('weight_kg')
+    prod = df.get('product')
+    post = df.get('posting_date')
+    gro  = df.get('gross_sales_vnd'); ret = df.get('returns_vnd'); disc = df.get('discount_vnd')
+    bp   = df.get('business_process') if df.get('business_process') is not None else df.get('operation')
+    typ  = df.get('distr_channel') if df.get('distr_channel') is not None else df.get('type')
+
+    # derived (local only) — DO NOT add to df
+    nd = None
+    try:
+        if ns is not None and (gro is not None or ret is not None or disc is not None):
+            base = (gro.fillna(0) if gro is not None else 0) - (ret.fillna(0) if ret is not None else 0) - (disc.fillna(0) if disc is not None else 0)
+            nd = ns - base
+    except Exception:
+        nd = None
+
+    rr = None
+    try:
+        if ret is not None and gro is not None:
+            denom = gro.replace(0, pd.NA)
+            rr = ret / denom
+    except Exception:
+        rr = None
+
+    nperq = None
+    try:
+        if ns is not None and qty is not None:
+            nperq = ns / qty.replace(0, pd.NA)
+    except Exception:
+        nperq = None
+
+    nperw = None
+    try:
+        if ns is not None and wkg is not None:
+            nperw = ns / wkg.replace(0, pd.NA)
+    except Exception:
+        nperw = None
+
+    def add_rule(mask, rule, sev, note_series=None):
+        if mask is None: return
+        idx = df.index[mask.fillna(False)]
+        if len(idx)==0: return
+        sub = df.loc[idx, :].copy()
+        sub['_rule'] = rule
+        sub['_severity'] = sev
+        if note_series is not None:
+            try:
+                sub['_note'] = note_series.loc[idx]
+            except Exception:
+                sub['_note'] = None
+        rules.append(sub)
+
+    # 1) pnl_inconsistency
+    if nd is not None:
+        add_rule(nd.abs() > tol, 'pnl_inconsistency', 'High', nd)
+
+    # 2) negative_net_sales (exclude discount-like)
+    if ns is not None:
+        mask = ns < 0
+        if bp is not None:
+            mask = mask & (~bp.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
+        elif typ is not None:
+            mask = mask & (~typ.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
+        add_rule(mask, 'negative_net_sales', 'High', ns)
+
+    # 3) discount_without_base
+    if (qty is not None) and (wkg is not None) and ((bp is not None) or (typ is not None)):
+        label = (bp if bp is not None else typ).astype('string').str.lower()
+        mask = label.str.contains('discount', na=False) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
+        add_rule(mask, 'discount_without_base', 'Medium')
+
+    # 4) zero_measures_positive_sales
+    if (ns is not None) and (qty is not None) and (wkg is not None):
+        mask = (ns > 0) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
+        add_rule(mask, 'zero_measures_positive_sales', 'High', ns)
+
+    # 5) unit_mismatch
+    unit_col = None
+    for c in df.columns:
+        lc = str(c).lower()
+        if ('unit' in lc) and any(k in lc for k in ['qty','quantity','uom','unit qty']):
+            unit_col = c; break
+    if (unit_col is not None) and (wkg is not None):
+        u = df[unit_col].astype('string').str.upper()
+        mask = u.isin(['PC','PCS']) & (wkg.fillna(0) > 0)
+        add_rule(mask, 'unit_mismatch', 'Medium', u)
+
+    # 6) price_per_weight_outlier using nperw
+    if (prod is not None) and (nperw is not None):
+        gp = df.groupby(prod.name)
+        bounds = gp[nperw.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
+        bounds['iqr'] = bounds['q3'] - bounds['q1']
+        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
+        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
+        join = pd.DataFrame({'_v': nperw, prod.name: prod}).join(bounds, on=prod.name)
+        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
+        add_rule(mask, 'price_per_weight_outlier', 'Medium', join['_v'])
+
+    # 7) price_per_qty_outlier using nperq
+    if (prod is not None) and (nperq is not None):
+        gp = df.groupby(prod.name)
+        bounds = gp[nperq.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
+        bounds['iqr'] = bounds['q3'] - bounds['q1']
+        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
+        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
+        join = pd.DataFrame({'_v': nperq, prod.name: prod}).join(bounds, on=prod.name)
+        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
+        add_rule(mask, 'price_per_qty_outlier', 'Medium', join['_v'])
+
+    # 8) duplicate_line_same_day
+    if (df.get('customer_id') is not None or df.get('customer_name') is not None) and (prod is not None) and (post is not None) and (ns is not None):
+        key_a = 'customer_id' if df.get('customer_id') is not None else 'customer_name'
+        dup = df.duplicated(subset=[key_a, prod.name, 'posting_date', ns.name], keep=False)
+        add_rule(dup, 'duplicate_line_same_day', 'Medium')
+
+    # 9) posting_date_invalid
+    if post is not None:
+        add_rule(post.isna(), 'posting_date_invalid', 'Low')
+
+    # 10) high_return_rate
+    if rr is not None:
+        add_rule(rr > ret_thr, 'high_return_rate', 'High', rr)
+
+    if len(rules)==0:
+        return pd.DataFrame(columns=['_rule','_severity'])
+    out = pd.concat(rules, axis=0, ignore_index=False)
+    keep = ['_rule','_severity','customer_id','customer_name','product','posting_date','net_sales_vnd','qty','weight_kg','_note']
+    keep = [c for c in keep if c in out.columns]
+    out = out[keep].copy()
+    return out
 
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
@@ -593,13 +612,6 @@ def _benford_2d(series: pd.Series):
     table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
     return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
-def _df_full_safe():
-    df = SS.get("DF_FULL")
-    if df is None or not SS.get("ingest_locked", False):
-        st.warning("Chưa LOCK ingest / chưa Load Full Data.")
-        st.stop()
-    return df
-
 def _benford_ready(series: pd.Series) -> tuple[bool, str]:
     s = pd.to_numeric(series, errors='coerce')
     n_pos = int((s>0).sum())
@@ -699,7 +711,6 @@ with colR:
     do_preview = st.button('🔎 Quick preview', key='btn_prev')
 
 # Ingest flow
-
 if fname.lower().endswith('.csv'):
     if do_preview or SS['df_preview'] is None:
         try:
@@ -761,92 +772,9 @@ else:
 
 if SS['df'] is None and SS['df_preview'] is None:
     st.stop()
-import hashlib, os, sqlite3, pandas as pd, numpy as np
-from datetime import datetime
-
-SS = st.session_state
-
-def _sha12_of_df(df: pd.DataFrame) -> str:
-    # hash để định danh batch, dùng cho lưu vết
-    h = hashlib.sha1(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
-    return h[:12]
-
-DEFAULT_EXPECTED = {
-    "time": ["date","posting","post","ngay","thoi_gian","time"],
-    "invoice_id": ["inv","so_ct","document","voucher"],
-    "product_code": ["sku","ma_sp","product_code","item"],
-    "product_name": ["ten_sp","product","item_name"],
-    "customer_id": ["kh","customer","account","client","buyer_id"],
-    "customer_name": ["ten_kh","customer_name","client_name"],
-    "channel": ["kenh","channel","kênh","segment"],
-    "branch": ["branch","cn","chi_nhanh","region","vung"],
-    "qty": ["qty","so_luong","quantity","qtty","q'ty"],
-    "price": ["gia","price","unit_price","don_gia"],
-    "amount": ["amount","doanh_thu","revenue","gross","net_sales","thanh_tien"],
-    "discount": ["giam_gia","discount","disc_amt","khuyen_mai"],
-    "return_flag": ["return","hang_tra","is_return","refund"],
-    "type": ["type","transaction_type","loai_gd"]
-}
-
-def infer_mapping(df: pd.DataFrame, expected=DEFAULT_EXPECTED):
-    cols = {c: str(c).lower() for c in df.columns}
-    mapping = {}
-    for role, keys in expected.items():
-        found = None
-        for c, lc in cols.items():
-            if any(k in lc for k in keys):
-                found = c; break
-        mapping[role] = found
-    return mapping
-
-def checklist_columns(df: pd.DataFrame, mapping: dict):
-    required = ["time","amount"]
-    nice_to_have = ["qty","price","product_code","customer_id","invoice_id"]
-    miss_req = [k for k in required if not mapping.get(k)]
-    return {
-        "required_ok": len(miss_req)==0,
-        "missing_required": miss_req,
-        "nice_missing": [k for k in nice_to_have if not mapping.get(k)]
-    }
-
-# --- UI ---    
-_full = SS.get("DF_FULL"); _df = SS.get("df")
-base_df = _full if isinstance(_full, pd.DataFrame) and not _full.empty else (_df if isinstance(_df, pd.DataFrame) and not _df.empty else None)
-if base_df is not None:
-    if "ingest_locked" not in SS: SS["ingest_locked"] = False
-    if "schema_map" not in SS:
-        SS["schema_map"] = infer_mapping(base_df)
-    with st.expander("🔐 Ingest — Schema mapping & Checklist", expanded=False):
-        with st.form(key="ingest_lock_form", clear_on_submit=False):
-            
-            st.caption("Map lại cột theo vai trò phân tích (có thể để trống nếu không có).")
-            cols = list(base_df.columns)
-            m = {}
-            for role, current in SS["schema_map"].items():
-                m[role] = st.selectbox(f"{role}", ["(none)"]+cols, index=(cols.index(current)+1 if current in cols else 0))
-                if m[role] == "(none)": m[role] = None
-    
-            chk = checklist_columns(base_df, m)
-            st.markdown(
-                f"- Bắt buộc có: **time, amount** → "
-                + ("✅ Ok" if chk["required_ok"] else f"❌ thiếu: {', '.join(chk['missing_required'])}")
-            )
-            if chk["nice_missing"]:
-                st.markdown(f"- Nên có: qty, price, product_code, customer_id, invoice_id → còn thiếu: {', '.join(chk['nice_missing'])}")
-    
-            lock = st.form_submit_button("✅ Confirm & LOCK ingest")
-            if lock:
-                if not chk["required_ok"]:
-                    st.error("Thiếu cột bắt buộc → chưa thể khóa ingest.")
-                else:
-                    SS["schema_map"] = m
-                    SS["ingest_locked"] = True
-                    SS["BATCH_ID"] = _sha12_of_df(base_df)
-                    SS["DF_FULL"] = base_df.copy()  # ép toàn bộ tabs dùng FULL
-                    st.success(f"Đã LOCK ingest. Batch = {SS['BATCH_ID']}")
 
 # Source & typing
-DF_FULL = require_full_data('Chưa có dữ liệu')
+DF_FULL = require_full_data('Chưa có dữ liệu FULL. Hãy dùng **Load full data**.')
 DF_VIEW = DF_FULL  # alias để không phá code cũ
 
 ALL_COLS = list(DF_FULL.columns)
@@ -2067,39 +1995,40 @@ with TAB6:
             st_df(df_r, use_container_width=True)
         else:
             st.info('Không có rule nào khớp.')
-RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
-            "period","metric","threshold","direction","is_alert","created_at"]
-
-def _empty_re2():
-    return pd.DataFrame(columns=RE2_COLS)
-
-def _get_base_df():
-    # Ưu tiên FULL; nếu không có thì dùng preview; nếu rỗng → None
-    for k in ("DF_FULL", "df"):
-        v = SS.get(k)
-        if isinstance(v, pd.DataFrame) and len(v) > 0:
-            return v
-    return None
-
-def run_rule_engine_v2_guard(cfg=None):
-    """Gọi Rule Engine an toàn, luôn trả DataFrame (không bao giờ None)."""
-    try:
-        df0 = _get_base_df()
-        if df0 is None:
-            return _empty_re2()
-        out = run_rule_engine_v2(df0, cfg)   # <- dùng hàm bạn đang có
-        return out if isinstance(out, pd.DataFrame) else _empty_re2()
-    except Exception:
-        return _empty_re2()
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
     base_df = DF_FULL
+    # === Rule Engine v2 (FULL dataset) ===
+    try:
+        _df_full = SS['df'] if SS.get('df') is not None else None
+        if _df_full is not None and len(_df_full)>0:
+            cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+            RE2 = run_rule_engine_v2(_df_full, cfg)
+            SS['rule_engine_v2'] = RE2
+            st.subheader('🧠 Rule Engine v2 — Kết quả')
+            if RE2 is None or RE2.empty:
+                st.success('Không phát hiện flag theo bộ luật v2.')
+            else:
+                st.write('Tổng số dòng flag:', len(RE2))
+                by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
+                st.dataframe(by_rule, use_container_width=True, hide_index=True)
+                pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
+                view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
+                st.dataframe(view, use_container_width=True, height=280)
+                csv = view.to_csv(index=False).encode('utf-8')
+                st.download_button('⬇️ Tải CSV (Rule Engine v2)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
+        else:
+            st.info('Chưa có dữ liệu FULL (hãy Load full data).')
+    except Exception as e:
+        st.warning(f'Rule Engine v2 gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
     use_full_flags = True
     FLAG_DF = DF_FULL
+    if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
+
     with st.expander('⚙️ Tham số quét cờ (điều chỉnh được)'):
         c1,c2,c3 = st.columns(3)
         with c1:
@@ -2234,206 +2163,92 @@ with TAB7:
             if isinstance(obj, pd.DataFrame):
                 st_df(obj, use_container_width=True, height=min(320, 40+24*min(len(obj),10)))
 
-
+    with st.expander('🧠 Rule Engine (Flags) — Insights'):
+        ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='flags')
+        if not df_r.empty:
+            st_df(df_r, use_container_width=True)
+        else:
+            st.info('Không có rule nào khớp.')
 # --------------------------- TAB 7: Risk & Export -----------------------------
-# --------------------------- TAB 7: Rule Engine — Tổng quan & Chi tiết (HỢP NHẤT) -----------------------------
 with TAB7:
-    st.subheader('🧠 Rule Engine — Tổng quan & Chi tiết')
+    base_df = DF_FULL
+    # ---- Risk summary from Rule Engine v2 (if available) ----
+    RE2 = SS.get('rule_engine_v2')
+    if RE2 is not None and not RE2.empty:
+        st.subheader('🧭 Risk Signals (Rule Engine v2)')
+        sev_order = {'High':3,'Medium':2,'Low':1}
+        RE2['_sev_ord'] = RE2['_severity'].map(sev_order).fillna(0)
+        score = RE2.groupby('_rule')['_sev_ord'].sum().sort_values(ascending=False).rename('score').reset_index()
+        st.dataframe(score, use_container_width=True, hide_index=True)
+        st.caption('Điểm rủi ro tổng hợp theo rule (High>Medium>Low).')
+    left, right = st.columns([3,2])
+    with left:
+        st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
+        # Quick quality & signals (light)
+        def _quality_report(df_in: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+            rep_rows=[]
+            for c in df_in.columns:
+                s=df_in[c]
+                rep_rows.append({'column':c,'dtype':str(s.dtype),'missing_ratio': round(float(s.isna().mean()),4),
+                                 'n_unique':int(s.nunique(dropna=True)),'constant':bool(s.nunique(dropna=True)<=1)})
+            dupes=int(df_in.duplicated().sum())
+            return pd.DataFrame(rep_rows), dupes
+        rep_df, n_dupes = _quality_report(DF_VIEW)
+        signals=[]
+        if n_dupes>0:
+            signals.append({'signal':'Duplicate rows','severity':'Medium','action':'Định nghĩa khoá tổng hợp & walkthrough duplicates'})
+        for c in NUM_COLS[:20]:
+            s = pd.to_numeric(DF_FULL[c] if SS['df'] is not None else DF_VIEW[c], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+            if len(s)==0: continue
+            zr=float((s==0).mean()); p99=s.quantile(0.99); share99=float((s>p99).mean())
+            if zr>0.30:
+                signals.append({'signal':f'Zero‑heavy numeric {c} ({zr:.0%})','severity':'Medium','action':'χ²/Fisher theo đơn vị; review policy/thresholds'})
+            if share99>0.02:
+                signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
+        st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
 
-    import os, sqlite3
+        with st.expander('🧠 Rule Engine — Insights (All tests)'):
+            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
+            if df_r.empty:
+                st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
+            else:
+                st_df(df_r, use_container_width=True, height=320)
+                st.markdown('**Recommendations:**')
+                for _,row in df_r.iterrows():
+                    st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
-    # ---- Chuẩn schema thống nhất ----
-    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id","period",
-                "metric","threshold","direction","is_alert","created_at","source"]
-    HIST_COLS = ["batch_id","rule_id","rule_name","severity","entity_type","entity_id",
-                 "period","metric","threshold","direction","is_alert","note","created_at","source"]
-
-    def _empty_re2():
-        df = pd.DataFrame(columns=RE2_COLS)
-        return df
-
-    # ---- Lấy DF hiện tại (ưu tiên FULL) ----
-    def _get_base_df():
-        for k in ("DF_FULL", "df"):
-            v = SS.get(k)
-            if isinstance(v, pd.DataFrame) and len(v) > 0:
-                return v
-        return None
-
-    # ---- Rule Engine hiện tại (RE2) — luôn trả DataFrame ----
-    def _re2_now(cfg=None) -> pd.DataFrame:
-        try:
-            df0 = _get_base_df()
-            if df0 is None:
-                return _empty_re2()
-            out = run_rule_engine_v2(df0, cfg)  # dùng hàm sẵn có
-            if not isinstance(out, pd.DataFrame) or out.empty:
-                return _empty_re2()
-            out = out.copy()
-            out["source"] = "RE2"
-            # đảm bảo đủ cột
-            for c in RE2_COLS:
-                if c not in out.columns: out[c] = None
-            return out[RE2_COLS]
-        except Exception:
-            return _empty_re2()
-    def _from_other_tabs() -> pd.DataFrame:
-        buf = SS.get("flags_from_tabs")
-        if buf is None:
-            return _empty_re2()
-        # chấp nhận list[dict] hoặc DataFrame
-        df = pd.DataFrame(buf) if not isinstance(buf, pd.DataFrame) else buf.copy()
-        if df.empty:
-            return _empty_re2()
-        # map tên cột → schema chung
-        rename = {"rule_name":"_rule","severity":"_severity"}
-        df.rename(columns=rename, inplace=True)
-        for c in RE2_COLS:
-            if c not in df.columns: df[c] = None
-        df["source"] = df.get("source").fillna("TABS")
-        return df[RE2_COLS]
-
-    # ---- Lịch sử (SQLite) ----
-    def _ensure_sqlite():
-        with sqlite3.connect("flags.sqlite") as conn:
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS flags(
-                batch_id TEXT, rule_id TEXT, rule_name TEXT, severity TEXT,
-                entity_type TEXT, entity_id TEXT, period TEXT,
-                metric REAL, threshold TEXT, direction TEXT,
-                is_alert INTEGER, note TEXT, created_at TEXT
-            )""")
-
-    def _from_history() -> pd.DataFrame:
-        try:
-            _ensure_sqlite()
-            if not os.path.exists("flags.sqlite"):
-                return _empty_re2()
-            with sqlite3.connect("flags.sqlite") as conn:
-                hist = pd.read_sql_query("SELECT * FROM flags", conn)
-            if hist.empty:
-                return _empty_re2()
-            hist = hist.copy()
-            hist["source"] = "HISTORY"
-            # chuẩn → RE2_COLS
-            out = pd.DataFrame({
-                "_rule":     hist.get("rule_name"),
-                "_severity": hist.get("severity"),
-                "note":      hist.get("note"),
-                "entity_type": hist.get("entity_type"),
-                "entity_id":   hist.get("entity_id"),
-                "period":      hist.get("period"),
-                "metric":      hist.get("metric"),
-                "threshold":   hist.get("threshold"),
-                "direction":   hist.get("direction"),
-                "is_alert":    hist.get("is_alert"),
-                "created_at":  hist.get("created_at"),
-                "source":      hist.get("source"),
-            })
-            for c in RE2_COLS:
-                if c not in out.columns: out[c] = None
-            return out[RE2_COLS]
-        except Exception:
-            return _empty_re2()
-    
-    # ---- Hợp nhất 3 nguồn + dedupe ----
-    cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-    use_history = st.checkbox("📦 Gộp lịch sử (flags.sqlite)", value=False, key="unify_hist")
-
-    df_re2   = _re2_now(cfg)
-    df_tabs  = _from_other_tabs()
-    frames = [df_re2, df_tabs]
-    if use_history:
-        frames.append(_from_history())
-
-    INS = pd.concat(frames, ignore_index=True) if any(len(x)>0 for x in frames) else _empty_re2()
-
-    # dedupe theo khóa: rule + entity + period + note + source
-    if not INS.empty:
-        dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
-        INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
-
-    # ---- KPI ----
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("Tổng flags", int(len(INS)))
-    c2.metric("Rules", int(INS["_rule"].nunique() if not INS.empty else 0))
-    c3.metric("High", int((INS["_severity"]=="High").sum()))
-    c4.metric("Medium/Low", int((INS["_severity"].isin(["Medium","Low"])).sum()))
-    c5.metric("Nguồn", int(INS["source"].nunique() if not INS.empty else 0))
-
-    # ---- Bộ lọc (có Nguồn) ----
-    col1,col2,col3,col4,col5 = st.columns([1.1,1.3,1.2,1.2,2.0])
-    sources = ["(All)"] + sorted(INS["source"].dropna().unique().tolist())
-    pick_src = col1.selectbox("Nguồn", sources, key="src_pick")
-    sev = col2.multiselect("Severity", ["High","Medium","Low"], default=[], key='sev_pick')
-    rules = ["(All)"] + sorted(INS["_rule"].dropna().unique().tolist())
-    pick_rule = col3.selectbox("Rule", rules, key='rule_pick')
-    entity_types = ["(All)"] + sorted(INS["entity_type"].dropna().unique().tolist())
-    pick_et = col4.selectbox("Entity", entity_types, key='et_pick')
-    kw = col5.text_input("Tìm theo entity_id / note", "", key='kw_pick')
-
-    view = INS.copy()
-    if pick_src!="(All)": view = view[view["source"]==pick_src]
-    if sev: view = view[view["_severity"].isin(sev)]
-    if pick_rule!="(All)": view = view[view["_rule"]==pick_rule]
-    if pick_et!="(All)": view = view[view["entity_type"]==pick_et]
-    if kw:
-        mask = view["entity_id"].astype(str).str.contains(kw, case=False, na=False) | \
-               view["note"].astype(str).str.contains(kw, case=False, na=False)
-        view = view[mask]
-
-    # ---- Tổng hợp theo Rule ----
-    st.markdown("**📊 Tổng hợp theo Rule**")
-    if view.empty:
-        st.info("Không có flag sau khi lọc.")
-    else:
-        by_rule = (view.groupby(["source","_rule","_severity"])
-                        .size().reset_index(name="n")
-                        .sort_values(["n","source","_rule"], ascending=[False, True, True]))
-        st.dataframe(by_rule, use_container_width=True, hide_index=True)
-
-    # ---- Chi tiết ----
-    st.markdown("**🔎 Chi tiết flags (Tổng hợp)**")
-    st.dataframe(
-        view[["source","_rule","_severity","entity_type","entity_id","period","metric","threshold","direction","note","created_at"]],
-        use_container_width=True, height=330, hide_index=True
-    )
-
-    # ---- Tải CSV ----
-    csv = view.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Tải CSV (Rule Engine — Tổng hợp)", data=csv,
-                       file_name="rule_engine_unified.csv", mime="text/csv", key='re2_unified_dl')
-
-    with st.expander("🧾 Export báo cáo (DOCX/PDF)"):
+    with right:
+        st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
+        # Figure registry optional — keep minimal by re-capturing on demand in each tab (not stored persistently here)
+        st.caption('Chọn nội dung từ các tab, sau đó xuất báo cáo với tiêu đề tuỳ chỉnh.')
         title = st.text_input('Report title', value='Audit Statistics — Findings', key='exp_title')
+        scale = st.slider('Export scale (DPI factor)', 1.0, 3.0, 2.0, 0.5, key='exp_scale')
+        # For simplicity, take screenshots of figures currently present is not feasible; typical approach is to maintain a registry.
+        # Here we export only a simple PDF/DOCX shell with metadata.
         if st.button('🖼️ Export blank shell DOCX/PDF'):
-            meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'),
-                  'time': datetime.now().isoformat(timespec='seconds')}
-            outs=[]
-            try:
-                if HAS_DOCX:
+            meta={'title': title, 'file': SS.get('uploaded_name'), 'sha12': SS.get('sha12'), 'time': datetime.now().isoformat(timespec='seconds')}
+            docx_path=None; pdf_path=None
+            if HAS_DOCX:
+                try:
                     d = docx.Document(); d.add_heading(meta['title'], 0)
                     d.add_paragraph(f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}")
-                    d.add_paragraph('Gợi ý: quay lại các tab để capture hình và chèn vào báo cáo.')
-                    p = f"report_{int(time.time())}.docx"; d.save(p); outs.append(p)
-            except Exception: pass
-            try:
-                if HAS_PDF:
+                    d.add_paragraph('Gợi ý: quay lại các tab để capture hình (kèm Kaleido) và chèn vào báo cáo.')
+                    docx_path = f"report_{int(time.time())}.docx"; d.save(docx_path)
+                except Exception: pass
+            if HAS_PDF:
+                try:
                     doc = fitz.open(); page = doc.new_page(); y=36
                     page.insert_text((36,y), meta['title'], fontsize=16); y+=22
                     page.insert_text((36,y), f"File: {meta['file']} • SHA12={meta['sha12']} • Time: {meta['time']}", fontsize=10); y+=18
-                    page.insert_text((36,y), 'Gợi ý: quay lại các tab để chèn hình/biểu đồ.', fontsize=10)
-                    p = f"report_{int(time.time())}.pdf"; doc.save(p); doc.close(); outs.append(p)
-            except Exception: pass
+                    page.insert_text((36,y), 'Gợi ý: quay lại các tab để capture hình (Kaleido) và chèn vào báo cáo.', fontsize=10)
+                    pdf_path = f"report_{int(time.time())}.pdf"; doc.save(pdf_path); doc.close()
+                except Exception: pass
+            outs=[p for p in [docx_path,pdf_path] if p]
             if outs:
                 st.success('Exported: ' + ', '.join(outs))
                 for pth in outs:
-                    with open(pth,'rb') as f:
-                        st.download_button(f'⬇️ Download {os.path.basename(pth)}',
-                                           data=f.read(), file_name=os.path.basename(pth))
+                    with open(pth,'rb') as f: st.download_button(f'⬇️ Download {os.path.basename(pth)}', data=f.read(), file_name=os.path.basename(pth))
             else:
                 st.error('Export failed. Hãy cài python-docx/pymupdf.')
-
-
 
 # End of file
