@@ -6,149 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# 1) Chuẩn roles bắt buộc/tuỳ chọn (để check nhanh khi tab cần)
-ROLES_CANON = {
-    "time": "std_time", "amount": "std_amount", "qty": "std_qty", "price": "std_price",
-    "discount": "std_discount", "return_flag": "std_return_flag",
-    "product_code": "std_product_code", "customer_id": "std_customer_id",
-    "invoice_id": "std_invoice_id", "channel": "std_channel",
-}
-SEVERITY_ORDER = ["High","Medium","Low"]
-
-# 2) Lấy alias cột từ SS['std_cols'] hoặc fallback ROLES_CANON
-def get_stdcol(role: str, std_map: dict) -> str | None:
-    # std_map: {"time":"std_time", ...} do apply_schema_mapping trả ra
-    alias = (std_map or {}).get(role)
-    if alias: return alias
-    return ROLES_CANON.get(role)
-
-# 3) Kiểm tra đủ roles trước khi test
-def need_roles(std_map: dict, roles: list[str]) -> tuple[bool, list[str], dict]:
-    miss = []
-    used = {}
-    for r in roles:
-        col = get_stdcol(r, std_map)
-        if not col:
-            miss.append(r)
-        else:
-            used[r] = col
-    return (len(miss)==0, miss, used)
-
-# 4) Chuẩn hoá period (tháng) cho báo cáo
-def mk_period(series_dt) -> pd.Series:
-    try:
-        return pd.to_datetime(series_dt).dt.to_period("M").astype(str)
-    except Exception:
-        return pd.Series([None]*len(series_dt))
-
-# 5) Push 1 flag về session (mọi tab dùng chung)
-def push_flag(rule_name: str, severity: str, note: str,
-              entity_type: str, entity_id: str | int | None,
-              metric=None, threshold:str|None=None, direction:str|None=None,
-              period:str|None=None, is_alert:int=1, source:str="(TAB)") -> None:
-    import streamlit as st
-    SS = st.session_state
-    row = {
-        "_rule": rule_name, "_severity": severity, "note": note,
-        "entity_type": entity_type, "entity_id": ("" if entity_id is None else str(entity_id)),
-        "period": ("" if period is None else str(period)),
-        "metric": metric, "threshold": threshold, "direction": direction,
-        "is_alert": int(bool(is_alert)),
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": source,
-    }
-    SS.setdefault("flags_from_tabs", []).append(row)
-
-# 6) Helper “chốt wording business” nhanh
-def note_tpl(entity_label: str, value_txt: str, compare_txt: str) -> str:
-    # Ví dụ: note_tpl("SKU A", "p95/median=3.2×", "≥3×")
-    return f"{entity_label}: {value_txt} {compare_txt}"
-# ================== /RULE ENGINE CONTRACT (helpers) ==================
-
-# --- Minimal schema mapping (self-contained) ---
-def apply_schema_mapping(df):
-    import pandas as pd
-    if df is None or not isinstance(df, pd.DataFrame):
-        return df, {}
-
-    out = df.copy()
-    cols = list(out.columns)
-    low = {c: str(c).lower() for c in cols}
-
-    def first_contains(*keys):
-        for c in cols:
-            lc = low[c]
-            if any(k in lc for k in keys):
-                return c
-        return None
-
-    std = {}
-
-    # time
-    c = first_contains('posting date', 'post date', 'posting', 'date', 'time', 'pstg')
-    if c and 'std_time' not in out:
-        out['std_time'] = pd.to_datetime(out[c], errors='coerce')
-        std['time'] = 'std_time'
-
-    # amount
-    c = first_contains('amount', 'revenue', 'sales', 'gross', 'net_sales', 'thanh tien', 'thành tiền', 'doanh thu')
-    if c and 'std_amount' not in out:
-        out['std_amount'] = pd.to_numeric(out[c], errors='coerce')
-        std['amount'] = 'std_amount'
-
-    # qty
-    c = first_contains('qty', 'quantity', 'số lượng', 'so luong')
-    if c and 'std_qty' not in out:
-        out['std_qty'] = pd.to_numeric(out[c], errors='coerce')
-        std['qty'] = 'std_qty'
-
-    # price
-    c = first_contains('price', 'unit_price', 'đơn giá', 'don gia', 'gia')
-    if c and 'std_price' not in out:
-        out['std_price'] = pd.to_numeric(out[c], errors='coerce')
-        std['price'] = 'std_price'
-
-    # discount
-    c = first_contains('discount', 'giảm giá', 'khuyến mãi', 'disc')
-    if c and 'std_discount' not in out:
-        out['std_discount'] = pd.to_numeric(out[c], errors='coerce')
-        std['discount'] = 'std_discount'
-
-    # product / sku
-    c = first_contains('product', 'sku', 'item', 'mã sp', 'ma sp', 'product code')
-    if c and 'std_product_code' not in out:
-        out['std_product_code'] = out[c].astype('string')
-        std['product_code'] = 'std_product_code'
-
-    # customer
-    c = first_contains('customer', 'khách', 'khach', 'buyer', 'client', 'account')
-    if c and 'std_customer_id' not in out:
-        out['std_customer_id'] = out[c].astype('string')
-        std['customer_id'] = 'std_customer_id'
-
-    # invoice / document
-    c = first_contains('invoice', 'inv', 'voucher', 'số ct', 'so ct', 'document')
-    if c and 'std_invoice_id' not in out:
-        out['std_invoice_id'] = out[c].astype('string')
-        std['invoice_id'] = 'std_invoice_id'
-
-    # channel
-    c = first_contains('channel', 'kênh', 'kenh')
-    if c and 'std_channel' not in out:
-        out['std_channel'] = out[c].astype('string')
-        std['channel'] = 'std_channel'
-
-    # return flag
-    c = first_contains('return', 'hàng trả', 'hang tra', 'refund', 'is_return')
-    if c and 'std_return_flag' not in out:
-        out['std_return_flag'] = (
-            out[c].astype(str).str.strip().str.lower()
-              .isin(['1','true','t','yes','y','return'])
-        )
-        std['return_flag'] = 'std_return_flag'
-
-    return out, std
-
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
 
@@ -368,34 +225,16 @@ def sha12_of_df(df: pd.DataFrame):
     # alias về hàm có sẵn trong file
     return _sha12_of_df(df)
 
-# === REPLACE: run_rule_engine_v2 (safe mapping + never None + normalize) ===
 def run_rule_engine_v2(df, cfg=None):
-    """
-    Wrapper cho UI: gọi core rules và trả về view thống nhất cột.
-    - Nếu thiếu dữ liệu → trả DataFrame rỗng đúng schema (không None).
-    - Chuẩn hoá cột: _rule/_severity/note/... + source='RE2'
-    """
-    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
-                "period","metric","threshold","direction","is_alert","created_at","source"]
-    EMPTY = pd.DataFrame(columns=RE2_COLS)
-
     if df is None or len(df) == 0:
-        return EMPTY
+        return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
+                                     "period","metric","threshold","direction","is_alert","created_at"])
+    mapping = _guess_mapping_from_df(df)
+    batch_id = sha12_of_df(df)
 
-    # batch id an toàn theo dữ liệu
-    import hashlib
-    try:
-        bid = hashlib.sha1(pd.util.hash_pandas_object(df, index=True).values).hexdigest()[:12]
-    except Exception:
-        from time import time
-        bid = f"batch_{int(time())}"
+    flags = run_core_rules(df, mapping, batch_id)
+    save_flags(flags)
 
-    # mapping truyền vào UI có thể None → để core tự resolve (đã làm ở #1)
-    flags = run_core_rules(df, mapping=None, batch_id=bid)
-    if not isinstance(flags, pd.DataFrame) or flags.empty:
-        return EMPTY
-
-    # Chuẩn hoá schema UI
     view = pd.DataFrame({
         "_rule":       flags["rule_name"],
         "_severity":   flags["severity"],
@@ -408,11 +247,8 @@ def run_rule_engine_v2(df, cfg=None):
         "direction":   flags["direction"],
         "is_alert":    flags["is_alert"],
         "created_at":  flags["created_at"],
-        "source":      "RE2",
     })
-    # đảm bảo đúng thứ tự cột
-    return view[RE2_COLS]
-
+    return view
 
 
 def _decode_bytes_to_str(v):
@@ -2256,31 +2092,6 @@ def run_rule_engine_v2_guard(cfg=None):
     except Exception:
         return _empty_re2()
 # -------------------------------- TAB 6: Flags --------------------------------
-# === ADD (Tab 7): schema flags thống nhất cho mọi nguồn ===
-RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
-            "period","metric","threshold","direction","is_alert","created_at","source"]
-
-
-def normalize_flags(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
-    """Đưa bất kỳ flags DataFrame nào về schema RE2_COLS."""
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame(columns=RE2_COLS)
-    out = df.copy()
-    # map tên cột phổ biến về schema
-    rename = {
-        "rule_name":"_rule",
-        "severity":"_severity",
-    }
-    out.rename(columns=rename, inplace=True)
-    # thêm source nếu thiếu
-    if "source" not in out.columns:
-        out["source"] = source_name
-    # thêm cột thiếu
-    for c in RE2_COLS:
-        if c not in out.columns:
-            out[c] = None
-    return out[RE2_COLS]
-
 with TAB7:
     base_df = DF_FULL
     st.subheader('🚩 Fraud Flags')
@@ -2425,6 +2236,7 @@ with TAB7:
 
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
+# --------------------------- TAB 7: Rule Engine — Tổng quan & Chi tiết (HỢP NHẤT) -----------------------------
 with TAB7:
     st.subheader('🧠 Rule Engine — Tổng quan & Chi tiết')
 
@@ -2524,32 +2336,22 @@ with TAB7:
         except Exception:
             return _empty_re2()
     
-   # --- Hợp nhất nguồn flags cho Tab 7 ---
-import pandas as pd, streamlit as st
-SS = st.session_state
+    # ---- Hợp nhất 3 nguồn + dedupe ----
+    cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
+    use_history = st.checkbox("📦 Gộp lịch sử (flags.sqlite)", value=False, key="unify_hist")
 
-df_full = _pick_base_df()
+    df_re2   = _re2_now(cfg)
+    df_tabs  = _from_other_tabs()
+    frames = [df_re2, df_tabs]
+    if use_history:
+        frames.append(_from_history())
 
-# RE2 (core rules)
-re2_cur = normalize_flags(run_rule_engine_v2(df_full) if df_full is not None else pd.DataFrame(), "RE2")
+    INS = pd.concat(frames, ignore_index=True) if any(len(x)>0 for x in frames) else _empty_re2()
 
-# TESTS (các tab đã đẩy về SS['flags_from_tabs'])
-tabs_src = SS.get("flags_from_tabs")
-tabs_df = (pd.DataFrame(tabs_src) if isinstance(tabs_src, list)
-           else (tabs_src if isinstance(tabs_src, pd.DataFrame) else pd.DataFrame()))
-tests = normalize_flags(tabs_df, "TESTS")
-
-# Nếu cần gộp lịch sử SQLite, mở comment 3 dòng dưới (và đảm bảo có hist_df):
-# hist_df = ...  # đọc từ flags.sqlite của bạn
-# hist    = normalize_flags(hist_df, "HISTORY")
-# INS = pd.concat([re2_cur, tests, hist], ignore_index=True)
-
-INS = pd.concat([re2_cur, tests], ignore_index=True)
-st.metric("Tổng flags", len(INS))
     # dedupe theo khóa: rule + entity + period + note + source
-            if not INS.empty:
-                dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
-                INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
+    if not INS.empty:
+        dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
+        INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
 
     # ---- KPI ----
     c1,c2,c3,c4,c5 = st.columns(5)
