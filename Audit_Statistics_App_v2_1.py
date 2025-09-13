@@ -2545,11 +2545,11 @@ tests = normalize_flags(tabs_df, "TESTS")
 # INS = pd.concat([re2_cur, tests, hist], ignore_index=True)
 
 INS = pd.concat([re2_cur, tests], ignore_index=True)
-
+st.metric("Tổng flags", len(INS))
     # dedupe theo khóa: rule + entity + period + note + source
-    if not INS.empty:
-        dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
-        INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
+            if not INS.empty:
+                dedup_key = INS[["_rule","entity_type","entity_id","period","note","source"]].astype(str).agg("|".join, axis=1)
+                INS = INS.loc[~dedup_key.duplicated()].reset_index(drop=True)
 
     # ---- KPI ----
     c1,c2,c3,c4,c5 = st.columns(5)
