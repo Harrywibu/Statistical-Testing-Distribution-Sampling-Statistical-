@@ -1878,25 +1878,23 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
                     st_plotly(fig1)
-                                # --- NEW: Data quality cho cột 1D đã chọn ---
+                                # --- Data quality — cột 1D đã chọn (FIX) ---
                 _raw1 = data_for_benford[SS.get('bf1_col')]
                 _num1 = pd.to_numeric(_raw1, errors='coerce')
-                _total = len(_raw1)
-                _none_like = _raw1.astype('string').str.strip().str.lower().isin(['none','null']).sum()
-                _n_nan  = _num1.isna().sum()
-                _n_zero = (_num1 == 0).sum()
-                _n_pos  = (_num1 > 0).sum()
-                _n_neg  = (_num1 < 0).sum()
-                _used   = (_num1 != 0).sum()  # Benford dùng > 0
-                _base_clean = max(_total - _n_nan - _n_zero, 0)
-
+                _total1 = len(_raw1)
+                _none_like1 = _raw1.astype('string').str.strip().str.lower().isin(['none','null']).sum()
+                _n_nan1  = _num1.isna().sum()
+                _n_zero1 = (_num1 == 0).sum()
+                _n_pos1  = (_num1 > 0).sum()
+                _n_neg1  = (_num1 < 0).sum()
+                _used1   = (_num1 != 0).sum()  # <-- DEFINE BEFORE USE
+                
                 qdf1 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
                              'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
                     'count': [int(_total1), int(_n_nan1), int(_none_like1), int(_n_zero1),
                               int(_n_pos1), int(_n_neg1), int(_used1)]
                 })
-                
                 qdf1['% vs total'] = (qdf1['count'] / _total1 * 100.0).round(2) if _total1>0 else 0.0
                 _base_clean1 = max(_total1 - _n_nan1 - _n_zero1, 0)
                 qdf1['% vs non-missing&non-zero'] = (
@@ -1904,6 +1902,7 @@ with TAB4:
                 )
                 st.caption('📋 Data quality — cột 1D đã chọn')
                 st_df(qdf1, use_container_width=True, height=180)
+
                                 # --- NEW: Hiển thị variance với diff_pct (%) + highlight ≥5% ---
                 color_thr_pct = 5.0  # ngưỡng tô màu cố định 5%
                 var_show = var.copy()
@@ -1962,7 +1961,7 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
                     st_plotly(fig2)
-                                # --- NEW: Data quality cho cột 2D đã chọn ---
+                                # --- Data quality — cột 2D đã chọn (FIX) ---
                 _raw2 = data_for_benford[SS.get('bf2_col')]
                 _num2 = pd.to_numeric(_raw2, errors='coerce')
                 _total2 = len(_raw2)
@@ -1971,9 +1970,8 @@ with TAB4:
                 _n_zero2 = (_num2 == 0).sum()
                 _n_pos2  = (_num2 > 0).sum()
                 _n_neg2  = (_num2 < 0).sum()
-                _used2   = (_num2 != 0).sum()
-                _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
-
+                _used2   = (_num2 != 0).sum()  # <-- DEFINE BEFORE USE
+                
                 qdf2 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
                              'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
@@ -1987,6 +1985,7 @@ with TAB4:
                 )
                 st.caption('📋 Data quality — cột 2D đã chọn')
                 st_df(qdf2, use_container_width=True, height=180)
+
 
                                 # --- NEW: Hiển thị variance 2D với diff_pct (%) + highlight ≥5% ---
                 color_thr_pct = 5.0
