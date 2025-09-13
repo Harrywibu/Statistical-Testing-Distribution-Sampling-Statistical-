@@ -6,6 +6,90 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# --- Minimal schema mapping (self-contained) ---
+def apply_schema_mapping(df):
+    import pandas as pd
+    if df is None or not isinstance(df, pd.DataFrame):
+        return df, {}
+
+    out = df.copy()
+    cols = list(out.columns)
+    low = {c: str(c).lower() for c in cols}
+
+    def first_contains(*keys):
+        for c in cols:
+            lc = low[c]
+            if any(k in lc for k in keys):
+                return c
+        return None
+
+    std = {}
+
+    # time
+    c = first_contains('posting date', 'post date', 'posting', 'date', 'time', 'pstg')
+    if c and 'std_time' not in out:
+        out['std_time'] = pd.to_datetime(out[c], errors='coerce')
+        std['time'] = 'std_time'
+
+    # amount
+    c = first_contains('amount', 'revenue', 'sales', 'gross', 'net_sales', 'thanh tien', 'thành tiền', 'doanh thu')
+    if c and 'std_amount' not in out:
+        out['std_amount'] = pd.to_numeric(out[c], errors='coerce')
+        std['amount'] = 'std_amount'
+
+    # qty
+    c = first_contains('qty', 'quantity', 'số lượng', 'so luong')
+    if c and 'std_qty' not in out:
+        out['std_qty'] = pd.to_numeric(out[c], errors='coerce')
+        std['qty'] = 'std_qty'
+
+    # price
+    c = first_contains('price', 'unit_price', 'đơn giá', 'don gia', 'gia')
+    if c and 'std_price' not in out:
+        out['std_price'] = pd.to_numeric(out[c], errors='coerce')
+        std['price'] = 'std_price'
+
+    # discount
+    c = first_contains('discount', 'giảm giá', 'khuyến mãi', 'disc')
+    if c and 'std_discount' not in out:
+        out['std_discount'] = pd.to_numeric(out[c], errors='coerce')
+        std['discount'] = 'std_discount'
+
+    # product / sku
+    c = first_contains('product', 'sku', 'item', 'mã sp', 'ma sp', 'product code')
+    if c and 'std_product_code' not in out:
+        out['std_product_code'] = out[c].astype('string')
+        std['product_code'] = 'std_product_code'
+
+    # customer
+    c = first_contains('customer', 'khách', 'khach', 'buyer', 'client', 'account')
+    if c and 'std_customer_id' not in out:
+        out['std_customer_id'] = out[c].astype('string')
+        std['customer_id'] = 'std_customer_id'
+
+    # invoice / document
+    c = first_contains('invoice', 'inv', 'voucher', 'số ct', 'so ct', 'document')
+    if c and 'std_invoice_id' not in out:
+        out['std_invoice_id'] = out[c].astype('string')
+        std['invoice_id'] = 'std_invoice_id'
+
+    # channel
+    c = first_contains('channel', 'kênh', 'kenh')
+    if c and 'std_channel' not in out:
+        out['std_channel'] = out[c].astype('string')
+        std['channel'] = 'std_channel'
+
+    # return flag
+    c = first_contains('return', 'hàng trả', 'hang tra', 'refund', 'is_return')
+    if c and 'std_return_flag' not in out:
+        out['std_return_flag'] = (
+            out[c].astype(str).str.strip().str.lower()
+              .isin(['1','true','t','yes','y','return'])
+        )
+        std['return_flag'] = 'std_return_flag'
+
+    return out, std
+
 # ===== Schema Mapping & Rule Engine v2 =====
 import re as _re
 
