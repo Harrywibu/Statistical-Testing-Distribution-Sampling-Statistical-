@@ -614,9 +614,9 @@ def _benford_2d(series: pd.Series):
 
 def _benford_ready(series: pd.Series) -> tuple[bool, str]:
     s = pd.to_numeric(series, errors='coerce')
-    n_pos = int((s>0).sum())
-    if n_pos < 1:
-        return False, f"Không có giá trị > 0 để chạy Benford (hiện {n_pos}, cần ≥300)."
+    n_nz = int((s != 0).sum())  # nhận cả số âm, chỉ loại 0
+    if n_nz < 1:
+        return False, f"Không có giá trị ≠ 0 để chạy Benford (hiện {n_nz}, cần ≥300)."
     s_non = s.dropna()
     if s_non.shape[0] > 0:
         ratio_unique = s_non.nunique()/s_non.shape[0]
@@ -1705,12 +1705,12 @@ with TAB4:
                     _n_zero1 = (_num1 == 0).sum()
                     _n_pos1  = (_num1 > 0).sum()
                     _n_neg1  = (_num1 < 0).sum()
-                    _used1   = _n_pos1            # Used for Benford: > 0 (giữ đúng logic tab này)
+                    _used1   = (_num1 != 0).sum()            
                     _base_clean1 = max(_total1 - _n_nan1 - _n_zero1, 0)
                     
                     qdf1 = pd.DataFrame({
                         'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                                 'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                                 'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
                         'count': [int(_total1), int(_n_nan1), int(_none_like1), int(_n_zero1),
                                   int(_n_pos1), int(_n_neg1), int(_used1)]
                     })
@@ -1789,12 +1789,12 @@ with TAB4:
                     _n_zero2 = (_num2 == 0).sum()
                     _n_pos2  = (_num2 > 0).sum()
                     _n_neg2  = (_num2 < 0).sum()
-                    _used2   = _n_pos2            # Used for Benford: > 0 (giữ đúng logic tab này)
+                    _used2   = (_num2 != 0).sum()            # Used for Benford: > 0 (giữ đúng logic tab này)
                     _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
                     
                     qdf2 = pd.DataFrame({
                         'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                                 'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                                 'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
                         'count': [int(_total2), int(_n_nan2), int(_none_like2), int(_n_zero2),
                                   int(_n_pos2), int(_n_neg2), int(_used2)]
                     })
