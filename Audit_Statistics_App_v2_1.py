@@ -1829,8 +1829,46 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
                     st_plotly(fig1)
-                st_df(var, use_container_width=True, height=220)
-                thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
+                                # --- NEW: Data quality cho cột 1D đã chọn ---
+                _raw1 = data_for_benford[SS.get('bf1_col')]
+                _num1 = pd.to_numeric(_raw1, errors='coerce')
+                _total = len(_raw1)
+                _none_like = _raw1.astype('string').str.strip().str.lower().isin(['none','null']).sum()
+                _n_nan  = _num1.isna().sum()
+                _n_zero = (_num1 == 0).sum()
+                _n_pos  = (_num1 > 0).sum()
+                _n_neg  = (_num1 < 0).sum()
+                _used   = _n_pos  # Benford dùng > 0
+                _base_clean = max(_total - _n_nan - _n_zero, 0)
+
+                qdf1 = pd.DataFrame({
+                    'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
+                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                    'count': [int(_total), int(_n_nan), int(_none_like), int(_n_zero),
+                              int(_n_pos), int(_n_neg), int(_used)]
+                })
+                qdf1['% vs total'] = (qdf1['count'] / _total * 100.0).round(2) if _total>0 else 0.0
+                qdf1['% vs non-missing&non-zero'] = (
+                    (qdf1['count'] / _base_clean * 100.0).round(2) if _base_clean>0 else 0.0
+                )
+                st.caption('📋 Data quality — cột 1D đã chọn')
+                st_df(qdf1, use_container_width=True, height=180)
+                                # --- NEW: Hiển thị variance với diff_pct (%) + highlight ≥5% ---
+                color_thr_pct = 5.0  # ngưỡng tô màu cố định 5%
+                var_show = var.copy()
+                var_show['diff_pct'] = var_show['diff_pct'] * 100.0  # đổi sang %
+                def _hl_percent(v):
+                    try:
+                        return 'background-color: #ffe3e3' if abs(float(v)) >= color_thr_pct else ''
+                    except Exception:
+                        return ''
+                sty1 = (var_show.style
+                        .format({'diff_pct': '{:.2f}%'})
+                        .applymap(_hl_percent, subset=['diff_pct']))
+                st_df(sty1, use_container_width=True, height=220)
+                # Giữ nguyên đánh giá theo thr (thr đang là tỉ lệ 0.05)
+                thr = SS['risk_diff_threshold']
+                maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
                 msg = '🟢 Green'
                 if maxdiff >= 2*thr: msg='🚨 Red'
                 elif maxdiff >= thr: msg='🟡 Yellow'
@@ -1838,6 +1876,32 @@ with TAB4:
                 if (p<0.01) or (MAD>0.015): sev='🚨 Red'
                 elif (p<0.05) or (MAD>0.012): sev='🟡 Yellow'
                 st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
+                                # --- NEW: Drill-down 1D cho những digit lệch ≥5% ---
+                bad_digits_1d = var_show.loc[var_show['diff_pct'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
+                if bad_digits_1d:
+                    with st.expander('🔎 Drill-down 1D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
+                        mode = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
+                                        horizontal=True, key='bf1_drill_mode')
+
+                        # Tính chữ số đầu cho tập dữ liệu đang test (giống helper)
+                        import re as _re_local
+                        def _digits_str(x):
+                            xs = ("%.15g" % float(x))
+                            return _re_local.sub(r"[^0-9]", "", xs).lstrip("0")
+
+                        s_num = pd.to_numeric(data_for_benford[SS['bf1_col']], errors='coerce') \
+                                   .replace([np.inf, -np.inf], np.nan).dropna().abs()
+                        d1 = s_num.apply(lambda v: int(_digits_str(v)[0]) if len(_digits_str(v))>=1 else np.nan).dropna()
+
+                        for dg in bad_digits_1d:
+                            idx = d1[d1 == dg].index
+                            sub = DF_FULL.loc[idx]
+                            st.markdown(f'**Digit {dg}** — {len(sub)} dòng')
+                            if mode == 'Ngắn gọn':
+                                st_df(sub.head(50), use_container_width=True, height=240)
+                            else:
+                                lim = st.slider(f'Số dòng hiển thị cho digit {dg}', 100, 5000, 500, key=f'bf1_lim_{dg}')
+                                st_df(sub.head(lim), use_container_width=True, height=280)
         with g2:
             if SS.get('bf2_res'):
                 r2=SS['bf2_res']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
@@ -1847,8 +1911,48 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
                     st_plotly(fig2)
-                st_df(var2, use_container_width=True, height=220)
-                thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
+                                # --- NEW: Data quality cho cột 2D đã chọn ---
+                _raw2 = data_for_benford[SS.get('bf2_col')]
+                _num2 = pd.to_numeric(_raw2, errors='coerce')
+                _total2 = len(_raw2)
+                _none_like2 = _raw2.astype('string').str.strip().str.lower().isin(['none','null']).sum()
+                _n_nan2  = _num2.isna().sum()
+                _n_zero2 = (_num2 == 0).sum()
+                _n_pos2  = (_num2 > 0).sum()
+                _n_neg2  = (_num2 < 0).sum()
+                _used2   = _n_pos2
+                _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
+
+                qdf2 = pd.DataFrame({
+                    'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
+                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                    'count': [int(_total2), int(_n_nan2), int(_none_like2), int(_n_zero2),
+                              int(_n_pos2), int(_n_neg2), int(_used2)]
+                })
+                qdf2['% vs total'] = (qdf2['count'] / _total2 * 100.0).round(2) if _total2>0 else 0.0
+                qdf2['% vs non-missing&non-zero'] = (
+                    (qdf2['count'] / _base_clean2 * 100.0).round(2) if _base_clean2>0 else 0.0
+                )
+                st.caption('📋 Data quality — cột 2D đã chọn')
+                st_df(qdf2, use_container_width=True, height=180)
+
+                                # --- NEW: Hiển thị variance 2D với diff_pct (%) + highlight ≥5% ---
+                color_thr_pct = 5.0
+                var2_show = var2.copy()
+                var2_show['diff_pct'] = var2_show['diff_pct'] * 100.0
+                def _hl_percent2(v):
+                    try:
+                        return 'background-color: #ffe3e3' if abs(float(v)) >= color_thr_pct else ''
+                    except Exception:
+                        return ''
+                sty2 = (var2_show.style
+                        .format({'diff_pct': '{:.2f}%'})
+                        .applymap(_hl_percent2, subset=['diff_pct']))
+                st_df(sty2, use_container_width=True, height=220)
+
+                # Giữ nguyên đánh giá theo thr (thr = tỉ lệ)
+                thr = SS['risk_diff_threshold']
+                maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
                 msg2 = '🟢 Green'
                 if maxdiff2 >= 2*thr: msg2='🚨 Red'
                 elif maxdiff2 >= thr: msg2='🟡 Yellow'
@@ -1856,6 +1960,35 @@ with TAB4:
                 if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
                 elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
                 st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
+
+                # --- NEW: Drill-down 2D cho những digit lệch ≥5% ---
+                bad_digits_2d = var2_show.loc[var2_show['diff_pct'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
+                if bad_digits_2d:
+                    with st.expander('🔎 Drill-down 2D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
+                        mode2 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
+                                         horizontal=True, key='bf2_drill_mode')
+
+                        import re as _re_local
+                        def _digits_str(x):
+                            xs = ("%.15g" % float(x))
+                            return _re_local.sub(r"[^0-9]", "", xs).lstrip("0")
+                        def _first2(v):
+                            ds = _digits_str(v)
+                            return int(ds[:2]) if len(ds)>=2 else (int(ds) if len(ds)==1 and ds!='0' else np.nan)
+
+                        s2_num = pd.to_numeric(data_for_benford[SS['bf2_col']], errors='coerce') \
+                                   .replace([np.inf, -np.inf], np.nan).dropna().abs()
+                        d2 = s2_num.apply(_first2).dropna()
+
+                        for dg in bad_digits_2d:
+                            idx2 = d2[d2 == dg].index
+                            sub2 = DF_FULL.loc[idx2]
+                            st.markdown(f'**Digits {dg}** — {len(sub2)} dòng')
+                            if mode2 == 'Ngắn gọn':
+                                st_df(sub2.head(50), use_container_width=True, height=240)
+                            else:
+                                lim2 = st.slider(f'Số dòng hiển thị cho digits {dg}', 100, 5000, 500, key=f'bf2_lim_{dg}')
+                                st_df(sub2.head(lim2), use_container_width=True, height=280)
 
 
 # ------------------------------- TAB 4: Tests --------------------------------
