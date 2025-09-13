@@ -1859,7 +1859,7 @@ with TAB4:
                 var_show['diff_pct'] = var_show['diff_pct'] * 100.0  # đổi sang %
                 def _hl_percent(v):
                     try:
-                        return 'color: #d32f2f'' if abs(float(v)) >= color_thr_pct else ''
+                        return 'color: #d32f2f' if abs(float(v)) >= color_thr_pct else ''
                     except Exception:
                         return ''
                 sty1 = (var_show.style
