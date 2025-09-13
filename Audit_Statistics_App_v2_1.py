@@ -1892,13 +1892,15 @@ with TAB4:
 
                 qdf1 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
-                    'count': [int(_total), int(_n_nan), int(_none_like), int(_n_zero),
-                              int(_n_pos), int(_n_neg), int(_used)]
+                             'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
+                    'count': [int(_total1), int(_n_nan1), int(_none_like1), int(_n_zero1),
+                              int(_n_pos1), int(_n_neg1), int(_used1)]
                 })
-                qdf1['% vs total'] = (qdf1['count'] / _total * 100.0).round(2) if _total>0 else 0.0
+                
+                qdf1['% vs total'] = (qdf1['count'] / _total1 * 100.0).round(2) if _total1>0 else 0.0
+                _base_clean1 = max(_total1 - _n_nan1 - _n_zero1, 0)
                 qdf1['% vs non-missing&non-zero'] = (
-                    (qdf1['count'] / _base_clean * 100.0).round(2) if _base_clean>0 else 0.0
+                    (qdf1['count'] / _base_clean1 * 100.0).round(2) if _base_clean1>0 else 0.0
                 )
                 st.caption('📋 Data quality — cột 1D đã chọn')
                 st_df(qdf1, use_container_width=True, height=180)
@@ -1969,16 +1971,17 @@ with TAB4:
                 _n_zero2 = (_num2 == 0).sum()
                 _n_pos2  = (_num2 > 0).sum()
                 _n_neg2  = (_num2 < 0).sum()
-                _used   = (_num1 != 0).sum()
+                _used2   = (_num2 != 0).sum()
                 _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
 
                 qdf2 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                             'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
                     'count': [int(_total2), int(_n_nan2), int(_none_like2), int(_n_zero2),
                               int(_n_pos2), int(_n_neg2), int(_used2)]
                 })
                 qdf2['% vs total'] = (qdf2['count'] / _total2 * 100.0).round(2) if _total2>0 else 0.0
+                _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
                 qdf2['% vs non-missing&non-zero'] = (
                     (qdf2['count'] / _base_clean2 * 100.0).round(2) if _base_clean2>0 else 0.0
                 )
