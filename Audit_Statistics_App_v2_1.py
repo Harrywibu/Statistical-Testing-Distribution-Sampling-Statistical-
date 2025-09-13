@@ -135,6 +135,12 @@ def run_rule_engine_v2(df, cfg=None):
     tol = cfg.get('pnl_tol_vnd', 1.0)
     ret_thr = cfg.get('return_rate_thr', 0.2)
     iqr_k = cfg.get('iqr_k', 1.5)
+    disc_thr = cfg.get('discount_rate_thr', 0.40)         # tỉ lệ chiết khấu cao (≥40%)
+    unit_price_min = cfg.get('unit_price_min', 1e-6)      # đơn giá ~0
+    burst_gap_min = cfg.get('burst_gap_minutes', 5)       # cụm giao dịch trong <= 5 phút
+    offh_rng = cfg.get('off_hours_range', (20, 6))        # 20h→6h (off-hours)
+    near_thrs = cfg.get('near_thresholds_vnd', None)      # list ngưỡng phê duyệt (VND), optional
+    near_eps = cfg.get('near_eps_pct', 1.0)               # biên ±% quanh ngưỡng
 
     rules = []
 
@@ -261,6 +267,64 @@ def run_rule_engine_v2(df, cfg=None):
     # 10) high_return_rate
     if rr is not None:
         add_rule(rr > ret_thr, 'high_return_rate', 'High', rr)
+        # 11) high_discount_rate: discount/gross quá cao
+    if (disc is not None) and (gro is not None):
+        try:
+            dr = disc / gro.replace(0, pd.NA)
+            add_rule(dr > disc_thr, 'high_discount_rate', 'Medium', dr)
+        except Exception:
+            pass
+
+    # 12) negative_qty_positive_sales / positive_qty_negative_sales
+    if (qty is not None) and (ns is not None):
+        add_rule((qty < 0) & (ns > 0), 'negative_qty_positive_sales', 'High')
+        add_rule((qty > 0) & (ns < 0), 'positive_qty_negative_sales', 'High')
+
+    # 13) near_zero_unit_price: đơn giá ~0 theo qty
+    if nperq is not None:
+        add_rule(nperq <= unit_price_min, 'near_zero_unit_price', 'Medium', nperq)
+
+    # 14) off_hours_activity / weekend_activity theo posting_date
+    if post is not None:
+        try:
+            t = pd.to_datetime(post, errors='coerce')
+            hour = t.dt.hour
+            dow  = t.dt.dayofweek
+            off_mask = hour.ge(offh_rng[0]) | hour.lt(offh_rng[1])
+            add_rule(off_mask, 'off_hours_activity', 'Low', hour)
+            add_rule(dow.ge(5), 'weekend_activity', 'Low', dow)
+        except Exception:
+            pass
+
+    # 15) near_approval_amount: số tiền ở gần ngưỡng phê duyệt
+    if (gro is not None) and near_thrs:
+        try:
+            g = pd.to_numeric(gro, errors='coerce')
+            mask = None
+            for th in near_thrs:
+                eps = th * (near_eps/100.0)
+                m = (g >= (th - eps)) & (g <= (th + eps))
+                mask = m if mask is None else (mask | m)
+            add_rule(mask, 'near_approval_amount', 'Medium', g)
+        except Exception:
+            pass
+
+    # 16) bursty_same_amount: cụm giao dịch cùng số tiền trong ~ vài phút theo customer
+    if (post is not None) and (ns is not None) and (df.get('customer_id') is not None):
+        try:
+            tmp = pd.DataFrame({
+                't': pd.to_datetime(post, errors='coerce'),
+                'amt': pd.to_numeric(ns, errors='coerce'),
+                'cust': df['customer_id']
+            }).dropna().sort_values(['cust','amt','t'])
+            tmp['gap_min'] = tmp.groupby(['cust','amt'])['t'].diff().dt.total_seconds().div(60)
+            hit_idx = tmp.index[tmp['gap_min'].fillna(1e9) <= burst_gap_min]
+            if len(hit_idx) > 0:
+                note = tmp['gap_min']
+                mask = df.index.isin(hit_idx)
+                add_rule(pd.Series(mask, index=df.index), 'bursty_same_amount', 'Medium', note)
+        except Exception:
+            pass
 
     if len(rules)==0:
         return pd.DataFrame(columns=['_rule','_severity'])
@@ -889,6 +953,35 @@ def build_rule_context() -> Dict[str,Any]:
         },
         'flags': SS.get('fraud_flags') or [],
     }
+    # HHI (categorical concentration) from Tab Tests (t4)
+    try:
+        hhi = _get(ctx, 't4', 'hhi', 'hhi')
+        ctx.setdefault('t4', {})['hhi_val'] = float(hhi) if hhi is not None else None
+    except Exception:
+        ctx.setdefault('t4', {})['hhi_val'] = None
+
+    # Gap P95 (hours) from Tab Tests (t4)
+    try:
+        gaps = _get(ctx, 't4', 'gap', 'gaps')
+        if isinstance(gaps, pd.DataFrame) and 'gap_hours' in gaps.columns:
+            g = pd.to_numeric(gaps['gap_hours'], errors='coerce').dropna()
+            ctx.setdefault('t4', {})['gap_p95'] = float(np.nanpercentile(g, 95)) if len(g)>0 else None
+        else:
+            ctx.setdefault('t4', {})['gap_p95'] = None
+    except Exception:
+        ctx.setdefault('t4', {})['gap_p95'] = None
+
+    # Max |r| off-diagonal from last_corr
+    try:
+        corr = ctx.get('corr')
+        if isinstance(corr, pd.DataFrame) and corr.shape[0] == corr.shape[1] and corr.shape[0] > 1:
+            tri = corr.where(~np.eye(len(corr), dtype=bool))
+            ctx['corr_abs_max'] = float(np.nanmax(np.abs(tri.values)))
+        else:
+            ctx['corr_abs_max'] = None
+    except Exception:
+        ctx['corr_abs_max'] = None
+
     # convenience derivations
     r1 = ctx['benford'].get('r1')
     if r1 and isinstance(r1, dict) and 'variance' in r1:
@@ -926,6 +1019,46 @@ def rules_catalog() -> List[Rule]:
         condition=lambda c: bool(_get(c,'gof','suggest')) and _get(c,'gof','best') in {'Lognormal','Gamma'},
         action='Áp dụng log/Box‑Cox trước các test tham số hoặc dùng phi tham số.',
         rationale='Phân phối lệch/không chuẩn — biến đổi giúp thỏa giả định tham số.'
+    ))
+        # --- NEW RULES (Sales activity logic from tests) ---
+
+    # Benford 2D lệch
+    R.append(Rule(
+        id='BENFORD_2D_SEV', name='Benford 2D lệch', scope='benford', severity='High',
+        condition=lambda c: (_get(c,'benford','r2') is not None) and (
+            (_get(c,'benford','r2','p', default=1.0) < 0.05) or
+            (_get(c,'benford','r2','MAD', default=0) > 0.012) or
+            (_get(c,'benford','r2_maxdiff', default=0) >= _get(c,'thr','benford_diff'))
+        ),
+        action='Drill-down 2 chữ số đầu; so sánh theo nhà CC/kênh/kỳ.',
+        rationale='2D nhạy với làm tròn/chia nhỏ/áp ngưỡng.'
+    ))
+
+    # |r| cao giữa các biến số (Correlation)
+    R.append(Rule(
+        id='CORR_HIGH_ANY', name='|r| cao giữa các biến số', scope='correlation', severity='Medium',
+        condition=lambda c: to_float(c.get('corr_abs_max')) is not None and
+                            to_float(c.get('corr_abs_max')) >= _get(c,'thr','corr_high'),
+        action='Kiểm tra leakage/định nghĩa chỉ số; gom nhóm/loại bỏ biến trùng; ưu tiên Spearman.',
+        rationale='Tương quan cao có thể do biến trùng/định nghĩa chồng lắp hoặc lỗi tổng hợp.'
+    ))
+
+    # Tập trung cao HHI (Categorical)
+    R.append(Rule(
+        id='HHI_CONCENTRATED', name='Tập trung cao (HHI)', scope='categorical', severity='Medium',
+        condition=lambda c: to_float(_get(c,'t4','hhi_val')) is not None and
+                            to_float(_get(c,'t4','hhi_val')) >= _get(c,'thr','hhi'),
+        action='Rà soát vendor/top-N; kiểm tra chính sách độc quyền; chạy test lệ thuộc với trạng thái.',
+        rationale='Tập trung cao dễ dẫn đến rủi ro cấu kết/điểm lệch kiểm soát.'
+    ))
+
+    # Posting theo cụm (Gap P95 thấp)
+    R.append(Rule(
+        id='BURSTY_POSTING', name='Đăng nhập theo cụm (gap P95 thấp)', scope='datetime', severity='Medium',
+        condition=lambda c: to_float(_get(c,'t4','gap_p95')) is not None and
+                            to_float(_get(c,'t4','gap_p95')) <= _get(c,'thr','gap_p95_hours'),
+        action='So khớp batch/cron; kiểm tra split hóa đơn; xem peak theo giờ/ngày.',
+        rationale='Khoảng cách ngắn liên tục gợi ý batch hoặc chia nhỏ giao dịch.'
     ))
     # Benford 1D
     R.append(Rule(
