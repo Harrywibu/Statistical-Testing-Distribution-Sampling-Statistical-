@@ -2259,12 +2259,7 @@ def run_rule_engine_v2_guard(cfg=None):
 # === ADD (Tab 7): schema flags thống nhất cho mọi nguồn ===
 RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
             "period","metric","threshold","direction","is_alert","created_at","source"]
-# ví dụ hợp nhất:
-re2_cur = normalize_flags(run_rule_engine_v2(df_full), "RE2")
-tests   = normalize_flags(SS.get("flags_from_tabs") and pd.DataFrame(SS["flags_from_tabs"]), "TESTS")
-# nếu có lịch sử SQLite:
-# hist    = normalize_flags(hist_df, "HISTORY")
-INS = pd.concat([re2_cur, tests], ignore_index=True)
+
 
 def normalize_flags(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
     """Đưa bất kỳ flags DataFrame nào về schema RE2_COLS."""
@@ -2430,7 +2425,6 @@ with TAB7:
 
 
 # --------------------------- TAB 7: Risk & Export -----------------------------
-# --------------------------- TAB 7: Rule Engine — Tổng quan & Chi tiết (HỢP NHẤT) -----------------------------
 with TAB7:
     st.subheader('🧠 Rule Engine — Tổng quan & Chi tiết')
 
@@ -2530,17 +2524,27 @@ with TAB7:
         except Exception:
             return _empty_re2()
     
-    # ---- Hợp nhất 3 nguồn + dedupe ----
-    cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-    use_history = st.checkbox("📦 Gộp lịch sử (flags.sqlite)", value=False, key="unify_hist")
+   # --- Hợp nhất nguồn flags cho Tab 7 ---
+import pandas as pd, streamlit as st
+SS = st.session_state
 
-    df_re2   = _re2_now(cfg)
-    df_tabs  = _from_other_tabs()
-    frames = [df_re2, df_tabs]
-    if use_history:
-        frames.append(_from_history())
+df_full = _pick_base_df()
 
-    INS = pd.concat(frames, ignore_index=True) if any(len(x)>0 for x in frames) else _empty_re2()
+# RE2 (core rules)
+re2_cur = normalize_flags(run_rule_engine_v2(df_full) if df_full is not None else pd.DataFrame(), "RE2")
+
+# TESTS (các tab đã đẩy về SS['flags_from_tabs'])
+tabs_src = SS.get("flags_from_tabs")
+tabs_df = (pd.DataFrame(tabs_src) if isinstance(tabs_src, list)
+           else (tabs_src if isinstance(tabs_src, pd.DataFrame) else pd.DataFrame()))
+tests = normalize_flags(tabs_df, "TESTS")
+
+# Nếu cần gộp lịch sử SQLite, mở comment 3 dòng dưới (và đảm bảo có hist_df):
+# hist_df = ...  # đọc từ flags.sqlite của bạn
+# hist    = normalize_flags(hist_df, "HISTORY")
+# INS = pd.concat([re2_cur, tests, hist], ignore_index=True)
+
+INS = pd.concat([re2_cur, tests], ignore_index=True)
 
     # dedupe theo khóa: rule + entity + period + note + source
     if not INS.empty:
