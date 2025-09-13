@@ -581,7 +581,7 @@ def _benford_1d(series: pd.Series):
         mad=float(np.mean(np.abs(obs_p-exp_p)))
         var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
         var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
-        var_tbl['diff_pct'] = (table['observed_p'].values - table['expected_p'].values) * 100.0
+        var_tbl['diff_pct'] = (var_tbl['observed'] - var_tbl['expected']) / var_tbl['expected']
         table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
     return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
@@ -608,7 +608,7 @@ def _benford_2d(series: pd.Series):
     mad=float(np.mean(np.abs(obs_p-exp_p)))
     var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
     var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
-    var_tbl['diff_pct'] = (table['observed_p'].values - table['expected_p'].values) * 100.0
+    var_tbl['diff_pct'] = (var_tbl['observed'] - var_tbl['expected']) / var_tbl['expected']
     table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
     return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
