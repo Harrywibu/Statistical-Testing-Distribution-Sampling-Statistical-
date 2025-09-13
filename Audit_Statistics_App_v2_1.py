@@ -6,6 +6,65 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# 1) Chuẩn roles bắt buộc/tuỳ chọn (để check nhanh khi tab cần)
+ROLES_CANON = {
+    "time": "std_time", "amount": "std_amount", "qty": "std_qty", "price": "std_price",
+    "discount": "std_discount", "return_flag": "std_return_flag",
+    "product_code": "std_product_code", "customer_id": "std_customer_id",
+    "invoice_id": "std_invoice_id", "channel": "std_channel",
+}
+SEVERITY_ORDER = ["High","Medium","Low"]
+
+# 2) Lấy alias cột từ SS['std_cols'] hoặc fallback ROLES_CANON
+def get_stdcol(role: str, std_map: dict) -> str | None:
+    # std_map: {"time":"std_time", ...} do apply_schema_mapping trả ra
+    alias = (std_map or {}).get(role)
+    if alias: return alias
+    return ROLES_CANON.get(role)
+
+# 3) Kiểm tra đủ roles trước khi test
+def need_roles(std_map: dict, roles: list[str]) -> tuple[bool, list[str], dict]:
+    miss = []
+    used = {}
+    for r in roles:
+        col = get_stdcol(r, std_map)
+        if not col:
+            miss.append(r)
+        else:
+            used[r] = col
+    return (len(miss)==0, miss, used)
+
+# 4) Chuẩn hoá period (tháng) cho báo cáo
+def mk_period(series_dt) -> pd.Series:
+    try:
+        return pd.to_datetime(series_dt).dt.to_period("M").astype(str)
+    except Exception:
+        return pd.Series([None]*len(series_dt))
+
+# 5) Push 1 flag về session (mọi tab dùng chung)
+def push_flag(rule_name: str, severity: str, note: str,
+              entity_type: str, entity_id: str | int | None,
+              metric=None, threshold:str|None=None, direction:str|None=None,
+              period:str|None=None, is_alert:int=1, source:str="(TAB)") -> None:
+    import streamlit as st
+    SS = st.session_state
+    row = {
+        "_rule": rule_name, "_severity": severity, "note": note,
+        "entity_type": entity_type, "entity_id": ("" if entity_id is None else str(entity_id)),
+        "period": ("" if period is None else str(period)),
+        "metric": metric, "threshold": threshold, "direction": direction,
+        "is_alert": int(bool(is_alert)),
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source": source,
+    }
+    SS.setdefault("flags_from_tabs", []).append(row)
+
+# 6) Helper “chốt wording business” nhanh
+def note_tpl(entity_label: str, value_txt: str, compare_txt: str) -> str:
+    # Ví dụ: note_tpl("SKU A", "p95/median=3.2×", "≥3×")
+    return f"{entity_label}: {value_txt} {compare_txt}"
+# ================== /RULE ENGINE CONTRACT (helpers) ==================
+
 # --- Minimal schema mapping (self-contained) ---
 def apply_schema_mapping(df):
     import pandas as pd
