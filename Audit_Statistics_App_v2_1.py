@@ -579,10 +579,20 @@ def _benford_1d(series: pd.Series):
         chi2=np.nansum((obs-exp)**2/exp)
         pval=1-stats.chi2.cdf(chi2, len(idx)-1)
         mad=float(np.mean(np.abs(obs_p-exp_p)))
-        var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
-        var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
-        var_tbl['diff_pct'] = (var_tbl['observed'] - var_tbl['expected']) / var_tbl['expected']
-        table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
+        var_tbl = pd.DataFrame({'digit': idx, 'expected': exp, 'observed': obs.values})
+        var_tbl['diff'] = var_tbl['observed'] - var_tbl['expected']
+        # ĐIỂM % (percentage points): (Actual% - Benford%) * 100
+        var_tbl['diff_pct'] = (obs_p.values - exp_p) * 100.0
+        
+        # Giữ cột p (tỉ lệ 0..1) cho biểu đồ, đồng thời thêm cột % để hiển thị bảng
+        table = pd.DataFrame({
+            'digit': idx,
+            'observed_p': obs_p.values,          # 0..1 (dùng cho plot)
+            'expected_p': exp_p,                 # 0..1
+            'observed_pct': (obs_p * 100).values,# %
+            'expected_pct': exp_p * 100,         # %
+            'diff_pct': (obs_p.values - exp_p) * 100.0   # %
+        })
     return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
 @st.cache_data(ttl=3600, show_spinner=False, max_entries=64)
@@ -606,10 +616,18 @@ def _benford_2d(series: pd.Series):
         chi2=np.nansum((obs-exp)**2/exp)
         pval=1-stats.chi2.cdf(chi2, len(idx)-1)
     mad=float(np.mean(np.abs(obs_p-exp_p)))
-    var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
-    var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
-    var_tbl['diff_pct'] = (var_tbl['observed'] - var_tbl['expected']) / var_tbl['expected']
-    table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
+    var_tbl = pd.DataFrame({'digit': idx, 'expected': exp, 'observed': obs.values})
+    var_tbl['diff'] = var_tbl['observed'] - var_tbl['expected']
+    var_tbl['diff_pct'] = (obs_p.values - exp_p) * 100.0   # điểm %
+    
+    table = pd.DataFrame({
+        'digit': idx,
+        'observed_p': obs_p.values,            # 0..1 (cho plot)
+        'expected_p': exp_p,                   # 0..1
+        'observed_pct': (obs_p * 100).values,  # %
+        'expected_pct': exp_p * 100,           # %
+        'diff_pct': (obs_p.values - exp_p) * 100.0  # %
+    })
     return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
 def _benford_ready(series: pd.Series) -> tuple[bool, str]:
@@ -1488,7 +1506,13 @@ with TAB2:
                                 fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
+                                # var: diff_pct là điểm % (đã *100), format kèm dấu %
+                                st_df(var.style.format({'diff_pct': '{:.2f}%'}), use_container_width=True, height=200)
+                                
+                                # nếu muốn hiển thị thêm table với các cột %:
+                                tb_show = tb[['digit','observed_pct','expected_pct','diff_pct']].copy()
+                                st_df(tb_show.style.format({'observed_pct':'{:.2f}%','expected_pct':'{:.2f}%','diff_pct':'{:.2f}%'}),
+                                     use_container_width=True, height=220)
                     if run_b2:
                         ok,msg = _benford_ready(s)
                         if not ok: st.warning(msg)
@@ -1499,7 +1523,13 @@ with TAB2:
                                 fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
                                 fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
                                 fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
+                                # var: diff_pct là điểm % (đã *100), format kèm dấu %
+                                st_df(var.style.format({'diff_pct': '{:.2f}%'}), use_container_width=True, height=200)
+                                
+                                # nếu muốn hiển thị thêm table với các cột %:
+                                tb_show = tb[['digit','observed_pct','expected_pct','diff_pct']].copy()
+                                st_df(tb_show.style.format({'observed_pct':'{:.2f}%','expected_pct':'{:.2f}%','diff_pct':'{:.2f}%'}),
+                                     use_container_width=True, height=220)
                     if run_corr and other_num in DF_VIEW.columns:
                         sub = DF_VIEW[[num_col, other_num]].dropna()
                         if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
