@@ -368,16 +368,34 @@ def sha12_of_df(df: pd.DataFrame):
     # alias về hàm có sẵn trong file
     return _sha12_of_df(df)
 
+# === REPLACE: run_rule_engine_v2 (safe mapping + never None + normalize) ===
 def run_rule_engine_v2(df, cfg=None):
+    """
+    Wrapper cho UI: gọi core rules và trả về view thống nhất cột.
+    - Nếu thiếu dữ liệu → trả DataFrame rỗng đúng schema (không None).
+    - Chuẩn hoá cột: _rule/_severity/note/... + source='RE2'
+    """
+    RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
+                "period","metric","threshold","direction","is_alert","created_at","source"]
+    EMPTY = pd.DataFrame(columns=RE2_COLS)
+
     if df is None or len(df) == 0:
-        return pd.DataFrame(columns=["_rule","_severity","note","entity_type","entity_id",
-                                     "period","metric","threshold","direction","is_alert","created_at"])
-    mapping = _guess_mapping_from_df(df)
-    batch_id = sha12_of_df(df)
+        return EMPTY
 
-    flags = run_core_rules(df, mapping, batch_id)
-    save_flags(flags)
+    # batch id an toàn theo dữ liệu
+    import hashlib
+    try:
+        bid = hashlib.sha1(pd.util.hash_pandas_object(df, index=True).values).hexdigest()[:12]
+    except Exception:
+        from time import time
+        bid = f"batch_{int(time())}"
 
+    # mapping truyền vào UI có thể None → để core tự resolve (đã làm ở #1)
+    flags = run_core_rules(df, mapping=None, batch_id=bid)
+    if not isinstance(flags, pd.DataFrame) or flags.empty:
+        return EMPTY
+
+    # Chuẩn hoá schema UI
     view = pd.DataFrame({
         "_rule":       flags["rule_name"],
         "_severity":   flags["severity"],
@@ -390,8 +408,11 @@ def run_rule_engine_v2(df, cfg=None):
         "direction":   flags["direction"],
         "is_alert":    flags["is_alert"],
         "created_at":  flags["created_at"],
+        "source":      "RE2",
     })
-    return view
+    # đảm bảo đúng thứ tự cột
+    return view[RE2_COLS]
+
 
 
 def _decode_bytes_to_str(v):
@@ -2235,6 +2256,36 @@ def run_rule_engine_v2_guard(cfg=None):
     except Exception:
         return _empty_re2()
 # -------------------------------- TAB 6: Flags --------------------------------
+# === ADD (Tab 7): schema flags thống nhất cho mọi nguồn ===
+RE2_COLS = ["_rule","_severity","note","entity_type","entity_id",
+            "period","metric","threshold","direction","is_alert","created_at","source"]
+# ví dụ hợp nhất:
+re2_cur = normalize_flags(run_rule_engine_v2(df_full), "RE2")
+tests   = normalize_flags(SS.get("flags_from_tabs") and pd.DataFrame(SS["flags_from_tabs"]), "TESTS")
+# nếu có lịch sử SQLite:
+# hist    = normalize_flags(hist_df, "HISTORY")
+INS = pd.concat([re2_cur, tests], ignore_index=True)
+
+def normalize_flags(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    """Đưa bất kỳ flags DataFrame nào về schema RE2_COLS."""
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=RE2_COLS)
+    out = df.copy()
+    # map tên cột phổ biến về schema
+    rename = {
+        "rule_name":"_rule",
+        "severity":"_severity",
+    }
+    out.rename(columns=rename, inplace=True)
+    # thêm source nếu thiếu
+    if "source" not in out.columns:
+        out["source"] = source_name
+    # thêm cột thiếu
+    for c in RE2_COLS:
+        if c not in out.columns:
+            out[c] = None
+    return out[RE2_COLS]
+
 with TAB7:
     base_df = DF_FULL
     st.subheader('🚩 Fraud Flags')
