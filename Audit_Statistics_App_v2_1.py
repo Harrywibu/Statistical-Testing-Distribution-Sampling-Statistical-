@@ -628,108 +628,59 @@ def gof_models(series: pd.Series):
 # ------------------------------ Benford Helpers -------------------------------
 @st.cache_data(ttl=3600, show_spinner=False, max_entries=64)
 def _benford_1d(series: pd.Series):
-    # 1) ép số + loại NaN; dùng tiêu chí ≠ 0 như App.py
-    s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
-    s = s[s != 0]
-    if s.empty: 
-        return None
-
-    # 2) Bóc "chữ số đầu" theo App.py: int(abs(x)) rồi lấy ký tự đầu
-    def _first_digit_app(x):
-        try:
-            v = abs(float(x))
-            sx = str(int(v))
-            return int(sx[0])  # có thể là 0 nếu int(v)==0
-        except Exception:
-            return np.nan
-
-    d_all = s.apply(_first_digit_app).dropna()  # có thể chứa 0
-    if d_all.empty:
-        return None
-
-    # 3) Đếm cho các digit 1..9, nhưng %Observed chia cho tổng d_all (cùng cách App.py)
-    obs = d_all[d_all.isin(range(1, 10))].value_counts().sort_index().reindex(range(1,10), fill_value=0).astype(float)
-    total_all = float(len(d_all))  # mẫu số App.py
-    if total_all == 0:
-        return None
-
-    # 4) Tỷ lệ & kỳ vọng lý thuyết
-    idx = np.arange(1,10)
-    obs_pct_app = obs / total_all
-    exp_p = np.log10(1 + 1/idx)           # Benford %
-    n = obs.sum()                          # dùng cho chi-square (chuẩn hoá tổng bằng observed)
-    exp = exp_p * n
-
-    # 5) Chỉ số kiểm định
+    s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna().abs()
+    if s.empty: return None
+    def _digits(x):
+        xs = ("%.15g" % float(x))
+        return re.sub(r"[^0-9]", "", xs).lstrip("0")
+    d1 = s.apply(lambda v: int(_digits(v)[0]) if len(_digits(v))>=1 else np.nan).dropna()
+    d1 = d1[(d1>=1)&(d1<=9)]
+    if d1.empty: return None
+    obs = d1.value_counts().sort_index().reindex(range(1,10), fill_value=0).astype(float)
+    n=obs.sum(); obs_p=obs/n
+    idx=np.arange(1,10); exp_p=np.log10(1+1/idx); exp=exp_p*n
     with np.errstate(divide='ignore', invalid='ignore'):
-        chi2 = np.nansum((obs - exp)**2 / exp)
-        pval = 1 - stats.chi2.cdf(chi2, len(idx) - 1)
-    mad = float(np.mean(np.abs(obs_pct_app - exp_p)))
-
-    # 6) Bảng kết quả:
-    var_tbl = pd.DataFrame({
-        'digit': idx,
-        'expected': exp,            # số đếm kỳ vọng (cho chi-square)
-        'observed': obs.values,     # số đếm thực tế (1..9)
-    })
-    var_tbl['diff'] = var_tbl['observed'] - var_tbl['expected']
-    # khác biệt % THEO CÁCH APP.PY: (Observed% - Benford%) = chênh "điểm phần trăm"
-    var_tbl['diff_pct'] = obs_pct_app.values - exp_p
-
-    table = pd.DataFrame({
-        'digit': idx,
-        'observed_p': obs_pct_app.values,  # %Observed dùng mẫu số tổng (có thể <100% nếu có digit 0)
-        'expected_p': exp_p                # %Benford
-    })
-    return {'table': table, 'variance': var_tbl, 'n': int(n), 'chi2': float(chi2), 'p': float(pval), 'MAD': float(mad)}
+        chi2=np.nansum((obs-exp)**2/exp)
+        pval=1-stats.chi2.cdf(chi2, len(idx)-1)
+        mad=float(np.mean(np.abs(obs_p-exp_p)))
+        var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
+        var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
+        var_tbl['diff_pct']=(var_tbl['observed']-var_tbl['expected'])/var_tbl['expected']
+        table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
+    return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
 @st.cache_data(ttl=3600, show_spinner=False, max_entries=64)
 def _benford_2d(series: pd.Series):
-    s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
-    s = s[s != 0]
-    if s.empty:
-        return None
-
-    def _first2_app(x):
-        try:
-            v = abs(float(x))
-            sx = str(int(v))
-            return int(sx[:2]) if len(sx) >= 2 else np.nan
-        except Exception:
-            return np.nan
-
-    d_all = s.apply(_first2_app).dropna()  # tổng quan sát cho 2D
-    if d_all.empty:
-        return None
-
-    obs = d_all[d_all.between(10, 99)].value_counts().sort_index().reindex(range(10,100), fill_value=0).astype(float)
-    total_all = float(len(d_all))  # mẫu số App.py cho %Observed
-    if total_all == 0:
-        return None
-
-    idx = np.arange(10,100)
-    obs_pct_app = obs / total_all
-    exp_p = np.log10(1 + 1/idx)
-    n = obs.sum()
-    exp = exp_p * n
-
+    s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna().abs()
+    if s.empty: return None
+    def _digits(x):
+        xs = ("%.15g" % float(x))
+        return re.sub(r"[^0-9]", "", xs).lstrip("0")
+    def _first2(v):
+        ds = _digits(v)
+        if len(ds)>=2: return int(ds[:2])
+        if len(ds)==1 and ds!="0": return int(ds)
+        return np.nan
+    d2 = s.apply(_first2).dropna(); d2=d2[(d2>=10)&(d2<=99)]
+    if d2.empty: return None
+    obs = d2.value_counts().sort_index().reindex(range(10,100), fill_value=0).astype(float)
+    n=obs.sum(); obs_p=obs/n
+    idx=np.arange(10,100); exp_p=np.log10(1+1/idx); exp=exp_p*n
     with np.errstate(divide='ignore', invalid='ignore'):
-        chi2 = np.nansum((obs - exp)**2 / exp)
-        pval = 1 - stats.chi2.cdf(chi2, len(idx) - 1)
-    mad = float(np.mean(np.abs(obs_pct_app - exp_p)))
-
-    var_tbl = pd.DataFrame({'digit': idx, 'expected': exp, 'observed': obs.values})
-    var_tbl['diff'] = var_tbl['observed'] - var_tbl['expected']
-    var_tbl['diff_pct'] = obs_pct_app.values - exp_p       # chênh "điểm phần trăm"
-
-    table = pd.DataFrame({'digit': idx, 'observed_p': obs_pct_app.values, 'expected_p': exp_p})
-    return {'table': table, 'variance': var_tbl, 'n': int(n), 'chi2': float(chi2), 'p': float(pval), 'MAD': float(mad)}
+        chi2=np.nansum((obs-exp)**2/exp)
+        pval=1-stats.chi2.cdf(chi2, len(idx)-1)
+    mad=float(np.mean(np.abs(obs_p-exp_p)))
+    var_tbl=pd.DataFrame({'digit':idx,'expected':exp,'observed':obs.values})
+    var_tbl['diff']=var_tbl['observed']-var_tbl['expected']
+    var_tbl['diff_pct']=(var_tbl['observed']-var_tbl['expected'])/var_tbl['expected']
+    table=pd.DataFrame({'digit':idx,'observed_p':obs_p.values,'expected_p':exp_p})
+    return {'table':table, 'variance':var_tbl, 'n':int(n), 'chi2':float(chi2), 'p':float(pval), 'MAD':float(mad)}
 
 def _benford_ready(series: pd.Series) -> tuple[bool, str]:
     s = pd.to_numeric(series, errors='coerce')
-    n_nz = int((s != 0).sum())
-    if n_nz < 1:
-        return False, f"Không có giá trị ≠ 0 để chạy Benford (hiện {n_nz}, cần ≥300)."
+    n_pos = int((s>0).sum())
+    if n_pos < 1:
+        return False, f"Không có giá trị > 0 để chạy Benford (hiện {n_pos}, cần ≥300)."
     s_non = s.dropna()
     if s_non.shape[0] > 0:
         ratio_unique = s_non.nunique()/s_non.shape[0]
@@ -1878,31 +1829,30 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig1.update_layout(title=f'Benford 1D — Obs vs Exp ({SS.get("bf1_col")}, {src_tag})', height=340)
                     st_plotly(fig1)
-                                # --- Data quality — cột 1D đã chọn (FIX) ---
+                                # --- NEW: Data quality cho cột 1D đã chọn ---
                 _raw1 = data_for_benford[SS.get('bf1_col')]
                 _num1 = pd.to_numeric(_raw1, errors='coerce')
-                _total1 = len(_raw1)
-                _none_like1 = _raw1.astype('string').str.strip().str.lower().isin(['none','null']).sum()
-                _n_nan1  = _num1.isna().sum()
-                _n_zero1 = (_num1 == 0).sum()
-                _n_pos1  = (_num1 > 0).sum()
-                _n_neg1  = (_num1 < 0).sum()
-                _used1   = (_num1 != 0).sum()  # <-- DEFINE BEFORE USE
-                
+                _total = len(_raw1)
+                _none_like = _raw1.astype('string').str.strip().str.lower().isin(['none','null']).sum()
+                _n_nan  = _num1.isna().sum()
+                _n_zero = (_num1 == 0).sum()
+                _n_pos  = (_num1 > 0).sum()
+                _n_neg  = (_num1 < 0).sum()
+                _used   = _n_pos  # Benford dùng > 0
+                _base_clean = max(_total - _n_nan - _n_zero, 0)
+
                 qdf1 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                             'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
-                    'count': [int(_total1), int(_n_nan1), int(_none_like1), int(_n_zero1),
-                              int(_n_pos1), int(_n_neg1), int(_used1)]
+                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
+                    'count': [int(_total), int(_n_nan), int(_none_like), int(_n_zero),
+                              int(_n_pos), int(_n_neg), int(_used)]
                 })
-                qdf1['% vs total'] = (qdf1['count'] / _total1 * 100.0).round(2) if _total1>0 else 0.0
-                _base_clean1 = max(_total1 - _n_nan1 - _n_zero1, 0)
+                qdf1['% vs total'] = (qdf1['count'] / _total * 100.0).round(2) if _total>0 else 0.0
                 qdf1['% vs non-missing&non-zero'] = (
-                    (qdf1['count'] / _base_clean1 * 100.0).round(2) if _base_clean1>0 else 0.0
+                    (qdf1['count'] / _base_clean * 100.0).round(2) if _base_clean>0 else 0.0
                 )
                 st.caption('📋 Data quality — cột 1D đã chọn')
                 st_df(qdf1, use_container_width=True, height=180)
-
                                 # --- NEW: Hiển thị variance với diff_pct (%) + highlight ≥5% ---
                 color_thr_pct = 5.0  # ngưỡng tô màu cố định 5%
                 var_show = var.copy()
@@ -1961,7 +1911,7 @@ with TAB4:
                     src_tag = 'FULL' if (SS['df'] is not None and SS.get('bf_use_full')) else 'SAMPLE'
                     fig2.update_layout(title=f'Benford 2D — Obs vs Exp ({SS.get("bf2_col")}, {src_tag})', height=340)
                     st_plotly(fig2)
-                                # --- Data quality — cột 2D đã chọn (FIX) ---
+                                # --- NEW: Data quality cho cột 2D đã chọn ---
                 _raw2 = data_for_benford[SS.get('bf2_col')]
                 _num2 = pd.to_numeric(_raw2, errors='coerce')
                 _total2 = len(_raw2)
@@ -1970,22 +1920,21 @@ with TAB4:
                 _n_zero2 = (_num2 == 0).sum()
                 _n_pos2  = (_num2 > 0).sum()
                 _n_neg2  = (_num2 < 0).sum()
-                _used2   = (_num2 != 0).sum()  # <-- DEFINE BEFORE USE
-                
+                _used2   = _n_pos2
+                _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
+
                 qdf2 = pd.DataFrame({
                     'type': ['Total rows','NaN (numeric)','None/Null (text)','Zero (==0)',
-                             'Positive (>0)','Negative (<0)','Used for Benford (≠0)'],
+                             'Positive (>0)','Negative (<0)','Used for Benford (>0)'],
                     'count': [int(_total2), int(_n_nan2), int(_none_like2), int(_n_zero2),
                               int(_n_pos2), int(_n_neg2), int(_used2)]
                 })
                 qdf2['% vs total'] = (qdf2['count'] / _total2 * 100.0).round(2) if _total2>0 else 0.0
-                _base_clean2 = max(_total2 - _n_nan2 - _n_zero2, 0)
                 qdf2['% vs non-missing&non-zero'] = (
                     (qdf2['count'] / _base_clean2 * 100.0).round(2) if _base_clean2>0 else 0.0
                 )
                 st.caption('📋 Data quality — cột 2D đã chọn')
                 st_df(qdf2, use_container_width=True, height=180)
-
 
                                 # --- NEW: Hiển thị variance 2D với diff_pct (%) + highlight ≥5% ---
                 color_thr_pct = 5.0
