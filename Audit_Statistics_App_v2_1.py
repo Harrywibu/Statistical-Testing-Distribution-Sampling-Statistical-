@@ -1354,33 +1354,54 @@ with TAB1:
         if primary_col in agg.columns:
             keep = (agg.groupby(primary_col)[ycol].sum().sort_values(ascending=False).head(int(topn)).index)
             agg = agg[agg[primary_col].isin(keep)]
-
-        def _attach_labels(fig, use_pct=False):
-            # Đếm tổng số điểm để tránh bị rối khi gán nhãn
-            total_points = sum((len(getattr(d, 'y', [])) if getattr(d, 'y', None) is not None else 0) for d in fig.data)
-            if show_labels and total_points <= int(label_limit):
-                for d in fig.data:
-                    # Chỉ gán nhãn cho trace có trục Y (bar/line)
-                    if hasattr(d, "y") and d.y is not None:
-                        if use_pct:
-                            # y là tỷ lệ (0..1) -> hiển thị dạng %
-                            d.text = [f"{(float(v) if v is not None else 0)*100:.1f}%" for v in d.y]
+            
+    def _attach_labels(fig, use_pct=False):
+        # helper: đếm số phần tử an toàn (kể cả numpy array / None)
+        def _safe_len(v):
+            try:
+                return 0 if v is None else len(v)
+            except Exception:
+                try:
+                    return len(list(v))
+                except Exception:
+                    return 0
+    
+        # Đếm tổng số điểm bằng y (ổn cho bar/line dọc)
+        total_points = sum(_safe_len(getattr(d, "y", None)) for d in fig.data)
+    
+        if show_labels and total_points <= int(label_limit):
+            for d in fig.data:
+                yvals = getattr(d, "y", None)
+                if yvals is None:
+                    continue
+    
+                # Chuyển về list float an toàn
+                try:
+                    vals = [float(v) if v is not None else 0.0 for v in yvals]
+                except TypeError:
+                    # phòng trường hợp yvals không lặp được
+                    try:
+                        vals = [float(yvals)]
+                    except Exception:
+                        vals = []
+    
+                if use_pct:
+                    d.text = [f"{v*100:.1f}%" for v in vals]
+                else:
+                    labels = []
+                    for v in vals:
+                        if ycol in ["revenue", "aov", "avg_price_unit", "margin"]:
+                            labels.append(fmt_money(v))
+                        elif ycol in ["margin_pct", "return_rate"]:
+                            labels.append(fmt_pct(v))
                         else:
-                            # Định dạng theo loại metric (tiền/tỷ lệ/số)
-                            def _fmt_val(v):
-                                if v is None:
-                                    return "0"
-                                vv = float(v)
-                                if ycol in ["revenue", "aov", "avg_price_unit", "margin"]:
-                                    return fmt_money(vv)
-                                elif ycol in ["margin_pct", "return_rate"]:
-                                    return fmt_pct(vv)
-                                else:
-                                    return fmt_num(vv)
-                            d.text = [_fmt_val(v) for v in d.y]
-                        d.textposition = "outside"
-        
-            return fig
+                            labels.append(fmt_num(v))
+                    d.text = labels
+    
+                d.textposition = "outside"
+    
+        return fig
+
 
         if primary_col == '__period__':
             if secondary_col and secondary_col in agg.columns:
