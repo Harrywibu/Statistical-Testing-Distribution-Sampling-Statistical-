@@ -1645,7 +1645,77 @@ with TAB4:
                     )
                     st.caption('📋 Data quality — cột 1D đã chọn')
                     st_df(qdf1, use_container_width=True, height=180)
+                    # --- Bảng % 1D (expected% / observed%) & diff% = observed% - expected% ---
+                    color_thr_pct = 5.0  # drill-down theo chuẩn 5%
                     
+                    t1 = pd.DataFrame({
+                        'digit': tb['digit'].astype(int),
+                        'expected_%': tb['expected_p'] * 100.0,
+                        'observed_%': tb['observed_p'] * 100.0,
+                    })
+                    t1['diff_%'] = t1['observed_%'] - t1['expected_%']
+                    
+                    def _hl_percent1(v):
+                        try:
+                            return 'color: #d32f2f' if abs(float(v)) >= color_thr_pct else ''
+                        except Exception:
+                            return ''
+                    
+                    sty1 = (
+                        t1.round(2)
+                          .style
+                          .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
+                          .applymap(_hl_percent1, subset=['diff_%'])
+                    )
+                    st_df(sty1, use_container_width=True, height=220)
+                    
+                    # --- Drill-down 1D cho những digit lệch ≥5% (tính theo diff_% ở trên) ---
+                    bad_digits_1d = t1.loc[t1['diff_%'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
+                    if bad_digits_1d:
+                        with st.expander('🔎 Drill-down 1D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
+                            mode1 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
+                                             horizontal=True, key='bf1_drill_mode')
+                    
+                            import re as _re_local
+                            def _digits_str(x):
+                                xs = ("%.15g" % float(x))
+                                return _re_local.sub(r"[^0-9]", "", xs).lstrip("0")
+                            def _first1(v):
+                                ds = _digits_str(v)
+                                return int(ds[0]) if len(ds) >= 1 else np.nan
+                    
+                            s1_num = pd.to_numeric(data_for_benford[SS['bf1_col']], errors='coerce') \
+                                       .replace([np.inf, -np.inf], np.nan).dropna().abs()
+                            d1 = s1_num.apply(_first1).dropna()
+                    
+                            for dg in bad_digits_1d:
+                                idx = d1[d1 == dg].index
+                                st.markdown(f'**Digit {dg}** — {len(idx):,} rows')
+                                if len(idx) == 0:
+                                    continue
+                                if mode1 == 'Xổ hết':
+                                    st_df(data_for_benford.loc[idx].head(2000), use_container_width=True, height=260)
+                                else:
+                                    st_df(data_for_benford.loc[idx, [SS.get("bf1_col")]].head(200),
+                                          use_container_width=True, height=220)
+                    
+                    # --- Thông điệp trạng thái dùng ngưỡng slider (so sánh theo tỷ lệ, không phải % point) ---
+                    thr = SS.get('risk_diff_threshold', 0.05)               # ví dụ 0.05 = 5%
+                    maxdiff_pp = float(t1['diff_%'].abs().max())            # % point
+                    maxdiff_ratio = maxdiff_pp / 100.0                      # đổi về tỷ lệ để so với thr
+                    
+                    msg = '🟢 Green'
+                    if maxdiff_ratio >= 2*thr:
+                        msg = '🚨 Red'
+                    elif maxdiff_ratio >= thr:
+                        msg = '🟡 Yellow'
+                    
+                    sev = '🟢 Green'
+                    if (p < 0.01) or (MAD > 0.015): sev = '🚨 Red'
+                    elif (p < 0.05) or (MAD > 0.012): sev = '🟡 Yellow'
+                    
+                    st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
+
                     # --- Hiển thị variance 1D theo phần trăm (chỉ %), bỏ diff (điểm) & counts ---
                     color_thr_pct = float(SS.get('risk_diff_threshold', 0.05)) * 100.0
                     
@@ -1739,15 +1809,15 @@ with TAB4:
                     st.caption('📋 Data quality — cột 2D đã chọn')
                     st_df(qdf2, use_container_width=True, height=180)
                     
-                   # --- Hiển thị variance 2D theo phần trăm (chỉ %) ---
-                    color_thr_pct = float(SS.get('risk_diff_threshold', 0.05)) * 100.0
+                   # --- Bảng % 2D (expected% / observed%) & diff% = observed% - expected% ---
+                    color_thr_pct = 5.0  # drill-down theo chuẩn 5%
                     
-                    view2 = pd.DataFrame({
+                    t2 = pd.DataFrame({
                         'digit': tb2['digit'].astype(int),
-                        'expected_%': (tb2['expected_p'] * 100.0).round(2),
-                        'observed_%': (tb2['observed_p'] * 100.0).round(2),
-                        'diff_%': (var2['diff_pct'] * 100.0).round(2),
+                        'expected_%': tb2['expected_p'] * 100.0,
+                        'observed_%': tb2['observed_p'] * 100.0,
                     })
+                    t2['diff_%'] = t2['observed_%'] - t2['expected_%']
                     
                     def _hl_percent2(v):
                         try:
@@ -1755,14 +1825,16 @@ with TAB4:
                         except Exception:
                             return ''
                     
-                    sty2 = (view2.style
-                            .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
-                            .applymap(_hl_percent2, subset=['diff_%']))
+                    sty2 = (
+                        t2.round(2)
+                          .style
+                          .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
+                          .applymap(_hl_percent2, subset=['diff_%'])
+                    )
                     st_df(sty2, use_container_width=True, height=220)
                     
-                    # --- Drill-down 2D theo các digit lệch lớn
-                    bad_digits_2d = view2.loc(view2['diff_%'].abs() >= color_thr_pct, 'digit').astype(int).tolist()
-
+                    # --- Drill-down 2D cho những digit lệch ≥5% (tính theo diff_% ở trên) ---
+                    bad_digits_2d = t2.loc[t2['diff_%'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
                     if bad_digits_2d:
                         with st.expander('🔎 Drill-down 2D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
                             mode2 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
@@ -1774,7 +1846,7 @@ with TAB4:
                                 return _re_local.sub(r"[^0-9]", "", xs).lstrip("0")
                             def _first2(v):
                                 ds = _digits_str(v)
-                                return int(ds[:2]) if len(ds)>=2 else (int(ds) if len(ds)==1 and ds!='0' else np.nan)
+                                return int(ds[:2]) if len(ds) >= 2 else (int(ds) if len(ds) == 1 and ds != '0' else np.nan)
                     
                             s2_num = pd.to_numeric(data_for_benford[SS['bf2_col']], errors='coerce') \
                                        .replace([np.inf, -np.inf], np.nan).dropna().abs()
@@ -1788,16 +1860,25 @@ with TAB4:
                                 if mode2 == 'Xổ hết':
                                     st_df(data_for_benford.loc[idx].head(2000), use_container_width=True, height=260)
                                 else:
-                                    st_df(data_for_benford.loc[idx, [SS.get("bf2_col")]].head(200), use_container_width=True, height=220)
-
-                thr = SS['risk_diff_threshold']; maxdiff2 = float(var2['diff_pct'].abs().max()) if len(var2)>0 else 0.0
-                msg2 = '🟢 Green'
-                if maxdiff2 >= 2*thr: msg2='🚨 Red'
-                elif maxdiff2 >= thr: msg2='🟡 Yellow'
-                sev2 = '🟢 Green'
-                if (p2<0.01) or (MAD2>0.015): sev2='🚨 Red'
-                elif (p2<0.05) or (MAD2>0.012): sev2='🟡 Yellow'
-                st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
+                                    st_df(data_for_benford.loc[idx, [SS.get("bf2_col")]].head(200),
+                                          use_container_width=True, height=220)
+                    
+                    # --- Thông điệp trạng thái dùng ngưỡng slider (so sánh theo tỷ lệ, không phải % point) ---
+                    thr = SS.get('risk_diff_threshold', 0.05)
+                    maxdiff2_pp = float(t2['diff_%'].abs().max())
+                    maxdiff2_ratio = maxdiff2_pp / 100.0
+                    
+                    msg2 = '🟢 Green'
+                    if maxdiff2_ratio >= 2*thr:
+                        msg2 = '🚨 Red'
+                    elif maxdiff2_ratio >= thr:
+                        msg2 = '🟡 Yellow'
+                    
+                    sev2 = '🟢 Green'
+                    if (p2 < 0.01) or (MAD2 > 0.015): sev2 = '🚨 Red'
+                    elif (p2 < 0.05) or (MAD2 > 0.012): sev2 = '🟡 Yellow'
+                    
+                    st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
 
 # ------------------------------- TAB 4: Tests --------------------------------
