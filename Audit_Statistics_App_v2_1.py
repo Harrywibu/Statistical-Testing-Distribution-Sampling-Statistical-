@@ -125,151 +125,6 @@ def apply_schema_mapping(df):
 
     return df, std
 
-
-def run_rule_engine_v2(df, cfg=None):
-    import pandas as pd, numpy as np
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    cfg = cfg or {}
-    tol = cfg.get('pnl_tol_vnd', 1.0)
-    ret_thr = cfg.get('return_rate_thr', 0.2)
-    iqr_k = cfg.get('iqr_k', 1.5)
-
-    rules = []
-
-    ns = df.get('net_sales_vnd')
-    qty = df.get('qty'); wkg = df.get('weight_kg')
-    prod = df.get('product')
-    post = df.get('posting_date')
-    gro  = df.get('gross_sales_vnd'); ret = df.get('returns_vnd'); disc = df.get('discount_vnd')
-    bp   = df.get('business_process') if df.get('business_process') is not None else df.get('operation')
-    typ  = df.get('distr_channel') if df.get('distr_channel') is not None else df.get('type')
-
-    # derived (local only) — DO NOT add to df
-    nd = None
-    try:
-        if ns is not None and (gro is not None or ret is not None or disc is not None):
-            base = (gro.fillna(0) if gro is not None else 0) - (ret.fillna(0) if ret is not None else 0) - (disc.fillna(0) if disc is not None else 0)
-            nd = ns - base
-    except Exception:
-        nd = None
-
-    rr = None
-    try:
-        if ret is not None and gro is not None:
-            denom = gro.replace(0, pd.NA)
-            rr = ret / denom
-    except Exception:
-        rr = None
-
-    nperq = None
-    try:
-        if ns is not None and qty is not None:
-            nperq = ns / qty.replace(0, pd.NA)
-    except Exception:
-        nperq = None
-
-    nperw = None
-    try:
-        if ns is not None and wkg is not None:
-            nperw = ns / wkg.replace(0, pd.NA)
-    except Exception:
-        nperw = None
-
-    def add_rule(mask, rule, sev, note_series=None):
-        if mask is None: return
-        idx = df.index[mask.fillna(False)]
-        if len(idx)==0: return
-        sub = df.loc[idx, :].copy()
-        sub['_rule'] = rule
-        sub['_severity'] = sev
-        if note_series is not None:
-            try:
-                sub['_note'] = note_series.loc[idx]
-            except Exception:
-                sub['_note'] = None
-        rules.append(sub)
-
-    # 1) pnl_inconsistency
-    if nd is not None:
-        add_rule(nd.abs() > tol, 'pnl_inconsistency', 'High', nd)
-
-    # 2) negative_net_sales (exclude discount-like)
-    if ns is not None:
-        mask = ns < 0
-        if bp is not None:
-            mask = mask & (~bp.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
-        elif typ is not None:
-            mask = mask & (~typ.astype('string').str.lower().map(lambda x: ('discount' in x) or str(x).startswith('230dc')))
-        add_rule(mask, 'negative_net_sales', 'High', ns)
-
-    # 3) discount_without_base
-    if (qty is not None) and (wkg is not None) and ((bp is not None) or (typ is not None)):
-        label = (bp if bp is not None else typ).astype('string').str.lower()
-        mask = label.str.contains('discount', na=False) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
-        add_rule(mask, 'discount_without_base', 'Medium')
-
-    # 4) zero_measures_positive_sales
-    if (ns is not None) and (qty is not None) and (wkg is not None):
-        mask = (ns > 0) & (qty.fillna(0)==0) & (wkg.fillna(0)==0)
-        add_rule(mask, 'zero_measures_positive_sales', 'High', ns)
-
-    # 5) unit_mismatch
-    unit_col = None
-    for c in df.columns:
-        lc = str(c).lower()
-        if ('unit' in lc) and any(k in lc for k in ['qty','quantity','uom','unit qty']):
-            unit_col = c; break
-    if (unit_col is not None) and (wkg is not None):
-        u = df[unit_col].astype('string').str.upper()
-        mask = u.isin(['PC','PCS']) & (wkg.fillna(0) > 0)
-        add_rule(mask, 'unit_mismatch', 'Medium', u)
-
-    # 6) price_per_weight_outlier using nperw
-    if (prod is not None) and (nperw is not None):
-        gp = df.groupby(prod.name)
-        bounds = gp[nperw.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
-        bounds['iqr'] = bounds['q3'] - bounds['q1']
-        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
-        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
-        join = pd.DataFrame({'_v': nperw, prod.name: prod}).join(bounds, on=prod.name)
-        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
-        add_rule(mask, 'price_per_weight_outlier', 'Medium', join['_v'])
-
-    # 7) price_per_qty_outlier using nperq
-    if (prod is not None) and (nperq is not None):
-        gp = df.groupby(prod.name)
-        bounds = gp[nperq.name].apply(lambda s: pd.Series({'q1': s.quantile(0.25),'q3': s.quantile(0.75)}))
-        bounds['iqr'] = bounds['q3'] - bounds['q1']
-        bounds['lo'] = bounds['q1'] - iqr_k*bounds['iqr']
-        bounds['hi'] = bounds['q3'] + iqr_k*bounds['iqr']
-        join = pd.DataFrame({'_v': nperq, prod.name: prod}).join(bounds, on=prod.name)
-        mask = (join['_v'] < join['lo']) | (join['_v'] > join['hi'])
-        add_rule(mask, 'price_per_qty_outlier', 'Medium', join['_v'])
-
-    # 8) duplicate_line_same_day
-    if (df.get('customer_id') is not None or df.get('customer_name') is not None) and (prod is not None) and (post is not None) and (ns is not None):
-        key_a = 'customer_id' if df.get('customer_id') is not None else 'customer_name'
-        dup = df.duplicated(subset=[key_a, prod.name, 'posting_date', ns.name], keep=False)
-        add_rule(dup, 'duplicate_line_same_day', 'Medium')
-
-    # 9) posting_date_invalid
-    if post is not None:
-        add_rule(post.isna(), 'posting_date_invalid', 'Low')
-
-    # 10) high_return_rate
-    if rr is not None:
-        add_rule(rr > ret_thr, 'high_return_rate', 'High', rr)
-
-    if len(rules)==0:
-        return pd.DataFrame(columns=['_rule','_severity'])
-    out = pd.concat(rules, axis=0, ignore_index=False)
-    keep = ['_rule','_severity','customer_id','customer_name','product','posting_date','net_sales_vnd','qty','weight_kg','_note']
-    keep = [c for c in keep if c in out.columns]
-    out = out[keep].copy()
-    return out
-
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
         for enc in ('utf-8','latin-1','cp1252'):
@@ -2176,37 +2031,12 @@ with TAB6:
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
     base_df = DF_FULL
-    # === Rule Engine v2 (FULL dataset) ===
-    try:
-        _df_full = SS['df'] if SS.get('df') is not None else None
-        if _df_full is not None and len(_df_full)>0:
-            cfg = {'pnl_tol_vnd': 1.0, 'return_rate_thr': 0.2, 'iqr_k': 1.5}
-            RE2 = run_rule_engine_v2(_df_full, cfg)
-            SS['rule_engine_v2'] = RE2
-            st.subheader('🧠 Rule Engine v2 — Kết quả')
-            if RE2 is None or RE2.empty:
-                st.success('Không phát hiện flag theo bộ luật v2.')
-            else:
-                st.write('Tổng số dòng flag:', len(RE2))
-                by_rule = RE2['_rule'].value_counts().rename_axis('rule').reset_index(name='n')
-                st.dataframe(by_rule, use_container_width=True, hide_index=True)
-                pick = st.selectbox('Chọn rule để xem chi tiết', ['(All)']+by_rule['rule'].tolist(), key='re2_pick')
-                view = RE2 if pick=='(All)' else RE2[RE2['_rule']==pick]
-                st.dataframe(view, use_container_width=True, height=280)
-                csv = view.to_csv(index=False).encode('utf-8')
-                st.download_button('⬇️ Tải CSV (Rule Engine v2)', data=csv, file_name='rule_engine_v2_flags.csv', mime='text/csv')
-        else:
-            st.info('Chưa có dữ liệu FULL (hãy Load full data).')
-    except Exception as e:
-        st.warning(f'Rule Engine v2 gặp lỗi: {e}')
     st.subheader('🚩 Fraud Flags')
     use_full_flags = True
     FLAG_DF = DF_FULL
-    if FLAG_DF is DF_VIEW and SS['df'] is not None: st.caption('ℹ️ Đang dùng SAMPLE cho Fraud Flags.')
     amount_col = st.selectbox('Amount (optional)', options=['(None)'] + NUM_COLS, key='ff_amt')
     dt_col = st.selectbox('Datetime (optional)', options=['(None)'] + DT_COLS, key='ff_dt')
     group_cols = st.multiselect('Composite key để dò trùng (tuỳ chọn)', options=[c for c in FLAG_DF.columns if (not SS.get('col_whitelist') or c in SS['col_whitelist'])], key='ff_groups')
-
     with st.expander('⚙️ Tham số quét cờ (điều chỉnh được)'):
         c1,c2,c3 = st.columns(3)
         with c1:
@@ -2351,15 +2181,6 @@ with TAB7:
 with TAB7:
     base_df = DF_FULL
     # ---- Risk summary from Rule Engine v2 (if available) ----
-    RE2 = SS.get('rule_engine_v2')
-    if RE2 is not None and not RE2.empty:
-        st.subheader('🧭 Risk Signals (Rule Engine v2)')
-        sev_order = {'High':3,'Medium':2,'Low':1}
-        RE2['_sev_ord'] = RE2['_severity'].map(sev_order).fillna(0)
-        score = RE2.groupby('_rule')['_sev_ord'].sum().sort_values(ascending=False).rename('score').reset_index()
-        st.dataframe(score, use_container_width=True, hide_index=True)
-        st.caption('Điểm rủi ro tổng hợp theo rule (High>Medium>Low).')
-    left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
         # Quick quality & signals (light)
@@ -2384,16 +2205,6 @@ with TAB7:
             if share99>0.02:
                 signals.append({'signal':f'Heavy right tail in {c} (>P99 share {share99:.1%})','severity':'High','action':'Benford 1D/2D; cut‑off; outlier review'})
         st_df(pd.DataFrame(signals) if signals else pd.DataFrame([{'status':'No strong risk signals'}]), use_container_width=True, height=320)
-
-        with st.expander('🧠 Rule Engine — Insights (All tests)'):
-            ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope=None)
-            if df_r.empty:
-                st.success('🟢 Không có rule nào khớp với dữ liệu/kết quả hiện có.')
-            else:
-                st_df(df_r, use_container_width=True, height=320)
-                st.markdown('**Recommendations:**')
-                for _,row in df_r.iterrows():
-                    st.write(f"- **[{row['severity']}] {row['name']}** — {row['action']} *({row['rationale']})*")
 
     with right:
         st.subheader('🧾 Export (Plotly snapshots) — DOCX / PDF')
