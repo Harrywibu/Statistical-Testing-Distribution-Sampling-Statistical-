@@ -1347,7 +1347,7 @@ with TAB1:
                 for d in fig.data:
                     if hasattr(d, 'y') and d.y is not None:
                         if use_pct:
-                            d.text = [f\"{(float(v) if v is not None else 0)*100:.1f}%\" for v in d.y]
+                           d.text = [f"{(float(v) if v is not None else 0)*100:.1f}%" for v in d.y]
                         else:
                             d.text = [fmt_money(float(v)) if ycol in ['revenue','aov','avg_price_unit','margin'] else (fmt_pct(float(v)) if ycol in ['margin_pct','return_rate'] else fmt_num(float(v))) for v in d.y]
                         d.textposition = 'outside'
