@@ -527,39 +527,6 @@ def cat_freq(series: pd.Series) -> pd.DataFrame:
     out['share'] = out['count']/out['count'].sum()
     return out
 
-# ------------------------------ GoF Model Helper ------------------------------
-@st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
-def gof_models(series: pd.Series):
-    s = pd.to_numeric(series, errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
-    if s.empty:
-        return pd.DataFrame(columns=['model','AIC']), 'Normal', 'Không đủ dữ liệu để ước lượng.'
-    out=[]
-    mu=float(s.mean()); sigma=float(s.std(ddof=0)); sigma=sigma if sigma>0 else 1e-9
-    logL_norm=float(np.sum(stats.norm.logpdf(s, loc=mu, scale=sigma)))
-    AIC_norm=2*2-2*logL_norm; out.append({'model':'Normal','AIC':AIC_norm})
-    s_pos=s[s>0]; lam=None
-    if len(s_pos)>=5:
-        try:
-            shape_ln, loc_ln, scale_ln = stats.lognorm.fit(s_pos, floc=0)
-            logL_ln=float(np.sum(stats.lognorm.logpdf(s_pos, shape_ln, loc=loc_ln, scale=scale_ln)))
-            AIC_ln=2*3-2*logL_ln; out.append({'model':'Lognormal','AIC':AIC_ln})
-        except Exception: pass
-        try:
-            a_g, loc_g, scale_g = stats.gamma.fit(s_pos, floc=0)
-            logL_g=float(np.sum(stats.gamma.logpdf(s_pos, a_g, loc=loc_g, scale=scale_g)))
-            AIC_g=2*3-2*logL_g; out.append({'model':'Gamma','AIC':AIC_g})
-        except Exception: pass
-        try:
-            lam=float(stats.boxcox_normmax(s_pos))
-        except Exception: lam=None
-    gof=pd.DataFrame(out).sort_values('AIC').reset_index(drop=True)
-    best=gof.iloc[0]['model'] if not gof.empty else 'Normal'
-    if best=='Lognormal': suggest='Log-transform trước test tham số; cân nhắc Median/IQR.'
-    elif best=='Gamma':
-        suggest=f'Box-Cox (λ≈{lam:.2f}) hoặc log-transform; sau đó test tham số.' if lam is not None else 'Box-Cox hoặc log-transform; sau đó test tham số.'
-    else:
-        suggest='Không cần biến đổi (gần Normal).'
-    return gof, best, suggest
 
 # ------------------------------ Benford Helpers -------------------------------
 @st.cache_data(ttl=3600, show_spinner=False, max_entries=64)
@@ -1139,15 +1106,63 @@ with TAB1:
         type_col = ('business_process' if 'business_process' in _df.columns else
                     _guess(CAT_COLS, ['operation','process','type','order type','category','transaction'], numeric=False))
 
-        # Data checklist
-        with st.expander('🔍 Data checklist', expanded=True):
+        # --- REPLACE this entire Data checklist block with the code below ---
+        with st.expander('🔍 Data checklist (map/override)', expanded=True):
+            st.caption('Chọn từ danh sách hoặc nhập chính xác tên cột nếu header khác. Các lựa chọn này chỉ ảnh hưởng Tab Overview.')
+        
+            options = ['—'] + ALL_COLS  # ALL_COLS = list(_df.columns)
+        
+            def _map_field(label, current, key_sel, key_txt):
+                c1, c2 = st.columns([1, 1])
+                # selectbox: ưu tiên giá trị đang đoán (current) nếu có trong dữ liệu
+                try:
+                    idx = options.index(current) if (current in ALL_COLS) else 0
+                except Exception:
+                    idx = 0
+                sel = c1.selectbox(label, options, index=idx, key=key_sel)
+                other = c2.text_input('Or type', value='', placeholder='gõ đúng tên cột trong dữ liệu', key=key_txt).strip()
+        
+                # ưu tiên tên gõ tay nếu có mặt trong ALL_COLS; nếu không thì dùng selectbox (trừ khi là "—")
+                if other:
+                    if other in ALL_COLS:
+                        chosen = other
+                    else:
+                        st.info(f"'{other}' không thấy trong dữ liệu — sẽ dùng lựa chọn: {sel if sel != '—' else '—'}")
+                        chosen = None if sel == '—' else sel
+                else:
+                    chosen = None if sel == '—' else sel
+                return chosen
+        
+            # Map từng field (giá trị current lấy từ bước auto-guess ở trên)
+            date_col  = _map_field('Date',        date_col,  'ov_map_sel_date',  'ov_map_txt_date')
+            rev_col   = _map_field('Revenue',     rev_col,   'ov_map_sel_rev',   'ov_map_txt_rev')
+            qty_col   = _map_field('Quantity',    qty_col,   'ov_map_sel_qty',   'ov_map_txt_qty')
+            price_col = _map_field('Price',       price_col, 'ov_map_sel_price', 'ov_map_txt_price')
+            cost_col  = _map_field('Cost/COGS',   cost_col,  'ov_map_sel_cost',  'ov_map_txt_cost')
+            prod_col  = _map_field('Product/SKU', prod_col,  'ov_map_sel_prod',  'ov_map_txt_prod')
+            cust_col  = _map_field('Customer',    cust_col,  'ov_map_sel_cust',  'ov_map_txt_cust')
+            chan_col  = _map_field('Channel',     chan_col,  'ov_map_sel_chan',  'ov_map_txt_chan')
+            reg_col   = _map_field('Region/Store',reg_col,   'ov_map_sel_reg',   'ov_map_txt_reg')
+            type_col  = _map_field('Type',        type_col,  'ov_map_sel_type',  'ov_map_txt_type')
+        
+            # Hiển thị lại bảng tóm tắt mapping sau khi override
             rows = [
                 ('Date', date_col), ('Revenue', rev_col), ('Quantity', qty_col), ('Price', price_col), ('Cost/COGS', cost_col),
                 ('Product', prod_col), ('Customer', cust_col), ('Channel', chan_col), ('Region/Store', reg_col), ('Type', type_col),
             ]
-            st_df(pd.DataFrame(rows, columns=['Field','Column']).assign(Column=lambda d: d['Column'].fillna('—')), use_container_width=True, height=240)
-            st.caption('Tip: Nếu thiếu trường, dùng Quick fixes bên dưới để ước tính tạm thời. Dữ liệu gốc không bị đổi.')
-
+            st_df(pd.DataFrame(rows, columns=['Field','Column']).assign(Column=lambda d: d['Column'].fillna('—')),
+                  use_container_width=True, height=240)
+        
+            # Lưu vào session (nếu muốn dùng lại ở tab khác)
+            try:
+                SS['ov_schema'] = {
+                    'date': date_col, 'revenue': rev_col, 'quantity': qty_col, 'price': price_col, 'cost': cost_col,
+                    'product': prod_col, 'customer': cust_col, 'channel': chan_col, 'region': reg_col, 'tx_type': type_col,
+                }
+            except Exception:
+                pass
+        # --- END REPLACE ---
+        
         # Quick fixes (assumptions)
         with st.expander('🛠️ Quick fixes (tuỳ chọn)', expanded=False):
             ov_assume_cost_pct = st.slider('Không có Cost? Ước tính Cost = % Revenue', 0, 100, 60, 5, key='ov_assume_cost_pct') if cost_col is None else None
