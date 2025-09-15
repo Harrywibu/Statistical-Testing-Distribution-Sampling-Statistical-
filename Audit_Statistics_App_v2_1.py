@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 
-# ===== Schema Mapping & Rule Engine v2 =====
+# ===== Schema Mapping
 import re as _re
 
 def require_full_data(banner='Chưa có dữ liệu FULL. Hãy dùng **Load full data** trước khi chạy tab này.'):
