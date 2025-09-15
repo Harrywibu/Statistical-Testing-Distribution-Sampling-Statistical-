@@ -1457,6 +1457,37 @@ with TAB1:
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
     df = DF_FULL
+    # === Rule Engine sync helper for Tab 2 ===
+    def _sync_rule_engine_from_tab2(field: str, kind: str, rules: list[tuple]):
+        """
+        field: tên cột
+        kind: 'numeric' | 'categorical'
+        rules: list of tuples (rule_name, score, severity, detail)
+        """
+        # Lưu riêng cho Tab 2 (nếu muốn debug)
+        SS.setdefault('rule_engine_tab2', {})
+        SS['rule_engine_tab2'][field] = {'kind': kind, 'rules': rules}
+    
+        # Tổng hợp về "All Test" ở Tab Risk (giữ nguyên cấu trúc flags_from_tabs đang dùng)
+        SS.setdefault('flags_from_tabs', [])
+        # xóa entries cũ của Tab 2 cùng column (tránh trùng khi UI rerun)
+        SS['flags_from_tabs'] = [
+            r for r in SS['flags_from_tabs']
+            if not (r.get('tab') == 'Distribution & Shape' and r.get('column') == field)
+        ]
+        # thêm entries mới
+        SS['flags_from_tabs'].extend([
+            {
+                'tab': 'Distribution & Shape',
+                'rule': name,
+                'column': field,
+                'score': float(score),
+                'severity': severity,
+                'detail': detail,
+            }
+            for (name, score, severity, detail) in rules
+        ])
+
     if df is None or len(df) == 0:
         st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi dùng TAB 2.')
     else:
@@ -1514,33 +1545,44 @@ with TAB2:
                             'normality_p': (round(p_norm,4) if not np.isnan(p_norm) else None),
                         }])
                         st_df(stat_df, use_container_width=True, height=220)
-                    
-                        # expose để Rule Engine v2 đọc
-                        SS['last_numeric_profile'] = {
-                            'column': num_col,
-                            'zero_ratio': zero_ratio,
-                            'tail_gt_p99': float((s_num>p99).mean()) if not np.isnan(p99) else 0.0,
-                            'p_norm': float(p_norm) if not np.isnan(p_norm) else None,
-                            'skew': float(skew) if not np.isnan(skew) else None,
-                            'kurt': float(kurt) if not np.isnan(kurt) else None,
-                        }                
-                        # nút đẩy insight nhanh (tùy chọn)
-                        _sig = []
-                        if zero_ratio >= 0.10: _sig.append(('ZERO_RATIO_HIGH', min(1.0, zero_ratio/0.5), f'Zero ratio {zero_ratio:.2%} ≥ 10%'))
-                        tail_p99 = float((s_num>p99).mean()) if not np.isnan(p99) else 0.0
-                        if tail_p99 >= 0.01: _sig.append(('HEAVY_TAIL_GT_P99', min(1.0, tail_p99/0.10), f'Tail >p99 ≈ {tail_p99:.2%}'))
-                        if (not np.isnan(skew)) and abs(skew) >= 1.0: _sig.append(('SKEW_HIGH', min(1.0, abs(skew)/3.0), f'|skew|={abs(skew):.2f}'))
-                        if (not np.isnan(kurt)) and kurt >= 4.0: _sig.append(('KURTOSIS_HIGH', min(1.0, kurt/10.0), f'excess kurtosis={kurt:.2f}'))
-                        if (not np.isnan(p_norm)) and p_norm < 0.05: _sig.append(('NON_NORMAL', 0.8, f'normality p={p_norm:.4f} < 0.05'))
-                    
-                        if st.button('➕ Push numeric signals to Risk', key='ds_push_numeric'):
-                            SS.setdefault('flags_from_tabs', [])
-                            for rule, score, detail in _sig:
-                                SS['flags_from_tabs'].append({
-                                    'tab':'Distribution & Shape','rule':rule,'column':num_col,
-                                    'score':float(score),'severity':'MED','detail':detail
-                                })
-                            st.success(f'Added {len(_sig)} signal(s).')
+                        # === Rule Engine (auto) — NUMERIC ===
+                        _rules_num = []
+                        # các ngưỡng có thể chỉnh:
+                        ZERO_RATIO_TH = 0.10
+                        TAIL_P99_TH   = 0.01
+                        SKEW_ABS_TH   = 1.0
+                        KURT_EXCESS_TH= 4.0
+                        P_NORMAL_TH   = 0.05
+                        
+                        # các biến bạn đã có ở trên: num_col, s_num, p95, p99, zero_ratio, skew, kurt, p_norm
+                        tail_p99 = float((s_num > p99).mean()) if not np.isnan(p99) else 0.0
+                        
+                        if not np.isnan(zero_ratio) and zero_ratio >= ZERO_RATIO_TH:
+                            _rules_num.append(('ZERO_RATIO_HIGH', min(1.0, zero_ratio/0.50), 'MED', f'Zero ratio {zero_ratio:.2%} ≥ {int(ZERO_RATIO_TH*100)}%'))
+                        
+                        if tail_p99 >= TAIL_P99_TH:
+                            _rules_num.append(('HEAVY_TAIL_GT_P99', min(1.0, tail_p99/0.10), 'MED', f'Tail >p99 ≈ {tail_p99:.2%}'))
+                        
+                        if not np.isnan(skew) and abs(skew) >= SKEW_ABS_TH:
+                            _rules_num.append(('SKEW_HIGH', min(1.0, abs(skew)/3.0), 'MED', f'|skew|={abs(skew):.2f}'))
+                        
+                        if not np.isnan(kurt) and kurt >= KURT_EXCESS_TH:
+                            _rules_num.append(('KURTOSIS_HIGH', min(1.0, kurt/10.0), 'MED', f'excess kurtosis={kurt:.2f}'))
+                        
+                        if not np.isnan(p_norm) and p_norm < P_NORMAL_TH:
+                            _rules_num.append(('NON_NORMAL', 0.8, 'MED', f'normality p={p_norm:.4f} < {P_NORMAL_TH}'))
+                        
+                        # sync về Rule Engine (All Test)
+                        _sync_rule_engine_from_tab2(field=num_col, kind='numeric', rules=_rules_num)
+                        
+                        # Hiển thị rule insight tại chỗ (auto)
+                        if _rules_num:
+                            st.caption('Rule insights (auto • numeric)')
+                            st_df(pd.DataFrame([{'rule': r[0], 'score': f'{r[1]:.2f}', 'severity': r[2], 'detail': r[3]} for r in _rules_num]),
+                                  use_container_width=True, height=160)
+                        else:
+                            st.caption('Rule insights (auto • numeric): none')
+
 
             elif view in ['Auto','Categorical only']:
                 topn = st.number_input('Top N', 3, 50, 20, 1, key='ds_topn')
@@ -1565,36 +1607,63 @@ with TAB2:
                     'value': [n, u, top_val, top_freq, f'{top_pct:.1f}%']
                 }).set_index('stat')
                 st_df(tbl_cat, use_container_width=True)
-                
-                # --- NEW: Rule Engine (categorical) ---
-                cat_signals = []
-                def _push_cat(rule, score, detail, severity='MED'):
-                    cat_signals.append({
-                        'tab': 'Distribution & Shape',
-                        'rule': rule,
-                        'column': field,
-                        'score': float(score),
-                        'severity': severity,
-                        'detail': detail,
-                    })
+                # === Rule Engine (auto) — CATEGORICAL ===
+                _rules_cat = []
+                DOM_RATIO_TH = 0.60
+                HI_CARD_TH   = 1000
                 
                 dom_ratio = (top_freq / n) if n else 0.0
-                if dom_ratio >= 0.60:
-                    _push_cat('CATEGORY_DOMINANCE', min(1.0, (dom_ratio-0.60)/0.40 + 0.5), f'Top category chiếm {dom_ratio:.1%}')
-                if u >= 1000:
-                    _push_cat('HIGH_CARDINALITY', 0.6, f'unique={u:,} ≥ 1,000')
                 
-                if st.button('➕ Push categorical signals to Risk', key='ds_push_categorical'):
-                    try:
-                        SS.setdefault('flags_from_tabs', [])
-                        SS['flags_from_tabs'].extend(cat_signals)
-                        st.success(f'Added {len(cat_signals)} signal(s).')
-                    except Exception as e:
-                        st.warning(f'Could not push signals: {e}')
+                if dom_ratio >= DOM_RATIO_TH:
+                    _rules_cat.append(('CATEGORY_DOMINANCE', min(1.0, (dom_ratio - DOM_RATIO_TH)/0.40 + 0.5), 'MED', f'Top chiếm {dom_ratio:.1%}'))
+                
+                if u >= HI_CARD_TH:
+                    _rules_cat.append(('HIGH_CARDINALITY', 0.6, 'MED', f'unique={u:,} ≥ {HI_CARD_TH:,}'))
+                
+                # sync về Rule Engine (All Test)
+                _sync_rule_engine_from_tab2(field=field, kind='categorical', rules=_rules_cat)
+                
+                # Hiển thị rule insight tại chỗ (auto)
+                if _rules_cat:
+                    st.caption('Rule insights (auto • categorical)')
+                    st_df(pd.DataFrame([{'rule': r[0], 'score': f'{r[1]:.2f}', 'severity': r[2], 'detail': r[3]} for r in _rules_cat]),
+                          use_container_width=True, height=140)
+                else:
+                    st.caption('Rule insights (auto • categorical): none')
+# === Bottom expander: Rule insights (auto) for current field ===
+    with st.expander('🧩 Rule insights (auto) — Tab 2', expanded=False):
+        try:
+            cur_field = field  # cột đang chọn ở Tab 2
+        except NameError:
+            cur_field = None
+    
+        re2 = SS.get('rule_engine_tab2', {})
+        item = re2.get(cur_field, {}) if cur_field else {}
+    
+        # Hiển thị rule của cột hiện tại (numeric hoặc categorical)
+        _rules = item.get('rules', [])
+        _kind  = item.get('kind', '—')
+    
+        # Info header
+        if cur_field:
+            st.caption(f"Column: `{cur_field}` • Type: `{_kind}`")
+    
+        if _rules:
+            rule_df = pd.DataFrame(
+                [{'rule': n, 'score': f'{s:.2f}', 'severity': sev, 'detail': d}
+                 for (n, s, sev, d) in _rules]
+            )
+            st_df(rule_df, use_container_width=True, height=160)
+        else:
+            st.caption('Không có rule nào cho cột đang chọn trong lượt chạy này.')
+    
+        # (tùy chọn) Nhìn nhanh theo mức độ
+        if _rules:
+            agg = (pd.DataFrame([{'severity': r[2]} for r in _rules])
+                     .value_counts('severity').rename('count').reset_index())
+            st.dataframe(agg, use_container_width=True, height=120)
 
-                st.caption('Phân bố danh mục (Top‑N).')
-            else:
-                st.info('Không có dữ liệu hợp lệ cho kiểu xem đã chọn.')
+                
 
 with TAB3:
     st.subheader('📈 Trend & 🔗 Correlation')
