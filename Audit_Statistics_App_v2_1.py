@@ -1085,508 +1085,524 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 # ---- TAB 1: Overview (Sales activity) ----
+
 with TAB1:
-    st.subheader('📌 Overview (Sales activity) — Bộ biểu đồ tổng quan')
+    st.subheader('📌 Overview (Sales)')
 
     base_df = DF_FULL
     if base_df is None or len(base_df) == 0:
         st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi sử dụng TAB 1.')
     else:
-        import pandas as pd, numpy as np
-        try:
-            import plotly.express as px
-        except Exception:
-            st.error('Plotly chưa sẵn sàng.'); st.stop()
-
         _df = base_df.copy()
-        ALL_COLS = list(_df.columns)
 
-        # ---- Helper: auto-pick column by name hints ----
-        def _pick(cols, keys, prefer_numeric=None):
-            for c in cols:
-                lc = str(c).lower()
-                if any(k in lc for k in keys):
-                    if prefer_numeric is None:
-                        return c
-                    ok = pd.api.types.is_numeric_dtype(_df[c])
-                    if (prefer_numeric and ok) or ((prefer_numeric is False) and (not ok)):
-                        return c
+        # Helper: guess columns
+        def _guess(colnames, patterns, numeric=None):
+            cols = list(colnames)
+            low = {c: str(c).lower() for c in cols}
+            for p in patterns:
+                p=str(p).lower()
+                for c in cols:
+                    if p in low[c]:
+                        if numeric is None:
+                            return c
+                        ok = pd.api.types.is_numeric_dtype(_df[c])
+                        if (numeric and ok) or ((numeric is False) and (not ok)):
+                            return c
+            if numeric is True:
+                for c in cols:
+                    if pd.api.types.is_numeric_dtype(_df[c]): return c
+            if numeric is False:
+                for c in cols:
+                    if not pd.api.types.is_numeric_dtype(_df[c]): return c
             return cols[0] if cols else None
 
-        # ---- Detect candidate columns ----
-        import numpy as np, pandas as pd, plotly.express as px
+        ALL_COLS = list(_df.columns)
         NUM_COLS = _df.select_dtypes(include=[np.number]).columns.tolist()
         CAT_COLS = [c for c in ALL_COLS if c not in NUM_COLS]
         DT_COLS  = guess_datetime_cols(_df)
-        col_amt   = _pick(NUM_COLS, ['amount','revenue','sales','gross','net','doanh thu'], prefer_numeric=True)
-        col_prod  = _pick(CAT_COLS, ['product','sku','item','mã hàng','sản phẩm'], prefer_numeric=False)
-        col_cust  = _pick(CAT_COLS, ['customer','cust','khách','client','buyer','account'], prefer_numeric=False)
-        col_reg   = _pick(CAT_COLS, ['region','vùng','area','zone','province','state'], prefer_numeric=False)
-        col_branch= _pick(CAT_COLS, ['branch','chi nhánh','outlet','store','warehouse','site'], prefer_numeric=False)
-        col_type  = _pick(CAT_COLS, ['type','loại','category','transaction','trans_type','operation'], prefer_numeric=False)
-        col_chan  = _pick(CAT_COLS, ['channel','kênh','distribution channel'], prefer_numeric=False)
-        dt_guess  = _pick(DT_COLS if DT_COLS else ALL_COLS, ['posting','date','time','pstg','invoice'])
 
-        # ---- Bộ lọc dữ liệu (gộp Cột thời gian + Chu kỳ + Slider) ----
-        # Gợi ý cột datetime
-        dt_guess = None
-        dt_hints = ['posting_date','date','time','pstg','post','invoice']
-        for h in dt_hints:
-            for c in ALL_COLS:
-                if h in str(c).lower():
-                    dt_guess = c; break
-            if dt_guess: break
-        dt_options = [dt_guess] + [c for c in ALL_COLS if c != dt_guess] if dt_guess else ALL_COLS
-        
-       # ============================ BỘ LỌC DỮ LIỆU ==============================
-        with st.expander('🔍 Bộ lọc dữ liệu', expanded=True):
-            # A) Chọn cột thời gian + chu kỳ
-            a1, a2 = st.columns([1.5, 1])
-            with a1:
-                c_time = st.selectbox('🗓️ Cột thời gian (datetime)',
-                                      DT_COLS if DT_COLS else ALL_COLS,
-                                      index=(DT_COLS.index(dt_guess) if (DT_COLS and dt_guess in DT_COLS) else 0),
-                                      key='ov1_dt_col')
-            with a2:
-                gran = st.radio('Chu kỳ', ['M','Q','Y'], horizontal=True, index=0, key='ov1_gran')
-        
-            s_time = pd.to_datetime(_df[c_time], errors='coerce')
-            s_time_valid = s_time.dropna()
-            if s_time_valid.empty:
-                st.warning('Không nhận diện được dữ liệu datetime hợp lệ trong cột đã chọn.'); st.stop()
-        
-            dmin, dmax = s_time_valid.min(), s_time_valid.max()
-            same_day = pd.Timestamp(dmin).normalize() == pd.Timestamp(dmax).normalize()
-            if same_day or dmin == dmax:
-                st.caption('ℹ️ Dữ liệu chỉ có **1 ngày** → bỏ qua slider thời gian.')
-                v_from, v_to = dmin.to_pydatetime(), dmax.to_pydatetime()
+        # Preferred standard names if schema mapping already ran
+        date_col = 'posting_date' if 'posting_date' in _df.columns else (_guess(DT_COLS or ALL_COLS, ['date','time','pstg','invoice','post'], numeric=False))
+        rev_col  = ('net_sales_vnd' if 'net_sales_vnd' in _df.columns else
+                    'gross_sales_vnd' if 'gross_sales_vnd' in _df.columns else
+                    _guess(NUM_COLS, ['revenue','sales','amount','net','gross','doanh thu'], numeric=True))
+        qty_col  = 'qty' if 'qty' in _df.columns else _guess(NUM_COLS, ['quantity','qty','units','unit'], numeric=True)
+        price_col= _guess(NUM_COLS, ['price','unit price','unit_price','avg price','gia ban'], numeric=True)
+        cost_col = _guess(NUM_COLS, ['cost','cogs','gia von'], numeric=True)
+        prod_col = 'product' if 'product' in _df.columns else _guess(CAT_COLS, ['product','sku','item','menu'], numeric=False)
+        cust_col = ('customer_name' if 'customer_name' in _df.columns else
+                    _guess(CAT_COLS, ['customer','client','khach','buyer','account'], numeric=False))
+        chan_col = ('distr_channel' if 'distr_channel' in _df.columns else
+                    _guess(CAT_COLS, ['channel','kenh','distribution channel'], numeric=False))
+        reg_col  = ('region' if 'region' in _df.columns else
+                    _guess(CAT_COLS, ['region','branch','store','outlet','city','province','area','zone'], numeric=False))
+        type_col = ('business_process' if 'business_process' in _df.columns else
+                    _guess(CAT_COLS, ['operation','process','type','order type','category','transaction'], numeric=False))
+
+        # Data checklist
+        with st.expander('🔍 Data checklist', expanded=True):
+            rows = [
+                ('Date', date_col), ('Revenue', rev_col), ('Quantity', qty_col), ('Price', price_col), ('Cost/COGS', cost_col),
+                ('Product', prod_col), ('Customer', cust_col), ('Channel', chan_col), ('Region/Store', reg_col), ('Type', type_col),
+            ]
+            st_df(pd.DataFrame(rows, columns=['Field','Column']).assign(Column=lambda d: d['Column'].fillna('—')), use_container_width=True, height=240)
+            st.caption('Tip: Nếu thiếu trường, dùng Quick fixes bên dưới để ước tính tạm thời. Dữ liệu gốc không bị đổi.')
+
+        # Quick fixes (assumptions)
+        with st.expander('🛠️ Quick fixes (tuỳ chọn)', expanded=False):
+            ov_assume_cost_pct = st.slider('Không có Cost? Ước tính Cost = % Revenue', 0, 100, 60, 5, key='ov_assume_cost_pct') if cost_col is None else None
+            ov_assume_avg_price = None
+            if qty_col is None and rev_col is not None:
+                ov_assume_avg_price = st.number_input('Không có Quantity? Ước tính Units = Revenue ÷ Avg price (nhập average)', min_value=0.0, value=0.0, step=0.5, key='ov_assume_avg_price')
+            st.caption('Giả định chỉ áp dụng trong tab này.')
+
+        # --------------------------- Filters ---------------------------
+        c1,c2,c3,c4,c5,c6 = st.columns([1,1.2,1,1,1,1])
+        with c1:
+            period = st.selectbox('Chu kỳ', ['Month','Quarter','Year'], index=0, key='ov_period')
+        with c2:
+            if date_col and date_col in _df.columns and _df[date_col].notna().any():
+                dmin, dmax = pd.to_datetime(_df[date_col], errors='coerce').min(), pd.to_datetime(_df[date_col], errors='coerce').max()
+                dr = st.date_input('Khoảng thời gian', value=(dmin, dmax), key='ov_daterange')
             else:
-                v_from, v_to = st.slider('Khoảng thời gian',
-                                         min_value=dmin.to_pydatetime(),
-                                         max_value=dmax.to_pydatetime(),
-                                         value=(dmin.to_pydatetime(), dmax.to_pydatetime()),
-                                         key='ov1_daterng')
-        
-            st.markdown('**🧩 Chọn cột nền (header)**')
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                amt_col = st.selectbox('Cột doanh thu (numeric)', NUM_COLS, index=(NUM_COLS.index(col_amt) if col_amt in NUM_COLS else 0), key='ov1_amt_col')
-                prod_col = st.selectbox('Cột Sản phẩm (categorical)', ['— None —'] + CAT_COLS,
-                                        index=(CAT_COLS.index(col_prod)+1 if col_prod in CAT_COLS else 0), key='ov1_prod_col')
-            with b2:
-                cust_col = st.selectbox('Cột Khách hàng (categorical)', ['— None —'] + CAT_COLS,
-                                        index=(CAT_COLS.index(col_cust)+1 if col_cust in CAT_COLS else 0), key='ov1_cust_col')
-                reg_col  = st.selectbox('Cột Region (categorical)', ['— None —'] + CAT_COLS,
-                                        index=(CAT_COLS.index(col_reg)+1 if col_reg in CAT_COLS else 0), key='ov1_reg_col')
-            with b3:
-                type_col = st.selectbox('Cột Loại giao dịch (categorical)', ['— None —'] + CAT_COLS,
-                                        index=(CAT_COLS.index(col_type)+1 if col_type in CAT_COLS else 0), key='ov1_type_col')
-                chan_col = st.selectbox('Cột Kênh bán (categorical)', ['— None —'] + CAT_COLS,
-                                        index=(CAT_COLS.index(col_chan)+1 if col_chan in CAT_COLS else 0), key='ov1_chan_col')
-        
-        # Áp bộ lọc theo thời gian (không lọc theo giá trị để UI gọn đúng yêu cầu 1)
-        mask = (pd.to_datetime(_df[c_time], errors='coerce') >= pd.Timestamp(v_from)) & \
-               (pd.to_datetime(_df[c_time], errors='coerce') <= pd.Timestamp(v_to))
-        dfF = _df.loc[mask].copy()
-        if dfF.empty:
-            st.warning('Không có dữ liệu trong khoảng thời gian đã chọn.'); st.stop()
-        
-        # ============================ BIỂU ĐỒ 1: REVENUE THEO KỲ ===================
-        st.markdown('---')
-        st.markdown('#### 💵 Revenue theo kỳ')
-        rev_kind = st.radio('Kiểu biểu đồ', ['Line','Bar','Area'], horizontal=True, key='ov1_rev_kind')
-        
-        # Cho phép chọn X=Datetime, Y=Numeric theo yêu cầu 2
-        x_time = st.selectbox('Cột X (datetime)', DT_COLS if DT_COLS else [c_time], 
-                              index=((DT_COLS.index(c_time) if (DT_COLS and c_time in DT_COLS) else 0)), key='ov1_rev_x')
-        y_num  = st.selectbox('Cột Y (numeric)', NUM_COLS, index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0), key='ov1_rev_y')
-        
-        rev_cmp = st.multiselect('So sánh', ['YoY','MoM','QoQ'], default=['YoY'], key='ov1_rev_cmp')
-        
-        tdf = pd.DataFrame({'t': pd.to_datetime(dfF[x_time], errors='coerce'),
-                            'y': pd.to_numeric(dfF[y_num], errors='coerce')}).dropna()
-        if not tdf.empty:
-            freq_map = {'M':'M','Q':'Q','Y':'Y'}
-            grp = tdf.set_index('t')['y'].resample(freq_map.get(gran,'M')).sum().to_frame('value')
-            comps = {}
-            if 'YoY' in rev_cmp:
-                step = 12 if gran=='M' else (4 if gran=='Q' else 1)
-                comps['YoY'] = grp['value'].pct_change(step).rename('YoY')
-            if 'MoM' in rev_cmp and gran=='M':
-                comps['MoM'] = grp['value'].pct_change(1).rename('MoM')
-            if 'QoQ' in rev_cmp:
-                step = 3 if gran=='M' else (1 if gran=='Q' else None)
-                if step is not None:
-                    comps['QoQ'] = grp['value'].pct_change(step).rename('QoQ')
-            dline = grp.join(comps.values(), how='left').reset_index().rename(columns={'t':'period'})
-            if rev_kind == 'Line':
-                fig = px.line(dline, x='period', y='value', markers=True, title='Revenue theo kỳ')
-            elif rev_kind == 'Bar':
-                fig = px.bar(dline, x='period', y='value', title='Revenue theo kỳ')
-            else:
-                fig = px.area(dline, x='period', y='value', title='Revenue theo kỳ')
-            _plot(fig)
-            caps = []
-            for k in ['YoY','MoM','QoQ']:
-                if k in dline and not dline[k].dropna().empty:
-                    caps.append(f'{k} gần nhất: {dline[k].dropna().iloc[-1]:.2%}')
-            if caps: st.caption(' • ' + ' | '.join(caps))
-        
-        # ===================== BIỂU ĐỒ 2: TOP PRODUCT (X/Y chọn) ====================
-        st.markdown('#### 🧱 Top Product')
-        prod_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_prod_kind')
-        prod_dim = st.selectbox('Cột X (categorical)', CAT_COLS, 
-                                index=(CAT_COLS.index(st.session_state.get('ov1_prod_col')) if st.session_state.get('ov1_prod_col') in CAT_COLS else (CAT_COLS.index(col_prod) if col_prod in CAT_COLS else 0)),
-                                key='ov1_prod_dim')
-        prod_y = st.selectbox('Cột Y (numeric)', NUM_COLS, index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0), key='ov1_prod_y')
-        topP = (dfF.groupby(prod_dim, dropna=False)[prod_y].sum().reset_index().sort_values(prod_y, ascending=False).head(20))
-        if not topP.empty:
-            if prod_kind == 'Bar':
-                figP = px.bar(topP.iloc[::-1], x=prod_y, y=prod_dim, orientation='h', title='Top doanh thu theo Sản phẩm')
-            elif prod_kind == 'Treemap':
-                figP = px.treemap(topP, path=[prod_dim], values=prod_y, title='Top doanh thu theo Sản phẩm (Treemap)')
-            else:
-                figP = px.pie(topP, names=prod_dim, values=prod_y, title='Top doanh thu theo Sản phẩm (Pie)')
-            _plot(figP); st.caption('Top sản phẩm theo cột Y đã chọn.')
-        
-        # ===================== BIỂU ĐỒ 3: TOP CUSTOMER (X/Y chọn) ====================
-        st.markdown('#### 👤 Top Customer')
-        cust_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_cust_kind')
-        
-        cust_dim = st.selectbox(
-            'Cột X (categorical)',
-            CAT_COLS,
-            index=(CAT_COLS.index(st.session_state.get('ov1_cust_col')) 
-                   if st.session_state.get('ov1_cust_col') in CAT_COLS 
-                   else (CAT_COLS.index(col_cust) if col_cust in CAT_COLS else 0)),
-            key='ov1_cust_dim'
-        )
-        cust_y = st.selectbox(
-            'Cột Y (numeric)',
-            NUM_COLS,
-            index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0),
-            key='ov1_cust_y'
-        )
-        
-        # Ép numeric an toàn rồi group
-        tmp = dfF.assign(__y=pd.to_numeric(dfF[cust_y], errors='coerce'))
-        try:
-            topC = (tmp.groupby(cust_dim, dropna=False)['__y']
-                      .sum(min_count=1)
-                      .reset_index())
-        except TypeError:
-            # phòng trường hợp pandas không hỗ trợ dropna trong groupby
-            topC = (tmp.groupby(cust_dim)['__y']
-                      .sum(min_count=1)
-                      .reset_index())
-        
-        topC = (topC.rename(columns={'__y': cust_y})
-                    .sort_values(by=cust_y, ascending=False)
-                    .head(20))
-        
-        if not topC.empty:
-            if cust_kind == 'Bar':
-                figC = px.bar(topC.iloc[::-1], x=cust_y, y=cust_dim, orientation='h',
-                              title='Top doanh thu theo Khách hàng')
-            elif cust_kind == 'Treemap':
-                figC = px.treemap(topC, path=[cust_dim], values=cust_y,
-                                  title='Top doanh thu theo Khách hàng (Treemap)')
-            else:
-                figC = px.pie(topC, names=cust_dim, values=cust_y,
-                              title='Top doanh thu theo Khách hàng (Pie)')
-            _plot(figC)
-            st.caption('Top khách hàng theo cột Y đã chọn.')
+                dr = None
+        with c3:
+            show_labels = st.checkbox('Hiện số trên biểu đồ', value=True, key='ov_show_labels')
+        with c4:
+            normalize_pct = st.checkbox('Hiện % (stack)', value=False, key='ov_norm_pct')
+        with c5:
+            topn = st.number_input('Top N', min_value=3, max_value=50, value=10, step=1, key='ov_topn')
+        with c6:
+            label_limit = st.number_input('Giới hạn nhãn', min_value=10, max_value=300, value=60, step=10, key='ov_label_limit', help='Ẩn nhãn nếu quá đông.')
+
+        # Apply filters
+        dff = _df.copy()
+        if date_col and dr:
+            dff = dff[(pd.to_datetime(dff[date_col], errors='coerce') >= pd.to_datetime(dr[0])) &
+                      (pd.to_datetime(dff[date_col], errors='coerce') <= pd.to_datetime(dr[1]))]
+
+        def _sel(name, col):
+            opts = sorted(dff[col].dropna().astype(str).unique().tolist()) if col and col in dff.columns else []
+            return st.multiselect(name, opts, default=[], key=f'ov_{name}')
+        f1,f2,f3,f4,f5 = st.columns(5)
+        sel_chan   = _sel('Channel', chan_col)
+        sel_region = _sel('Region/Store', reg_col)
+        sel_product= _sel('Product/SKU', prod_col)
+        sel_customer=_sel('Customer', cust_col)
+        sel_type   = _sel('Type', type_col)
+
+        mask = pd.Series(True, index=dff.index)
+        if sel_chan and chan_col:    mask &= dff[chan_col].astype(str).isin(sel_chan)
+        if sel_region and reg_col:   mask &= dff[reg_col].astype(str).isin(sel_region)
+        if sel_product and prod_col: mask &= dff[prod_col].astype(str).isin(sel_product)
+        if sel_customer and cust_col:mask &= dff[cust_col].astype(str).isin(sel_customer)
+        if sel_type and type_col:    mask &= dff[type_col].astype(str).isin(sel_type)
+        dff = dff.loc[mask].copy()
+
+        # Derive period column
+        if date_col and date_col in dff.columns:
+            dt = pd.to_datetime(dff[date_col], errors='coerce')
+            if period == 'Month':  dff['__period__'] = dt.dt.to_period('M').dt.to_timestamp()
+            elif period == 'Quarter': dff['__period__'] = dt.dt.to_period('Q').dt.to_timestamp()
+            else: dff['__period__'] = dt.dt.to_period('Y').dt.to_timestamp()
+
+        # --------------------------- Metrics ---------------------------
+        # pick/derive revenue
+        if rev_col is None and price_col is not None and qty_col is not None:
+            dff['__revenue__'] = pd.to_numeric(dff[price_col], errors='coerce') * pd.to_numeric(dff[qty_col], errors='coerce')
+            rev_use = '__revenue__'
         else:
-            st.info('Không có dữ liệu hợp lệ cho biểu đồ Top Customer.')
+            rev_use = rev_col
 
-        
-        # ============ BIỂU ĐỒ 4: DOANH THU THEO REGION (X/Y chọn) ===================
-        st.markdown('#### 🗺️ Doanh thu theo Region')
-        reg_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_reg_kind')
-        reg_dim = st.selectbox('Cột X (categorical)', CAT_COLS, 
-                               index=(CAT_COLS.index(st.session_state.get('ov1_reg_col')) if st.session_state.get('ov1_reg_col') in CAT_COLS else (CAT_COLS.index(col_reg) if col_reg in CAT_COLS else 0)),
-                               key='ov1_reg_dim')
-        reg_y = st.selectbox('Cột Y (numeric)', NUM_COLS, index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0), key='ov1_reg_y')
-        aggR = (dfF.groupby(reg_dim, dropna=False)[reg_y].sum().reset_index().sort_values(by=reg_y, ascending=False))
-        if not aggR.empty:
-            if reg_kind == 'Bar':
-                figR = px.bar(aggR, x=reg_dim, y=reg_y, title='Doanh thu theo Region')
-            elif reg_kind == 'Treemap':
-                figR = px.treemap(aggR, path=[reg_dim], values=reg_y, title='Doanh thu theo Region (Treemap)')
+        # derive units if needed
+        units_use = qty_col
+        if units_use is None and rev_use is not None and 'ov_assume_avg_price' in st.session_state:
+            ap = st.session_state.get('ov_assume_avg_price', 0.0)
+            if ap and ap > 0:
+                dff['__units__'] = pd.to_numeric(dff[rev_use], errors='coerce') / float(ap)
+                units_use = '__units__'
+
+        # derive cost if needed
+        cost_use = cost_col
+        if cost_use is None and 'ov_assume_cost_pct' in st.session_state and rev_use is not None:
+            pct = st.session_state.get('ov_assume_cost_pct', 0) / 100.0 if isinstance(st.session_state.get('ov_assume_cost_pct', None), (int,float)) else (st.session_state.get('ov_assume_cost_pct') or 0.0)
+            dff['__cost__'] = pd.to_numeric(dff[rev_use], errors='coerce') * float(pct)
+            cost_use = '__cost__'
+
+        def _safe_sum(s):
+            if s is None or (isinstance(s, str) and s not in dff.columns): return np.nan
+            return pd.to_numeric(dff[s], errors='coerce').fillna(0).sum()
+
+        total_rev = _safe_sum(rev_use)
+        total_units = _safe_sum(units_use)
+        orders = int(len(dff))
+        aov = (total_rev / orders) if orders else np.nan
+        avg_price_unit = (total_rev / total_units) if total_units not in (0, np.nan, None) else np.nan
+        total_cost = _safe_sum(cost_use)
+        margin = (total_rev - total_cost) if (not pd.isna(total_rev) and not pd.isna(total_cost)) else np.nan
+        margin_pct = (margin / total_rev) if total_rev else np.nan
+
+        # return rate
+        ret_rate = np.nan
+        if type_col and type_col in dff.columns:
+            tx = dff[type_col].astype(str).str.lower()
+            n_ret = int(tx.str.contains('return|refund|void', regex=True).sum())
+            ret_rate = (n_ret / orders) if orders else np.nan
+
+        fmt_money = lambda x: '—' if pd.isna(x) else (f'{x/1e9:.2f}B' if abs(x)>=1e9 else f'{x/1e6:.2f}M' if abs(x)>=1e6 else f'{x/1e3:.1f}K' if abs(x)>=1e3 else f'{x:,.0f}')
+        fmt_num   = lambda x: '—' if pd.isna(x) else f'{x:,.0f}'
+        fmt_pct   = lambda x: '—' if pd.isna(x) else f'{x*100:.1f}%'
+
+        k1,k2,k3,k4,k5,k6,k7,k8 = st.columns(8)
+        k1.metric('Revenue', fmt_money(total_rev))
+        k2.metric('Units', fmt_num(total_units))
+        k3.metric('Orders', fmt_num(orders))
+        k4.metric('AOV', fmt_money(aov))
+        k5.metric('Avg price/unit', fmt_money(avg_price_unit))
+        k6.metric('Gross margin', fmt_money(margin))
+        k7.metric('Margin %', fmt_pct(margin_pct))
+        k8.metric('Return rate', fmt_pct(ret_rate))
+        st.caption('KPI phản hồi theo bộ lọc. Margin cần Cost; Revenue có thể suy ra từ Price×Qty.')
+
+        # --------------------------- Aggregation helper ---------------------------
+        def _aggregate(df_in, dims, metric):
+            df_in = df_in.copy()
+            # ensure fields exist
+            rev = rev_use
+            units = units_use
+            cost = cost_use
+
+            grp = df_in.groupby(dims, dropna=False) if dims else None
+            res = pd.DataFrame()
+            res['orders'] = grp.size() if grp is not None else pd.Series(len(df_in), index=[0])
+
+            if rev is not None:
+                res['revenue'] = grp[rev].sum() if grp is not None else pd.Series(df_in[rev].sum(), index=[0])
             else:
-                figR = px.pie(aggR, names=reg_dim, values=reg_y, title='Doanh thu theo Region (Pie)')
-            _plot(figR); st.caption('Phân bổ theo vùng/khu vực.')
-        
-        # ======= BIỂU ĐỒ 5: DOANH THU THEO TRANSACTION TYPE (X/Y chọn) ==============
-        st.markdown('#### 🔁 Doanh thu theo Transaction type')
-        type_kind = st.radio('Kiểu biểu đồ', ['Bar','Treemap','Pie'], horizontal=True, key='ov1_type_kind')
-        type_dim = st.selectbox('Cột X (categorical)', CAT_COLS, 
-                                index=(CAT_COLS.index(st.session_state.get('ov1_type_col')) if st.session_state.get('ov1_type_col') in CAT_COLS else (CAT_COLS.index(col_type) if col_type in CAT_COLS else 0)),
-                                key='ov1_type_dim')
-        type_y = st.selectbox('Cột Y (numeric)', NUM_COLS, index=(NUM_COLS.index(amt_col) if amt_col in NUM_COLS else 0), key='ov1_type_y')
-        aggT = (dfF.groupby(type_dim, dropna=False)[type_y].sum().reset_index().sort_values(by=type_y, ascending=False))
-        if not aggT.empty:
-            if type_kind == 'Bar':
-                figT = px.bar(aggT, x=type_dim, y=type_y, title='Doanh thu theo Loại giao dịch')
-            elif type_kind == 'Treemap':
-                figT = px.treemap(aggT, path=[type_dim], values=type_y, title='Doanh thu theo Loại giao dịch (Treemap)')
+                res['revenue'] = 0.0
+
+            if units is not None:
+                res['units'] = grp[units].sum() if grp is not None else pd.Series(df_in[units].sum(), index=[0])
             else:
-                figT = px.pie(aggT, names=type_dim, values=type_y, title='Doanh thu theo Loại giao dịch (Pie)')
-            _plot(figT); st.caption('Phân tách theo loại giao dịch.')
+                res['units'] = 0.0
+
+            if cost is not None:
+                res['cost'] = grp[cost].sum() if grp is not None else pd.Series(df_in[cost].sum(), index=[0])
+            else:
+                res['cost'] = np.nan
+
+            # returns count
+            if type_col and type_col in df_in.columns:
+                tx = df_in[type_col].astype(str).str.lower()
+                df_ret = df_in[tx.str.contains('return|refund|void', regex=True, na=False)]
+                ret = df_ret.groupby(dims, dropna=False).size() if grp is not None else pd.Series(len(df_ret), index=[0])
+                res['returns'] = ret.reindex(res.index, fill_value=0)
+            else:
+                res['returns'] = 0
+
+            res['aov'] = res['revenue'] / res['orders'].replace(0, np.nan)
+            res['avg_price_unit'] = res['revenue'] / res['units'].replace(0, np.nan)
+            res['margin'] = res['revenue'] - res['cost'] if not res['cost'].isna().all() else np.nan
+            res['margin_pct'] = (res['margin'] / res['revenue']).replace([np.inf, -np.inf], np.nan)
+            res['return_rate'] = res['returns'].astype(float) / res['orders'].replace(0, np.nan)
+
+            # which column to chart
+            metric_map = {
+                'Revenue':'revenue','Units':'units','Orders':'orders','AOV':'aov',
+                'Avg price/unit':'avg_price_unit','Gross margin':'margin','Margin %':'margin_pct','Return rate':'return_rate'
+            }
+            ycol = metric_map.get(metric, 'revenue')
+            res = res.reset_index() if grp is not None else res.reset_index(drop=True)
+            return res, ycol
+
+        # --------------------------- Performance view ---------------------------
+        st.markdown('---')
+        st.markdown('#### 📈 Performance view')
+
+        metric_name = st.selectbox('Metric', ['Revenue','Units','Orders','AOV','Avg price/unit','Gross margin','Margin %','Return rate'], index=0, key='ov_metric')
+        dims_map = {
+            'Period':'__period__', 'Product': prod_col, 'Channel': chan_col, 'Region/Store': reg_col, 'Customer': cust_col, 'Type': type_col
+        }
+        p1, p2 = st.columns(2)
+        with p1:
+            primary_dim = st.selectbox('Primary', list(dims_map.keys()), index=0, key='ov_primary')
+        with p2:
+            sec_choices = ['(none)'] + [d for d in dims_map.keys() if d != primary_dim]
+            secondary_dim = st.selectbox('Secondary (optional)', sec_choices, index=0, key='ov_secondary')
+
+        primary_col = dims_map[primary_dim]
+        secondary_col = None if secondary_dim == '(none)' else dims_map[secondary_dim]
+        dims = [c for c in [primary_col, secondary_col] if c]
+        agg, ycol = _aggregate(dff, dims, metric_name)
+
+        # limit to Top N on primary
+        if primary_col in agg.columns:
+            keep = (agg.groupby(primary_col)[ycol].sum().sort_values(ascending=False).head(int(topn)).index)
+            agg = agg[agg[primary_col].isin(keep)]
+
+        # Chart
+        def _attach_labels(fig, use_pct=False):
+            total_points = sum(len(getattr(d, 'x', []) or []) for d in fig.data)
+            if show_labels and total_points <= int(label_limit):
+                for d in fig.data:
+                    if hasattr(d, 'y') and d.y is not None:
+                        if use_pct:
+                            d.text = [f\"{(float(v) if v is not None else 0)*100:.1f}%\" for v in d.y]
+                        else:
+                            d.text = [fmt_money(float(v)) if ycol in ['revenue','aov','avg_price_unit','margin'] else (fmt_pct(float(v)) if ycol in ['margin_pct','return_rate'] else fmt_num(float(v))) for v in d.y]
+                        d.textposition = 'outside'
+            return fig
+
+        if primary_col == '__period__':
+            if secondary_col and secondary_col in agg.columns:
+                fig = px.line(agg, x='__period__', y=ycol, color=secondary_col, markers=True, title=f'{metric_name} by Period and {secondary_dim}')
+            else:
+                fig = px.line(agg, x='__period__', y=ycol, markers=True, title=f'{metric_name} by Period')
+            fig.update_layout(xaxis_title='Period', yaxis_title=metric_name)
+            fig = _attach_labels(fig, use_pct=(ycol in ['margin_pct','return_rate']))
+            st_plotly(fig)
+            st.caption('Xu hướng theo thời gian.')
+        else:
+            if secondary_col and secondary_col in agg.columns:
+                if normalize_pct:
+                    share = agg.copy()
+                    share['_total'] = share.groupby(primary_col)[ycol].transform('sum')
+                    share['_val'] = np.where(share['_total']>0, share[ycol]/share['_total'], 0.0)
+                    fig = px.bar(share, x=primary_col, y='_val', color=secondary_col, barmode='stack', title=f'{metric_name} — mix by {primary_dim} & {secondary_dim}')
+                    fig.update_layout(yaxis_tickformat=',.0%', yaxis_title='Share')
+                    fig = _attach_labels(fig, use_pct=True)
+                else:
+                    fig = px.bar(agg, x=primary_col, y=ycol, color=secondary_col, barmode='stack', title=f'{metric_name} by {primary_dim} & {secondary_dim}', text_auto=True)
+                    fig.update_layout(yaxis_title=metric_name)
+                    fig = _attach_labels(fig, use_pct=(ycol in ['margin_pct','return_rate']))
+            else:
+                fig = px.bar(agg, x=primary_col, y=ycol, title=f'{metric_name} by {primary_dim}', text_auto=True)
+                fig.update_layout(yaxis_title=metric_name)
+                fig = _attach_labels(fig, use_pct=(ycol in ['margin_pct','return_rate']))
+            st_plotly(fig)
+            st.caption('Drill‑down theo chiều. Dùng Top N và % để xem mix vs. volume.')
+
+        # --------------------------- Product through period ---------------------------
+        if prod_col and '__period__' in dff.columns:
+            st.markdown('#### 🧩 Product qua các kỳ (Top K)')
+            k = st.slider('Top products', 3, 15, 5, 1, key='ov_topk')
+            agg_pp, y_pp = _aggregate(dff, ['__period__', prod_col], metric_name)
+            keep_p = (agg_pp.groupby(prod_col)[y_pp].sum().sort_values(ascending=False).head(int(k)).index)
+            agg_pp = agg_pp[agg_pp[prod_col].isin(keep_p)]
+            fig2 = px.line(agg_pp, x='__period__', y=y_pp, color=prod_col, markers=True, title=f'{metric_name} by Period — Top {k} Products')
+            if show_labels and len(agg_pp) <= int(label_limit):
+                fig2.update_traces(mode='lines+markers+text', text=[fmt_num(v) if y_pp in ['orders','units'] else (fmt_money(v) if y_pp in ['revenue','aov','avg_price_unit','margin'] else fmt_pct(v)) for v in agg_pp[y_pp]], textposition='top center')
+            st_plotly(fig2)
+            st.caption('Theo dõi SKU chính qua thời gian.')
+
+        # --------------------------- Distribution panel ---------------------------
+        st.markdown('---')
+        st.markdown('#### 🧪 Distribution (pick any field)')
+        num_cols = [c for c in dff.columns if pd.api.types.is_numeric_dtype(dff[c])]
+        cat_cols = [c for c in dff.columns if (not pd.api.types.is_numeric_dtype(dff[c])) and (c != '__period__')]
+        if num_cols or cat_cols:
+            dist_field = st.selectbox('Field', options=(num_cols + cat_cols), key='ov_dist_field')
+            if pd.api.types.is_numeric_dtype(dff[dist_field]):
+                bins = st.slider('Bins', 10, 100, max(10, min(60, SS.get('bins', 50))), 5, key='ov_bins')
+                figh = px.histogram(dff, x=dist_field, nbins=int(bins), title=f'Distribution — {dist_field}', text_auto=True)
+                st_plotly(figh); 
+                figb = px.box(dff, y=dist_field, points=False, title=f'Spread — {dist_field}')
+                st_plotly(figb)
+                s = pd.to_numeric(dff[dist_field], errors='coerce').dropna()
+                if not s.empty:
+                    q1, q3 = s.quantile(0.25), s.quantile(0.75); iqr = q3-q1
+                    out_lo, out_hi = q1-1.5*iqr, q3+1.5*iqr
+                    out_rate = ((s<out_lo)|(s>out_hi)).mean()
+                    st.caption(f'n={len(s):,} • mean={s.mean():,.2f} • sd={s.std():,.2f} • median={s.median():,.2f} • IQR={iqr:,.2f} • outliers≈{out_rate*100:.1f}%')
+                    # --- NEW: Numeric profile table (Distribution & Shape) ---
+                    num_col = field  # field là cột đang chọn
+                    s_num = pd.to_numeric(df[num_col], errors='coerce').dropna()
+                    
+                    # Describe + percentiles
+                    desc = s_num.describe(percentiles=[.01, .05, .25, .50, .75, .95, .99])
+                    desc_dict = desc.to_dict()
+                    
+                    p95 = desc_dict.get('95%', np.nan)
+                    p99 = desc_dict.get('99%', np.nan)
+                    zero_ratio = float((s_num == 0).mean()) if len(s_num) else np.nan
+                    skew = float(s_num.skew()) if len(s_num) else np.nan
+                    # pandas .kurt() = excess kurtosis (Fisher). Muốn Pearson thì +3.
+                    kurt = float(s_num.kurt()) if len(s_num) else np.nan
+                    
+                    # Normality p-value (có scipy thì tính, không có thì để NaN)
+                    p_norm = np.nan
+                    try:
+                        from scipy import stats as spstats
+                        if len(s_num) >= 8:
+                            p_norm = float(spstats.normaltest(s_num)[1])
+                    except Exception:
+                        pass
+                    
+                    stat_df = pd.DataFrame([{
+                        'column': num_col,
+                        'count': int(desc_dict.get('count', 0)),
+                        'n_missing': int(df[num_col].shape[0] - desc_dict.get('count', 0)),
+                        'mean': desc_dict.get('mean'),
+                        'std': desc_dict.get('std'),
+                        'min': desc_dict.get('min'),
+                        'p1':  desc_dict.get('1%'),
+                        'p5':  desc_dict.get('5%'),
+                        'q1':  desc_dict.get('25%'),
+                        'median': desc_dict.get('50%'),
+                        'q3':  desc_dict.get('75%'),
+                        'p95': desc_dict.get('95%'),
+                        'p99': desc_dict.get('99%'),
+                        'max': desc_dict.get('max'),
+                        'skew': skew,
+                        'kurtosis': kurt,
+                        'zero_ratio': zero_ratio,
+                        'tail>p95': float((s_num > p95).mean()) if not np.isnan(p95) else None,
+                        'tail>p99': float((s_num > p99).mean()) if not np.isnan(p99) else None,
+                        'normality_p': (round(p_norm, 4) if not np.isnan(p_norm) else None),
+                    }])
+                    st_df(stat_df, use_container_width=True, height=220)  # dùng st_df như style hiện tại
+                    
+                    # --- NEW: Rule Engine (numeric) ---
+                    signals = []
+                    def _push(rule, score, detail, severity='MED'):
+                        signals.append({
+                            'tab': 'Distribution & Shape',
+                            'rule': rule,
+                            'column': num_col,
+                            'score': float(score),
+                            'severity': severity,
+                            'detail': detail,
+                        })
+                    
+                    if not np.isnan(zero_ratio) and zero_ratio >= 0.10:
+                        _push('ZERO_RATIO_HIGH', min(1.0, zero_ratio/0.5), f'Zero ratio {zero_ratio:.2%} ≥ 10%')
+                    
+                    tail_p99 = float((s_num > p99).mean()) if not np.isnan(p99) else 0.0
+                    if tail_p99 >= 0.01:
+                        _push('HEAVY_TAIL_GT_P99', min(1.0, tail_p99/0.10), f'Tail >p99 ≈ {tail_p99:.2%}')
+                    
+                    if not np.isnan(skew) and abs(skew) >= 1.0:
+                        _push('SKEW_HIGH', min(1.0, abs(skew)/3.0), f'|skew|={abs(skew):.2f}')
+                    
+                    if not np.isnan(kurt) and kurt >= 4.0:
+                        _push('KURTOSIS_HIGH', min(1.0, kurt/10.0), f'excess kurtosis={kurt:.2f}')
+                    
+                    if not np.isnan(p_norm) and p_norm < 0.05:
+                        _push('NON_NORMAL', 0.8, f'normality p={p_norm:.4f} < 0.05')
+                    
+                    if st.button('➕ Push numeric signals to Risk', key='ds_push_numeric'):
+                        try:
+                            SS.setdefault('flags_from_tabs', [])
+                            SS['flags_from_tabs'].extend(signals)
+                            st.success(f'Added {len(signals)} signal(s).')
+                        except Exception as e:
+                            st.warning(f'Could not push signals: {e}')
+
+            else:
+                topn_cat = st.number_input('Top N categories', 3, 50, int(topn), 1, key='ov_topn_cat')
+                topc = dff[dist_field].astype(str).value_counts(dropna=True).head(int(topn_cat)).reset_index()
+                topc.columns = [dist_field, 'count']; topc['%'] = (topc['count']/topc['count'].sum())
+                figc = px.bar(topc, x=dist_field, y='count', title=f'Top {int(topn_cat)} — {dist_field}', text_auto=True)
+                st_plotly(figc)
+                st.caption('Phân bố danh mục (Top‑N).')
+        else:
+            st.info('Không có trường hợp lệ để vẽ Distribution.')
+
+        # --------------------------- Table & Export ---------------------------
+        st.markdown('---')
+        st.markdown('#### 📄 Table (current view)')
+        show_cols = [c for c in agg.columns if c in [*(dims or []), ycol, 'revenue','units','orders','margin','margin_pct','return_rate']]
+        tbl = agg[show_cols].copy()
+        st_df(tbl, use_container_width=True, height=min(480, 60 + 24*min(len(tbl), 15)))
+        st.download_button('Tải CSV (view này)', data=tbl.to_csv(index=False).encode('utf-8'), mime='text/csv', file_name='overview_view.csv', key='ov_dl')
+
 
 with TAB2:
-    st.subheader('📈 Profiling/Distribution')
-    base_df = DF_FULL
-    navL, navR = st.columns([2,3])
-    with navL:
-        col_nav = st.selectbox('Chọn cột', VIEW_COLS, key='t1_nav_col')
-        s_nav = DF_VIEW[col_nav]
-        if col_nav in NUM_COLS: dtype_nav='Numeric'
-        elif col_nav in DT_COLS or is_datetime_like(col_nav, s_nav): dtype_nav='Datetime'
-        else: dtype_nav='Categorical'
-        st.write(f'**Loại dữ liệu:** {dtype_nav}')
-    with navR:
-        sugg=[]
-        if dtype_nav=='Numeric':
-            sugg += ['Histogram + KDE', 'Box/ECDF/QQ', 'Outlier review (IQR)', 'Benford 1D/2D (giá trị > 0)']
-        elif dtype_nav=='Categorical':
-            sugg += ['Top‑N + Pareto', 'Chi‑square GoF vs Uniform', "Rare category flag/Group 'Others'"]
-        else:
-            sugg += ['Weekday/Hour distribution', 'Seasonality (Month/Quarter)', 'Gap/Sequence test']
-        st.write('**Gợi ý test:**')
-        for si in sugg: st.write(f'- {si}')
-    st.divider()
+    st.subheader('🧪 Distribution & Shape')
 
-    sub_num, sub_cat, sub_dt = st.tabs(["Numeric","Categorical","Datetime"])
+    df = DF_FULL
+    if df is None or len(df) == 0:
+        st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi dùng TAB 2.')
+    else:
+        # Let user pick any field
+        num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        cat_cols = [c for c in df.columns if (not pd.api.types.is_numeric_dtype(df[c])) and (not pd.api.types.is_datetime64_any_dtype(df[c]))]
 
-    # ---------- Numeric ----------
-    with sub_num:
-        if not NUM_COLS:
-            st.info('Không phát hiện cột numeric.')
+        if not num_cols and not cat_cols:
+            st.info('Không tìm thấy cột phù hợp để phân phối.'); 
         else:
-            c1,c2 = st.columns(2)
+            c1, c2 = st.columns([1,1])
             with c1:
-                num_col = st.selectbox('Numeric column', NUM_COLS, key='t1_num')
+                field = st.selectbox('Chọn cột', options=(num_cols+cat_cols), key='ds_field')
             with c2:
-                kde_on = st.checkbox('KDE (n ≤ ngưỡng)', value=True)
-            s0 = pd.to_numeric(DF_VIEW[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan)
-            s = s0.dropna(); n_na = int(s0.isna().sum())
-            if s.empty:
-                st.warning('Không còn giá trị numeric sau khi làm sạch.')
+                view = st.radio('Kiểu xem', ['Auto','Numeric only','Categorical only'], horizontal=True, key='ds_view')
+
+            if pd.api.types.is_numeric_dtype(df[field]) and view in ['Auto','Numeric only']:
+                bins = st.slider('Bins', 10, 100, max(10, min(60, SS.get('bins', 50))), 5, key='ds_bins')
+                fig = px.histogram(df, x=field, nbins=int(bins), title=f'Distribution — {field}', text_auto=True)
+                st_plotly(fig)
+                fig2 = px.box(df, y=field, points=False, title=f'Spread — {field}')
+                st_plotly(fig2)
+                s = pd.to_numeric(df[field], errors='coerce').dropna()
+                if not s.empty:
+                    q1, q3 = s.quantile(0.25), s.quantile(0.75); iqr = q3-q1
+                    out_lo, out_hi = q1-1.5*iqr, q3+1.5*iqr
+                    out_rate = ((s<out_lo)|(s>out_hi)).mean()
+                    st.caption(f'n={len(s):,} • mean={s.mean():,.2f} • sd={s.std():,.2f} • median={s.median():,.2f} • IQR={iqr:,.2f} • 				outliers≈{out_rate*100:.1f}%')
+            elif view in ['Auto','Categorical only']:
+                topn = st.number_input('Top N', 3, 50, 20, 1, key='ds_topn')
+                topc = df[field].astype(str).value_counts(dropna=True).head(int(topn)).reset_index()
+                topc.columns = [field, 'count']; topc['%'] = (topc['count']/topc['count'].sum())
+                fig = px.bar(topc, x=field, y='count', title=f'Top {int(topn)} — {field}', text_auto=True)
+                st_plotly(fig)
+                # --- NEW: Summary table (categorical) ---
+                series_cat = df[field].astype(str)
+                n = int(series_cat.notna().sum())
+                u = int(series_cat.nunique(dropna=True))
+                top_vc = series_cat.value_counts(dropna=True)
+                if not top_vc.empty:
+                    top_val = top_vc.index[0]
+                    top_freq = int(top_vc.iloc[0])
+                    top_pct = (top_freq / n * 100) if n else 0.0
+                else:
+                    top_val, top_freq, top_pct = '—', 0, 0.0
+                
+                tbl_cat = pd.DataFrame({
+                    'stat': ['count', 'unique', 'mode', 'freq', '%'],
+                    'value': [n, u, top_val, top_freq, f'{top_pct:.1f}%']
+                }).set_index('stat')
+                st_df(tbl_cat, use_container_width=True)
+                
+                # --- NEW: Rule Engine (categorical) ---
+                cat_signals = []
+                def _push_cat(rule, score, detail, severity='MED'):
+                    cat_signals.append({
+                        'tab': 'Distribution & Shape',
+                        'rule': rule,
+                        'column': field,
+                        'score': float(score),
+                        'severity': severity,
+                        'detail': detail,
+                    })
+                
+                dom_ratio = (top_freq / n) if n else 0.0
+                if dom_ratio >= 0.60:
+                    _push_cat('CATEGORY_DOMINANCE', min(1.0, (dom_ratio-0.60)/0.40 + 0.5), f'Top category chiếm {dom_ratio:.1%}')
+                if u >= 1000:
+                    _push_cat('HIGH_CARDINALITY', 0.6, f'unique={u:,} ≥ 1,000')
+                
+                if st.button('➕ Push categorical signals to Risk', key='ds_push_categorical'):
+                    try:
+                        SS.setdefault('flags_from_tabs', [])
+                        SS['flags_from_tabs'].extend(cat_signals)
+                        st.success(f'Added {len(cat_signals)} signal(s).')
+                    except Exception as e:
+                        st.warning(f'Could not push signals: {e}')
+
+                st.caption('Phân bố danh mục (Top‑N).')
             else:
-                desc_dict, skew, kurt, p_norm, p95, p99, zero_ratio = numeric_profile_stats(s)
-                stat_df = pd.DataFrame([{
-                    'count': int(desc_dict.get('count',0)), 'n_missing': n_na,
-                    'mean': desc_dict.get('mean'), 'std': desc_dict.get('std'),
-                    'min': desc_dict.get('min'), 'p1': desc_dict.get('1%'), 'p5': desc_dict.get('5%'),
-                    'q1': desc_dict.get('25%'), 'median': desc_dict.get('50%'), 'q3': desc_dict.get('75%'),
-                    'p95': desc_dict.get('95%'), 'p99': desc_dict.get('99%'), 'max': desc_dict.get('max'),
-                    'skew': skew, 'kurtosis': kurt, 'zero_ratio': zero_ratio,
-                    'tail>p95': float((s>p95).mean()) if not np.isnan(p95) else None,
-                    'tail>p99': float((s>p99).mean()) if not np.isnan(p99) else None,
-                    'normality_p': (round(p_norm,4) if not np.isnan(p_norm) else None),
-                }])
-                st_df(stat_df, use_container_width=True, height=220)
-                # expose for Rule Engine
-                SS['last_numeric_profile'] = {
-                    'column': num_col, 'zero_ratio': zero_ratio,
-                    'tail_gt_p99': float((s>p99).mean()) if not np.isnan(p99) else 0.0,
-                    'p_norm': float(p_norm) if not np.isnan(p_norm) else None,
-                    'skew': float(skew) if not np.isnan(skew) else None,
-                    'kurt': float(kurt) if not np.isnan(kurt) else None,
-                }
+                st.info('Không có dữ liệu hợp lệ cho kiểu xem đã chọn.')
 
-                if HAS_PLOTLY:
-                    gA,gB = st.columns(2)
-                    with gA:
-                        fig1 = go.Figure()
-                        fig1.add_trace(go.Histogram(x=s, nbinsx=SS['bins'], name='Histogram', opacity=0.8))
-                        if kde_on and (len(s)<=SS['kde_threshold']) and (s.var()>0) and (len(s)>10):
-                            try:
-                                from scipy.stats import gaussian_kde
-                                xs = np.linspace(s.min(), s.max(), 256)
-                                kde = gaussian_kde(s); ys = kde(xs)
-                                ys_scaled = ys*len(s)*(xs[1]-xs[0])
-                                fig1.add_trace(go.Scatter(x=xs, y=ys_scaled, name='KDE', line=dict(color='#E4572E')))
-                            except Exception: pass
-                        if SS['log_scale'] and (s>0).all(): fig1.update_xaxes(type='log')
-                        fig1.update_layout(title=f'{num_col} — Histogram+KDE', height=320)
-                        st_plotly(fig1)
-                    with gB:
-                        fig2 = px.box(pd.DataFrame({num_col:s}), x=num_col, points='outliers', title=f'{num_col} — Box')
-                        st_plotly(fig2)
-                    gC,gD = st.columns(2)
-                    with gC:
-                        try:
-                            fig3 = px.ecdf(s, title=f'{num_col} — ECDF'); st_plotly(fig3)
-                        except Exception: st.caption('ECDF yêu cầu plotly phiên bản hỗ trợ px.ecdf.')
-                    with gD:
-                        try:
-                            osm, osr = stats.probplot(s, dist='norm', fit=False)
-                            xq=np.array(osm[0]); yq=np.array(osm[1])
-                            fig4=go.Figure(); fig4.add_trace(go.Scatter(x=xq, y=yq, mode='markers'))
-                            lim=[min(xq.min(),yq.min()), max(xq.max(),yq.max())]
-                            fig4.add_trace(go.Scatter(x=lim, y=lim, mode='lines', line=dict(dash='dash')))
-                            fig4.update_layout(title=f'{num_col} — QQ Normal', height=320); st_plotly(fig4)
-                        except Exception: st.caption('Cần SciPy cho QQ plot.')
-                    if SS['advanced_visuals']:
-                        gE,gF = st.columns(2)
-                        with gE:
-                            figv = px.violin(pd.DataFrame({num_col:s}), x=num_col, points='outliers', box=True, title=f'{num_col} — Violin')
-                            st_plotly(figv)
-                        with gF:
-                            v=np.sort(s.values)
-                            if len(v)>0 and v.sum()!=0:
-                                cum=np.cumsum(v); lor=np.insert(cum,0,0)/cum.sum(); x=np.linspace(0,1,len(lor))
-                                gini = 1 - 2*np.trapz(lor, dx=1/len(v))
-                                figL=go.Figure(); figL.add_trace(go.Scatter(x=x,y=lor,name='Lorenz',mode='lines'))
-                                figL.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Equality', line=dict(dash='dash')))
-                                figL.update_layout(title=f'{num_col} — Lorenz (Gini={gini:.3f})', height=320)
-                                st_plotly(figL)
-                            else:
-                                st.caption('Không thể tính Lorenz/Gini do tổng = 0 hoặc dữ liệu rỗng.')
-
-                # GoF (optional)
-                try:
-                    gof, best, suggest = gof_models(s)
-                    SS['last_gof']={'best':best,'suggest':suggest}
-                    with st.expander('📘 GoF (Normal/Lognormal/Gamma) — AIC & Transform', expanded=False):
-                        st_df(gof, use_container_width=True, height=150)
-                        st.info(f'**Best fit:** {best}. **Suggested transform:** {suggest}')
-                except Exception:
-                    pass
-
-                # ⚡ Quick Runner (Numeric)
-                with st.expander('⚡ Quick Runner — Numeric tests'):
-                    c1,c2 = st.columns(2)
-                    with c1:
-                        run_hist = st.button('Histogram + KDE', key='qr_hist')
-                        run_outlier = st.button('Outlier (IQR)', key='qr_iqr')
-                    with c2:
-                        grp_for_quick = st.selectbox('Grouping (for Quick ANOVA)', ['(None)'] + CAT_COLS, key='qr_grp')
-                        others = [c for c in NUM_COLS if c!=num_col]
-                        other_num = st.selectbox('Other numeric (Correlation)', others or [num_col], key='qr_other')
-                        mth = 'spearman' if SS.get('spearman_recommended') else 'pearson'
-                        method = st.radio('Method', ['Pearson','Spearman'], index=(1 if mth=='spearman' else 0), horizontal=True, key='qr_corr_m')
-                        run_corr = st.button('Run Correlation', key='qr_corr')
-                        run_b1 = st.button('Run Benford 1D', key='qr_b1')
-                        run_b2 = st.button('Run Benford 2D', key='qr_b2')
-                    if run_hist and HAS_PLOTLY:
-                        fig = px.histogram(s, nbins=30, marginal='box', title=f'Histogram + KDE — {num_col}')
-                        st_plotly(fig)
-                    if run_outlier:
-                        q1,q3 = s.quantile([0.25,0.75]); iqr=q3-q1
-                        outliers = s[(s<q1-1.5*iqr) | (s>q3+1.5*iqr)]
-                        st.write(f'Số lượng outlier: {len(outliers)}'); st_df(outliers.to_frame(num_col).head(200), use_container_width=True)
-                    if run_b1:
-                        ok,msg = _benford_ready(s)
-                        if not ok: st.warning(msg)
-                        else:
-                            r=_benford_1d(s); SS['bf1_res']=r
-                            if r and HAS_PLOTLY:
-                                tb, var = r['table'], r['variance']
-                                fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                                fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                                fig.update_layout(title='Benford 1D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
-                    if run_b2:
-                        ok,msg = _benford_ready(s)
-                        if not ok: st.warning(msg)
-                        else:
-                            r=_benford_2d(s); SS['bf2_res']=r
-                            if r and HAS_PLOTLY:
-                                tb, var = r['table'], r['variance']
-                                fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                                fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                                fig.update_layout(title='Benford 2D — Obs vs Exp', height=340); st_plotly(fig)
-                                st_df(var, use_container_width=True, height=220)
-                    if run_corr and other_num in DF_VIEW.columns:
-                        sub = DF_VIEW[[num_col, other_num]].dropna()
-                        if len(sub)<10: st.warning('Không đủ dữ liệu sau khi loại NA (cần ≥10).')
-                        else:
-                            if method=='Pearson':
-                                r,pv = stats.pearsonr(sub[num_col], sub[other_num]); trend='ols'
-                            else:
-                                r,pv = stats.spearmanr(sub[num_col], sub[other_num]); trend=None
-                            if HAS_PLOTLY:
-                                fig = px.scatter(sub, x=num_col, y=other_num, trendline=trend, title=f'{num_col} vs {other_num} ({method})')
-                                st_plotly(fig)
-                            st.json({'method': method, 'r': float(r), 'p': float(pv)})
-                    if grp_for_quick and grp_for_quick!='(None)':
-                        sub = DF_VIEW[[num_col, grp_for_quick]].dropna()
-                        if sub[grp_for_quick].nunique()<2:
-                            st.warning('Cần ≥2 nhóm để ANOVA.')
-                        else:
-                            groups=[d[num_col].values for _,d in sub.groupby(grp_for_quick)]
-                            try:
-                                _, p_lev = stats.levene(*groups, center='median')
-                                F, p = stats.f_oneway(*groups)
-                                if HAS_PLOTLY:
-                                    fig = px.box(sub, x=grp_for_quick, y=num_col, color=grp_for_quick, title=f'{num_col} by {grp_for_quick} (Quick ANOVA)')
-                                    st_plotly(fig)
-                                st.json({'ANOVA F': float(F), 'p': float(p), 'Levene p': float(p_lev)})
-                            except Exception as e:
-                                st.error(f'ANOVA error: {e}')
-
-                # Rule Engine (this tab)
-                with st.expander('🧠 Rule Engine (Profiling) — Insights for current column'):
-                    ctx = build_rule_context()
-                    df_r = evaluate_rules(ctx, scope='profiling')
-                    if df_r.empty:
-                        st.info('Không có rule nào khớp.')
-                    else:
-                        st_df(df_r, use_container_width=True, height=240)
-
-    # ---------- Categorical ----------
-    with sub_cat:
-        if not CAT_COLS:
-            st.info('Không phát hiện cột categorical.')
-        else:
-            cat_col = st.selectbox('Categorical column', CAT_COLS, key='t1_cat')
-            df_freq = cat_freq(DF_VIEW[cat_col])
-            topn = st.number_input('Top‑N (Pareto)', 3, 50, 15, step=1)
-            st_df(df_freq.head(int(topn)), use_container_width=True, height=240)
-            if HAS_PLOTLY and not df_freq.empty:
-                d = df_freq.head(int(topn)).copy(); d['cum_share']=d['count'].cumsum()/d['count'].sum()
-                figp = make_subplots(specs=[[{"secondary_y": True}]])
-                figp.add_trace(go.Bar(x=d['category'], y=d['count'], name='Count'))
-                figp.add_trace(go.Scatter(x=d['category'], y=d['cum_share']*100, name='Cumulative %', mode='lines+markers'), secondary_y=True)
-                figp.update_yaxes(title_text='Count', secondary_y=False)
-                figp.update_yaxes(title_text='Cumulative %', range=[0,100], secondary_y=True)
-                figp.update_layout(title=f'{cat_col} — Pareto (Top {int(topn)})', height=360)
-                st_plotly(figp)
-
-    # ---------- Datetime ----------
-    with sub_dt:
-        dt_candidates = DT_COLS
-        if not dt_candidates:
-            st.info('Không phát hiện cột datetime‑like.')
-        else:
-            dt_col = st.selectbox('Datetime column', dt_candidates, key='t1_dt')
-            t = pd.to_datetime(DF_VIEW[dt_col], errors='coerce')
-            t_clean = t.dropna(); n_missing = int(t.isna().sum())
-            meta = pd.DataFrame([{
-                'count': int(len(t)), 'n_missing': n_missing,
-                'min': (t_clean.min() if not t_clean.empty else None),
-                'max': (t_clean.max() if not t_clean.empty else None),
-                'span_days': (int((t_clean.max()-t_clean.min()).days) if len(t_clean)>1 else None),
-                'n_unique_dates': int(t_clean.dt.date.nunique()) if not t_clean.empty else 0
-            }])
-            st_df(meta, use_container_width=True, height=120)
-            if HAS_PLOTLY and not t_clean.empty:
-                d1,d2 = st.columns(2)
-                with d1:
-                    dow = t_clean.dt.dayofweek; dow_share = dow.value_counts(normalize=True).sort_index()
-                    figD = px.bar(x=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], y=dow_share.reindex(range(7), fill_value=0).values,
-                                   title='DOW distribution', labels={'x':'DOW','y':'Share'})
-                    st_plotly(figD)
-                with d2:
-                    if not t_clean.dt.hour.isna().all():
-                        hour=t_clean.dt.hour; hcnt=hour.value_counts().sort_index()
-                        figH = px.bar(x=hcnt.index, y=hcnt.values, title='Hourly histogram (0–23)', labels={'x':'Hour','y':'Count'})
-                        st_plotly(figH)
-
-# ------------------------ TAB 2: Trend & Correlation --------------------------
 with TAB3:
     st.subheader('📈 Trend & 🔗 Correlation')
     base_df = DF_FULL
