@@ -1716,65 +1716,7 @@ with TAB4:
                     
                     st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
 
-                    # --- Hiển thị variance 1D theo phần trăm (chỉ %), bỏ diff (điểm) & counts ---
-                    color_thr_pct = float(SS.get('risk_diff_threshold', 0.05)) * 100.0
                     
-                    # Tạo view %: expected_p/observed_p là tỷ trọng; diff_pct là chênh theo %
-                    view1 = pd.DataFrame({
-                        'digit': tb['digit'].astype(int),
-                        'expected_%': (tb['expected_p'] * 100.0).round(2),
-                        'observed_%': (tb['observed_p'] * 100.0).round(2),
-                        'diff_%': (var['diff_pct'] * 100.0).round(2),  # (obs-exp)/exp * 100
-                    })
-                    
-                    def _hl_percent1(v):
-                        try:
-                            return 'color: #d32f2f' if abs(float(v)) >= color_thr_pct else ''
-                        except Exception:
-                            return ''
-                    
-                    sty1 = (view1.style
-                            .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
-                            .applymap(_hl_percent1, subset=['diff_%']))
-                    st_df(sty1, use_container_width=True, height=220)
-                    
-                    # --- Drill-down 1D cho các digit lệch lớn (dựa vào diff_%)
-                    bad_digits_1d = view1.loc(view1['diff_%'].abs() >= color_thr_pct, 'digit').astype(int).tolist()
-
-                    if bad_digits_1d:
-                        with st.expander('🔎 Drill-down 1D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
-                            mode1 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
-                                             horizontal=True, key='bf1_drill_mode')
-                            import re as _re_local
-                            def _digits_str(x):
-                                xs = ("%.15g" % float(x))
-                                return _re_local.sub(r"[^0-9]", "", xs).lstrip("0")
-                            def _first1(v):
-                                ds = _digits_str(v)
-                                return int(ds[0]) if len(ds)>=1 else np.nan
-                    
-                            s1_num = pd.to_numeric(data_for_benford[SS['bf1_col']], errors='coerce') \
-                                       .replace([np.inf, -np.inf], np.nan).dropna().abs()
-                            d1 = s1_num.apply(_first1).dropna()
-                    
-                            for dg in bad_digits_1d:
-                                idx = d1[d1 == dg].index
-                                st.markdown(f'**Digit {dg}** — {len(idx):,} rows')
-                                if len(idx) == 0:
-                                    continue
-                                if mode1 == 'Xổ hết':
-                                    st_df(data_for_benford.loc[idx].head(2000), use_container_width=True, height=260)
-                                else:
-                                    st_df(data_for_benford.loc[idx, [SS.get("bf1_col")]].head(200), use_container_width=True, height=220)
-    
-                thr = SS['risk_diff_threshold']; maxdiff = float(var['diff_pct'].abs().max()) if len(var)>0 else 0.0
-                msg = '🟢 Green'
-                if maxdiff >= 2*thr: msg='🚨 Red'
-                elif maxdiff >= thr: msg='🟡 Yellow'
-                sev = '🟢 Green'
-                if (p<0.01) or (MAD>0.015): sev='🚨 Red'
-                elif (p<0.05) or (MAD>0.012): sev='🟡 Yellow'
-                st.info(f"Diff% status: {msg} • p={p:.4f}, MAD={MAD:.4f} ⇒ Benford severity: {sev}")
         with g2:
             if SS.get('bf2_res'):
                 r2=SS['bf2_res']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
