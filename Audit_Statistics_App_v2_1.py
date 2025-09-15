@@ -1646,22 +1646,31 @@ with TAB4:
                     st.caption('📋 Data quality — cột 1D đã chọn')
                     st_df(qdf1, use_container_width=True, height=180)
                     
-                    # --- Hiển thị variance 1D với diff_pct (%) + chữ màu đỏ khi |diff%| ≥ 5 ---
-                    color_thr_pct = 5.0
-                    var1_show = var.copy()
-                    var1_show['diff_pct'] = var1_show['diff_pct'] * 100.0  # sang %
+                    # --- Hiển thị variance 1D theo phần trăm (chỉ %), bỏ diff (điểm) & counts ---
+                    color_thr_pct = float(SS.get('risk_diff_threshold', 0.05)) * 100.0
+                    
+                    # Tạo view %: expected_p/observed_p là tỷ trọng; diff_pct là chênh theo %
+                    view1 = pd.DataFrame({
+                        'digit': tb['digit'].astype(int),
+                        'expected_%': (tb['expected_p'] * 100.0).round(2),
+                        'observed_%': (tb['observed_p'] * 100.0).round(2),
+                        'diff_%': (var['diff_pct'] * 100.0).round(2),  # (obs-exp)/exp * 100
+                    })
+                    
                     def _hl_percent1(v):
                         try:
                             return 'color: #d32f2f' if abs(float(v)) >= color_thr_pct else ''
                         except Exception:
                             return ''
-                    sty1 = (var1_show.style
-                            .format({'diff_pct': '{:.2f}%'})
-                            .applymap(_hl_percent1, subset=['diff_pct']))
+                    
+                    sty1 = (view1.style
+                            .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
+                            .applymap(_hl_percent1, subset=['diff_%']))
                     st_df(sty1, use_container_width=True, height=220)
                     
-                    # --- Drill-down 1D cho những digit lệch ≥5% (nếu có) ---
-                    bad_digits_1d = var1_show.loc[var1_show['diff_pct'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
+                    # --- Drill-down 1D cho các digit lệch lớn (dựa vào diff_%)
+                    bad_digits_1d = view1.loc(view1['diff_%'].abs() >= color_thr_pct, 'digit').astype(int).tolist()
+
                     if bad_digits_1d:
                         with st.expander('🔎 Drill-down 1D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
                             mode1 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
@@ -1730,22 +1739,30 @@ with TAB4:
                     st.caption('📋 Data quality — cột 2D đã chọn')
                     st_df(qdf2, use_container_width=True, height=180)
                     
-                    # --- Hiển thị variance 2D với diff_pct (%) + chữ màu đỏ khi |diff%| ≥ 5 ---
-                    color_thr_pct = 5.0
-                    var2_show = var2.copy()
-                    var2_show['diff_pct'] = var2_show['diff_pct'] * 100.0
+                   # --- Hiển thị variance 2D theo phần trăm (chỉ %) ---
+                    color_thr_pct = float(SS.get('risk_diff_threshold', 0.05)) * 100.0
+                    
+                    view2 = pd.DataFrame({
+                        'digit': tb2['digit'].astype(int),
+                        'expected_%': (tb2['expected_p'] * 100.0).round(2),
+                        'observed_%': (tb2['observed_p'] * 100.0).round(2),
+                        'diff_%': (var2['diff_pct'] * 100.0).round(2),
+                    })
+                    
                     def _hl_percent2(v):
                         try:
                             return 'color: #d32f2f' if abs(float(v)) >= color_thr_pct else ''
                         except Exception:
                             return ''
-                    sty2 = (var2_show.style
-                            .format({'diff_pct': '{:.2f}%'})
-                            .applymap(_hl_percent2, subset=['diff_pct']))
+                    
+                    sty2 = (view2.style
+                            .format({'expected_%': '{:.2f}%', 'observed_%': '{:.2f}%', 'diff_%': '{:.2f}%'})
+                            .applymap(_hl_percent2, subset=['diff_%']))
                     st_df(sty2, use_container_width=True, height=220)
                     
-                    # --- Drill-down 2D cho những digit lệch ≥5% (nếu có) ---
-                    bad_digits_2d = var2_show.loc[var2_show['diff_pct'].abs() >= color_thr_pct, 'digit'].astype(int).tolist()
+                    # --- Drill-down 2D theo các digit lệch lớn
+                    bad_digits_2d = view2.loc(view2['diff_%'].abs() >= color_thr_pct, 'digit').astype(int).tolist()
+
                     if bad_digits_2d:
                         with st.expander('🔎 Drill-down 2D: các chữ số lệch (|diff%| ≥ 5%)', expanded=False):
                             mode2 = st.radio('Chế độ hiển thị', ['Ngắn gọn','Xổ hết'], index=0,
@@ -1801,8 +1818,7 @@ with TAB5:
         st.write(f'**Loại dữ liệu nhận diện:** {dtype}')
         st.markdown('**Gợi ý test ưu tiên**')
         if dtype=='Numeric':
-            st.write('- Benford 1D/2D (giá trị > 0)')
-            st.write('- Normality/Outlier: Ecdf/Box/QQ (xem Tab 1)')
+            st.write('- Normality/Outlier (xem Tab 1)')
         elif dtype=='Categorical':
             st.write('- Top‑N + HHI'); st.write('- Chi‑square GoF vs Uniform'); st.write('- χ² độc lập với biến trạng thái (nếu có)')
         else:
@@ -1810,7 +1826,6 @@ with TAB5:
     with navR:
         st.markdown('**Điều khiển chạy test**')
         use_full = True
-        run_benford = st.checkbox('Benford 1D/2D (Numeric)', value=(dtype=='Numeric'), key='t4_run_benford')
         run_cgof = st.checkbox('Chi‑square GoF vs Uniform (Categorical)', value=(dtype=='Categorical'), key='t4_run_cgof')
         run_hhi  = st.checkbox('Concentration HHI (Categorical)', value=(dtype=='Categorical'), key='t4_run_hhi')
         run_timegap = st.checkbox('Gap/Sequence test (Datetime)', value=(dtype=='Datetime'), key='t4_run_timegap')
@@ -1820,12 +1835,6 @@ with TAB5:
         if go:
             out={}
             data_src = DF_FULL
-            if run_benford and dtype=='Numeric':
-                ok,msg = _benford_ready(data_src[selected_col])
-                if not ok: st.warning(msg)
-                else:
-                    out['benford']={'r1': _benford_1d(data_src[selected_col]), 'r2': _benford_2d(data_src[selected_col]), 'col': selected_col,
-                                    'src': 'FULL'}
             if (run_cgof or run_hhi) and dtype=='Categorical':
                 freq = cat_freq(s0.astype(str))
                 if run_cgof and len(freq)>=2:
@@ -1848,26 +1857,6 @@ with TAB5:
     out = SS.get('t4_results', {})
     if not out:
         st.info('Chọn cột và nhấn **Chạy các test đã chọn** để hiển thị kết quả.')
-    else:
-        if 'benford' in out and out['benford'].get('r1') and out['benford'].get('r2'):
-            st.markdown('#### Benford 1D & 2D (song song)')
-            c1,c2 = st.columns(2)
-            with c1:
-                r = out['benford']['r1']; tb, var, p, MAD = r['table'], r['variance'], r['p'], r['MAD']
-                if HAS_PLOTLY:
-                    fig = go.Figure(); fig.add_trace(go.Bar(x=tb['digit'], y=tb['observed_p'], name='Observed'))
-                    fig.add_trace(go.Scatter(x=tb['digit'], y=tb['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    fig.update_layout(title=f"Benford 1D — Obs vs Exp ({out['benford']['col']}, {out['benford']['src']})", height=320)
-                    st_plotly(fig)
-                st_df(var, use_container_width=True, height=200)
-            with c2:
-                r2 = out['benford']['r2']; tb2, var2, p2, MAD2 = r2['table'], r2['variance'], r2['p'], r2['MAD']
-                if HAS_PLOTLY:
-                    fig2 = go.Figure(); fig2.add_trace(go.Bar(x=tb2['digit'], y=tb2['observed_p'], name='Observed'))
-                    fig2.add_trace(go.Scatter(x=tb2['digit'], y=tb2['expected_p'], name='Expected', mode='lines', line=dict(color='#F6AE2D')))
-                    fig2.update_layout(title=f"Benford 2D — Obs vs Exp ({out['benford']['col']}, {out['benford']['src']})", height=320)
-                    st_plotly(fig2)
-                st_df(var2, use_container_width=True, height=200)
         if 'cgof' in out:
             st.markdown('#### Chi‑square GoF vs Uniform (Categorical)')
             cg=out['cgof']; st.write({'Chi2': round(cg['chi2'],3), 'dof': cg['dof'], 'p': round(cg['p'],4)})
