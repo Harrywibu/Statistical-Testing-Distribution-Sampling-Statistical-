@@ -1445,119 +1445,6 @@ with TAB1:
             st_plotly(fig2)
             st.caption('Theo dõi SKU chính qua thời gian.')
 
-        # --------------------------- Distribution panel ---------------------------
-        st.markdown('---')
-        st.markdown('#### 🧪 Distribution (pick any field)')
-        num_cols = [c for c in dff.columns if pd.api.types.is_numeric_dtype(dff[c])]
-        cat_cols = [c for c in dff.columns if (not pd.api.types.is_numeric_dtype(dff[c])) and (c != '__period__')]
-        if num_cols or cat_cols:
-            dist_field = st.selectbox('Field', options=(num_cols + cat_cols), key='ov_dist_field')
-            if pd.api.types.is_numeric_dtype(dff[dist_field]):
-                bins = st.slider('Bins', 10, 100, max(10, min(60, SS.get('bins', 50))), 5, key='ov_bins')
-                figh = px.histogram(dff, x=dist_field, nbins=int(bins), title=f'Distribution — {dist_field}', text_auto=True)
-                st_plotly(figh); 
-                figb = px.box(dff, y=dist_field, points=False, title=f'Spread — {dist_field}')
-                st_plotly(figb)
-                s = pd.to_numeric(dff[dist_field], errors='coerce').dropna()
-                if not s.empty:
-                    q1, q3 = s.quantile(0.25), s.quantile(0.75); iqr = q3-q1
-                    out_lo, out_hi = q1-1.5*iqr, q3+1.5*iqr
-                    out_rate = ((s<out_lo)|(s>out_hi)).mean()
-                    st.caption(f'n={len(s):,} • mean={s.mean():,.2f} • sd={s.std():,.2f} • median={s.median():,.2f} • IQR={iqr:,.2f} • outliers≈{out_rate*100:.1f}%')
-                    # --- NEW: Numeric profile table (Distribution & Shape) ---
-                    num_col = field  # field là cột đang chọn
-                    s_num = pd.to_numeric(df[num_col], errors='coerce').dropna()
-                    
-                    # Describe + percentiles
-                    desc = s_num.describe(percentiles=[.01, .05, .25, .50, .75, .95, .99])
-                    desc_dict = desc.to_dict()
-                    
-                    p95 = desc_dict.get('95%', np.nan)
-                    p99 = desc_dict.get('99%', np.nan)
-                    zero_ratio = float((s_num == 0).mean()) if len(s_num) else np.nan
-                    skew = float(s_num.skew()) if len(s_num) else np.nan
-                    # pandas .kurt() = excess kurtosis (Fisher). Muốn Pearson thì +3.
-                    kurt = float(s_num.kurt()) if len(s_num) else np.nan
-                    
-                    # Normality p-value (có scipy thì tính, không có thì để NaN)
-                    p_norm = np.nan
-                    try:
-                        from scipy import stats as spstats
-                        if len(s_num) >= 8:
-                            p_norm = float(spstats.normaltest(s_num)[1])
-                    except Exception:
-                        pass
-                    
-                    stat_df = pd.DataFrame([{
-                        'column': num_col,
-                        'count': int(desc_dict.get('count', 0)),
-                        'n_missing': int(df[num_col].shape[0] - desc_dict.get('count', 0)),
-                        'mean': desc_dict.get('mean'),
-                        'std': desc_dict.get('std'),
-                        'min': desc_dict.get('min'),
-                        'p1':  desc_dict.get('1%'),
-                        'p5':  desc_dict.get('5%'),
-                        'q1':  desc_dict.get('25%'),
-                        'median': desc_dict.get('50%'),
-                        'q3':  desc_dict.get('75%'),
-                        'p95': desc_dict.get('95%'),
-                        'p99': desc_dict.get('99%'),
-                        'max': desc_dict.get('max'),
-                        'skew': skew,
-                        'kurtosis': kurt,
-                        'zero_ratio': zero_ratio,
-                        'tail>p95': float((s_num > p95).mean()) if not np.isnan(p95) else None,
-                        'tail>p99': float((s_num > p99).mean()) if not np.isnan(p99) else None,
-                        'normality_p': (round(p_norm, 4) if not np.isnan(p_norm) else None),
-                    }])
-                    st_df(stat_df, use_container_width=True, height=220)  # dùng st_df như style hiện tại
-                    
-                    # --- NEW: Rule Engine (numeric) ---
-                    signals = []
-                    def _push(rule, score, detail, severity='MED'):
-                        signals.append({
-                            'tab': 'Distribution & Shape',
-                            'rule': rule,
-                            'column': num_col,
-                            'score': float(score),
-                            'severity': severity,
-                            'detail': detail,
-                        })
-                    
-                    if not np.isnan(zero_ratio) and zero_ratio >= 0.10:
-                        _push('ZERO_RATIO_HIGH', min(1.0, zero_ratio/0.5), f'Zero ratio {zero_ratio:.2%} ≥ 10%')
-                    
-                    tail_p99 = float((s_num > p99).mean()) if not np.isnan(p99) else 0.0
-                    if tail_p99 >= 0.01:
-                        _push('HEAVY_TAIL_GT_P99', min(1.0, tail_p99/0.10), f'Tail >p99 ≈ {tail_p99:.2%}')
-                    
-                    if not np.isnan(skew) and abs(skew) >= 1.0:
-                        _push('SKEW_HIGH', min(1.0, abs(skew)/3.0), f'|skew|={abs(skew):.2f}')
-                    
-                    if not np.isnan(kurt) and kurt >= 4.0:
-                        _push('KURTOSIS_HIGH', min(1.0, kurt/10.0), f'excess kurtosis={kurt:.2f}')
-                    
-                    if not np.isnan(p_norm) and p_norm < 0.05:
-                        _push('NON_NORMAL', 0.8, f'normality p={p_norm:.4f} < 0.05')
-                    
-                    if st.button('➕ Push numeric signals to Risk', key='ds_push_numeric'):
-                        try:
-                            SS.setdefault('flags_from_tabs', [])
-                            SS['flags_from_tabs'].extend(signals)
-                            st.success(f'Added {len(signals)} signal(s).')
-                        except Exception as e:
-                            st.warning(f'Could not push signals: {e}')
-
-            else:
-                topn_cat = st.number_input('Top N categories', 3, 50, int(topn), 1, key='ov_topn_cat')
-                topc = dff[dist_field].astype(str).value_counts(dropna=True).head(int(topn_cat)).reset_index()
-                topc.columns = [dist_field, 'count']; topc['%'] = (topc['count']/topc['count'].sum())
-                figc = px.bar(topc, x=dist_field, y='count', title=f'Top {int(topn_cat)} — {dist_field}', text_auto=True)
-                st_plotly(figc)
-                st.caption('Phân bố danh mục (Top‑N).')
-        else:
-            st.info('Không có trường hợp lệ để vẽ Distribution.')
-
         # --------------------------- Table & Export ---------------------------
         st.markdown('---')
         st.markdown('#### 📄 Table (current view)')
@@ -1569,7 +1456,6 @@ with TAB1:
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
-
     df = DF_FULL
     if df is None or len(df) == 0:
         st.info('Chưa có dữ liệu. Hãy **Load full data** trước khi dùng TAB 2.')
@@ -1598,7 +1484,64 @@ with TAB2:
                     q1, q3 = s.quantile(0.25), s.quantile(0.75); iqr = q3-q1
                     out_lo, out_hi = q1-1.5*iqr, q3+1.5*iqr
                     out_rate = ((s<out_lo)|(s>out_hi)).mean()
-                    st.caption(f'n={len(s):,} • mean={s.mean():,.2f} • sd={s.std():,.2f} • median={s.median():,.2f} • IQR={iqr:,.2f} • 				outliers≈{out_rate*100:.1f}%')
+                    st.caption(f'n={len(s):,} • mean={s.mean():,.2f} • sd={s.std():,.2f} • median={s.median():,.2f} • IQR={iqr:,.2f} • outliers≈{out_rate*100:.1f}%')
+                     # === Numeric table (Distribution & Shape) + Rule context ===
+                    num_col = field
+                    s_num = pd.to_numeric(df[num_col], errors='coerce').replace([np.inf,-np.inf], np.nan).dropna()
+                    if not s_num.empty:
+                        desc = s_num.describe(percentiles=[.01,.05,.25,.50,.75,.95,.99]).to_dict()
+                        p95 = desc.get('95%', np.nan); p99 = desc.get('99%', np.nan)
+                        zero_ratio = float((s_num==0).mean())
+                        skew = float(s_num.skew()) if len(s_num)>2 else np.nan
+                        kurt = float(s_num.kurt()) if len(s_num)>3 else np.nan
+                        try:
+                            from scipy import stats as spstats
+                            p_norm = float(spstats.normaltest(s_num)[1]) if len(s_num) >= 8 else np.nan
+                        except Exception:
+                            p_norm = np.nan
+                    
+                        stat_df = pd.DataFrame([{
+                            'column': num_col,
+                            'count': int(desc.get('count',0)),
+                            'n_missing': int(len(df[num_col]) - int(desc.get('count',0))),
+                            'mean': desc.get('mean'), 'std': desc.get('std'),
+                            'min': desc.get('min'),  'p1': desc.get('1%'),  'p5': desc.get('5%'),
+                            'q1': desc.get('25%'),  'median': desc.get('50%'), 'q3': desc.get('75%'),
+                            'p95': desc.get('95%'), 'p99': desc.get('99%'), 'max': desc.get('max'),
+                            'skew': skew, 'kurtosis': kurt, 'zero_ratio': zero_ratio,
+                            'tail>p95': float((s_num>p95).mean()) if not np.isnan(p95) else None,
+                            'tail>p99': float((s_num>p99).mean()) if not np.isnan(p99) else None,
+                            'normality_p': (round(p_norm,4) if not np.isnan(p_norm) else None),
+                        }])
+                        st_df(stat_df, use_container_width=True, height=220)
+                    
+                        # expose để Rule Engine v2 đọc
+                        SS['last_numeric_profile'] = {
+                            'column': num_col,
+                            'zero_ratio': zero_ratio,
+                            'tail_gt_p99': float((s_num>p99).mean()) if not np.isnan(p99) else 0.0,
+                            'p_norm': float(p_norm) if not np.isnan(p_norm) else None,
+                            'skew': float(skew) if not np.isnan(skew) else None,
+                            'kurt': float(kurt) if not np.isnan(kurt) else None,
+                        }                
+                        # nút đẩy insight nhanh (tùy chọn)
+                        _sig = []
+                        if zero_ratio >= 0.10: _sig.append(('ZERO_RATIO_HIGH', min(1.0, zero_ratio/0.5), f'Zero ratio {zero_ratio:.2%} ≥ 10%'))
+                        tail_p99 = float((s_num>p99).mean()) if not np.isnan(p99) else 0.0
+                        if tail_p99 >= 0.01: _sig.append(('HEAVY_TAIL_GT_P99', min(1.0, tail_p99/0.10), f'Tail >p99 ≈ {tail_p99:.2%}'))
+                        if (not np.isnan(skew)) and abs(skew) >= 1.0: _sig.append(('SKEW_HIGH', min(1.0, abs(skew)/3.0), f'|skew|={abs(skew):.2f}'))
+                        if (not np.isnan(kurt)) and kurt >= 4.0: _sig.append(('KURTOSIS_HIGH', min(1.0, kurt/10.0), f'excess kurtosis={kurt:.2f}'))
+                        if (not np.isnan(p_norm)) and p_norm < 0.05: _sig.append(('NON_NORMAL', 0.8, f'normality p={p_norm:.4f} < 0.05'))
+                    
+                        if st.button('➕ Push numeric signals to Risk', key='ds_push_numeric'):
+                            SS.setdefault('flags_from_tabs', [])
+                            for rule, score, detail in _sig:
+                                SS['flags_from_tabs'].append({
+                                    'tab':'Distribution & Shape','rule':rule,'column':num_col,
+                                    'score':float(score),'severity':'MED','detail':detail
+                                })
+                            st.success(f'Added {len(_sig)} signal(s).')
+
             elif view in ['Auto','Categorical only']:
                 topn = st.number_input('Top N', 3, 50, 20, 1, key='ds_topn')
                 topc = df[field].astype(str).value_counts(dropna=True).head(int(topn)).reset_index()
