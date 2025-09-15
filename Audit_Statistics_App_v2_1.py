@@ -1357,8 +1357,7 @@ with TAB1:
 
         def _attach_labels(fig, use_pct=False):
             # Đếm tổng số điểm để tránh bị rối khi gán nhãn
-            total_points = sum(len(getattr(d, "x", []) or getattr(d, "labels", []) or []) for d in fig.data)
-        
+            total_points = sum((len(getattr(d, 'y', [])) if getattr(d, 'y', None) is not None else 0) for d in fig.data)
             if show_labels and total_points <= int(label_limit):
                 for d in fig.data:
                     # Chỉ gán nhãn cho trace có trục Y (bar/line)
