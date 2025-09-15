@@ -1630,39 +1630,6 @@ with TAB2:
                           use_container_width=True, height=140)
                 else:
                     st.caption('Rule insights (auto • categorical): none')
-# === Bottom expander: Rule insights (auto) for current field ===
-    with st.expander('🧩 Rule insights (auto) — Tab 2', expanded=False):
-        try:
-            cur_field = field  # cột đang chọn ở Tab 2
-        except NameError:
-            cur_field = None
-    
-        re2 = SS.get('rule_engine_tab2', {})
-        item = re2.get(cur_field, {}) if cur_field else {}
-    
-        # Hiển thị rule của cột hiện tại (numeric hoặc categorical)
-        _rules = item.get('rules', [])
-        _kind  = item.get('kind', '—')
-    
-        # Info header
-        if cur_field:
-            st.caption(f"Column: `{cur_field}` • Type: `{_kind}`")
-    
-        if _rules:
-            rule_df = pd.DataFrame(
-                [{'rule': n, 'score': f'{s:.2f}', 'severity': sev, 'detail': d}
-                 for (n, s, sev, d) in _rules]
-            )
-            st_df(rule_df, use_container_width=True, height=160)
-        else:
-            st.caption('Không có rule nào cho cột đang chọn trong lượt chạy này.')
-    
-        # (tùy chọn) Nhìn nhanh theo mức độ
-        if _rules:
-            agg = (pd.DataFrame([{'severity': r[2]} for r in _rules])
-                     .value_counts('severity').rename('count').reset_index())
-            st.dataframe(agg, use_container_width=True, height=120)
-
                 
 
 with TAB3:
