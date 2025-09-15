@@ -907,7 +907,6 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 # ---- TAB 1: Overview (Sales activity) ----
-# ---- TAB 1: Overview (Sales activity) ----
 with TAB1:
     if not HAS_PLOTLY:
         st.info("Plotly chưa sẵn sàng."); st.stop()
@@ -1015,6 +1014,7 @@ with TAB1:
         c0, c1, c2, c3, c4 = st.columns([1.1,1.0,1.0,1.1,1.0])
         period_lbl = c0.selectbox("⏱️ Period", ["Month","Quarter","Year"], index=0, key="ov1_period")
         src_mode   = c1.radio("🧭 Nguồn cột", ["Chọn trực tiếp","Theo Mapping"], index=0, horizontal=True, key="ov1_src_mode")
+        facet      = c2.selectbox("🔎 Facet", ["By who/what","By where","By how","By type"], index=0, key="ov1_facet")
         combo_mode = c3.radio("🧮 Combo (Bar+Line)", ["Pareto","Dual-metric"], index=1, horizontal=True, key="ov1_combo")
         topn       = c4.slider("Top N", 3, 30, 10, key="ov1_topn")
 
@@ -1054,6 +1054,20 @@ with TAB1:
         revenue_col = st.selectbox("💰 Cột Revenue", ["(None)"] + num_cols,
                                    index=((["(None)"]+num_cols).index(rev_col_guess) if rev_col_guess in num_cols else 0),
                                    key="ov1_revcol")
+
+        # Gợi ý Dimension theo facet
+        def facet_suggest():
+            if facet == "By who/what":
+                cand = [mapping.get("product"), mapping.get("category"), mapping.get("customer"), mapping.get("salesperson")]
+            elif facet == "By where":
+                cand = [mapping.get("region"), mapping.get("branch"), mapping.get("store")]
+            elif facet == "By how":
+                cand = [mapping.get("channel"), mapping.get("payment"), mapping.get("order_type")]
+            else:
+                cand = [mapping.get("type")]
+            return [c for c in cand if c in ALL_COLS]
+
+        sugg = facet_suggest()
         dim_options = ["(None)"] + [c for c in ALL_COLS if not ov1_is_dt(df[c])]
         dim_x = st.selectbox("🏷️ Dimension (X)", dim_options, index=(dim_options.index(sugg[0]) if sugg and sugg[0] in dim_options else 0), key="ov1_dimx")
         dim_z = st.selectbox("🎨 Series split (Z) — tùy chọn", ["(None)"] + [c for c in ALL_COLS if (not ov1_is_dt(df[c]) and c != dim_x and c != "(None)")], index=0, key="ov1_dimz")
@@ -1305,6 +1319,20 @@ with TAB1:
     else:
         st.info("Cần chọn **Revenue** để hiển thị bảng tổng hợp.")
 
+    # ========== F) Facet 'By type' — bổ sung nhanh ==========
+    if facet == "By type" and mapping.get("type") in df2.columns and revenue_col in df2.columns:
+        st.markdown("### 🔖 Tổng hợp theo loại giao dịch")
+        tdf = df2[[revenue_col, mapping["type"]]].copy()
+        tdf["__type__"] = tdf[mapping["type"]].apply(ov1_norm_type)
+        if time_col and "__PERIOD__" in df2.columns:
+            df_type = tdf.join(df2["__PERIOD__"]).groupby(["__PERIOD__","__type__"])[revenue_col].sum().reset_index()
+            fig_tline = px.line(df_type, x="__PERIOD__", y=revenue_col, color="__type__", markers=True)
+            st_plotly(fig_tline)
+            st.caption("**Sales/Returns/Discount/Transfer** theo **kỳ** để xem cơ cấu và Net Revenue theo thời gian.")
+        s = tdf.groupby("__type__")[revenue_col].sum().reset_index().rename(columns={revenue_col:"Giá trị","__type__":"Loại"})
+        fig_tbar = px.bar(s, x="Loại", y="Giá trị")
+        st_plotly(fig_tbar)
+        st.caption("Tổng **Revenue theo loại giao dịch** (đại số). Lưu ý: Returns/Discount thường âm; Net = Sales + Returns + Discount.")
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
