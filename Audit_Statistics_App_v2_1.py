@@ -2181,6 +2181,7 @@ with TAB7:
 with TAB7:
     base_df = DF_FULL
     # ---- Risk summary from Rule Engine v2 (if available) ----
+    left, right = st.columns([3,2])
     with left:
         st.subheader('🧭 Automated Risk Assessment — Signals → Next tests → Interpretation')
         # Quick quality & signals (light)
