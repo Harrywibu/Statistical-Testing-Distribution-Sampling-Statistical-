@@ -907,15 +907,7 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 # ---- TAB 1: Overview (Sales activity) ----
-
-# ===== TAB1 — OVERVIEW (Sales) =====
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import streamlit as st
-
 SS = st.session_state
-
 # ---------- Helpers ----------
 def _df_full_safe():
     return SS.get("DF_FULL") if SS.get("DF_FULL") is not None else SS.get("df")
