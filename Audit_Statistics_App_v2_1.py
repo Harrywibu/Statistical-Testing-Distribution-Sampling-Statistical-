@@ -1512,11 +1512,9 @@ with TAB2:
                     st.caption('Rule insights (auto • categorical): none')
                 
 
-# ---- TAB 3: Test Correlation (compact, fixed & large-data friendly) ----
+# ---- TAB 3: Test Correlation (explicit tests, typed selects, robust) ----
 with TAB3:
-    import re
-    import numpy as np
-    import pandas as pd
+    import re, numpy as np, pandas as pd
     from scipy import stats
     import plotly.express as px
     import plotly.graph_objects as go
@@ -1530,7 +1528,7 @@ with TAB3:
     df = SS['df']
     all_cols = list(df.columns)
 
-    # ---------- Detect types ----------
+    # ---------- Type detectors ----------
     def tc_is_num(c):
         try: return pd.api.types.is_numeric_dtype(df[c])
         except: return False
@@ -1546,7 +1544,11 @@ with TAB3:
     def tc_type(col):
         return 'datetime' if tc_is_dt(col) else ('numeric' if tc_is_num(col) else 'categorical')
 
-    # Labeled options (nhận diện kiểu ngay trong select)
+    NUM_COLS = [c for c in all_cols if tc_is_num(c)]
+    CAT_COLS = [c for c in all_cols if tc_is_cat(c)]
+    DT_COLS  = [c for c in all_cols if tc_is_dt(c)]
+
+    # Labeled options with icons & unique count for categorical
     def badge(c):
         if tc_is_dt(c):      icon = "🗓"
         elif tc_is_num(c):   icon = "🔢"
@@ -1558,11 +1560,13 @@ with TAB3:
         return f"{icon} {c}{hint}"
 
     label_to_col = {badge(c): c for c in all_cols}
-    col_labels   = list(label_to_col.keys())
+    NUM_LB = [badge(c) for c in NUM_COLS]
+    CAT_LB = [badge(c) for c in CAT_COLS]
+    DT_LB  = [badge(c) for c in DT_COLS]
 
     # ---------- Helpers ----------
     def tc_make_period(s: pd.Series, period_lbl: str):
-        freq = {"Month":"MS", "Quarter":"QS", "Year":"YS"}.get(period_lbl, "MS")
+        freq = {"Month":"MS","Quarter":"QS","Year":"YS"}.get(period_lbl, "MS")
         return pd.to_datetime(s, errors='coerce').dt.to_period({"MS":"M","QS":"Q","YS":"Y"}[freq]).dt.start_time
 
     def tc_topn_cat(s: pd.Series, n=10):
@@ -1571,39 +1575,26 @@ with TAB3:
         return s.astype(str).where(s.astype(str).isin(top), "Khác")
 
     def tc_corr_ratio(categories, values):
-        """
-        η (correlation ratio): trả về sqrt(η²) trong khoảng 0..1 (ổn định cho dữ liệu lớn).
-        FIX: dùng Series(...).nunique() thay vì Categorical.nunique().
-        """
-        cats = pd.Categorical(categories)
+        """η (0..1); FIX: dùng DataFrame align, tránh IndexingError."""
         y = pd.to_numeric(values, errors='coerce')
-        # mask hợp lệ
-        m = pd.Series(cats).notna() & pd.notna(y)
-        cats = cats[m]; y = y[m]
-        # số nhóm thực sự xuất hiện trong tập lọc
-        n_groups = pd.Series(cats).nunique(dropna=True)
-        if len(y) < 3 or n_groups < 2:
+        dfv = pd.DataFrame({'cat': pd.Categorical(categories), 'y': y}).dropna()
+        if dfv['cat'].nunique(dropna=True) < 2 or len(dfv) < 3:
             return np.nan
-        # nhóm (chỉ observed) để không tính nhóm không xuất hiện
-        grp = pd.DataFrame({'cat': pd.Series(cats), 'y': y}).groupby('cat', observed=True)['y']
-        y_mean = float(y.mean())
+        grp = dfv.groupby('cat', observed=True)['y']
+        y_mean = float(dfv['y'].mean())
         ss_between = sum(g.size * (float(g.mean()) - y_mean) ** 2 for _, g in grp)
-        ss_total   = float(((y - y_mean) ** 2).sum())
-        if ss_total == 0:
-            return 0.0
+        ss_total   = float(((dfv['y'] - y_mean) ** 2).sum())
+        if ss_total == 0: return 0.0
         eta2 = ss_between / ss_total
-        return float(np.sqrt(eta2))
+        return float(np.sqrt(max(0.0, eta2)))
 
     def tc_anova_p(categories, values):
-        cats = pd.Categorical(categories)
+        """ANOVA p; FIX: align index bằng DataFrame trước khi groupby."""
         y = pd.to_numeric(values, errors='coerce')
-        m = pd.Series(cats).notna() & pd.notna(y)
-        cats = cats[m]; y = y[m]
-        # gom nhóm có ít nhất 2 điểm
-        cats_ser = pd.Series(cats)
-        groups = [y[cats_ser == k] for k in cats.categories if (y[cats_ser == k].shape[0] > 1)]
-        if len(groups) < 2:
-            return np.nan
+        dfv = pd.DataFrame({'cat': pd.Categorical(categories), 'y': y}).dropna()
+        if dfv['cat'].nunique(dropna=True) < 2: return np.nan
+        groups = [g.values for _, g in dfv.groupby('cat', observed=True)['y'] if len(g) > 1]
+        if len(groups) < 2: return np.nan
         try:
             _, p = stats.f_oneway(*groups)
             return float(p)
@@ -1612,12 +1603,10 @@ with TAB3:
 
     def tc_cramers_v(x, y):
         tab = pd.crosstab(x, y, dropna=False)
-        if tab.values.sum() == 0 or min(tab.shape) < 2:
-            return np.nan, np.nan, tab
+        if tab.values.sum() == 0 or min(tab.shape) < 2: return np.nan, np.nan, tab
         chi2, p, _, _ = stats.chi2_contingency(tab)
         n = tab.values.sum(); r, c = tab.shape
         phi2 = chi2 / n
-        # bias-corrected
         phi2corr = max(0, phi2 - ((c-1)*(r-1))/(n-1))
         rcorr = c - ((c-1)**2)/(n-1)
         ccorr = r - ((r-1)**2)/(n-1)
@@ -1625,76 +1614,156 @@ with TAB3:
         return float(V), float(p), tab
 
     def r_strength(abs_r):
-        if abs_r < 0.3: return "yếu"
-        if abs_r < 0.5: return "vừa"
-        return "mạnh"
+        return "yếu" if abs_r < 0.3 else ("vừa" if abs_r < 0.5 else "mạnh")
 
     def eta_strength(eta):
         if np.isnan(eta): return "—"
-        if eta < 0.10: return "yếu"
-        if eta < 0.24: return "vừa"
-        return "mạnh"
+        return "yếu" if eta < 0.10 else ("vừa" if eta < 0.24 else "mạnh")
 
     def V_strength(V):
         if np.isnan(V): return "—"
-        if V < 0.3: return "yếu"
-        if V < 0.5: return "vừa"
-        return "mạnh"
+        return "yếu" if V < 0.3 else ("vừa" if V < 0.5 else "mạnh")
 
-    # ---------- UI ----------
+    # ---------- UI (explicit test) ----------
     cfg = st.container(border=True)
     with cfg:
-        c0, c1, c2, c3 = st.columns([1.2, 1.2, 1.1, 1.0])
+        c0, c1, c2 = st.columns([1.2,1.2,0.9])
         test_choice = c0.selectbox(
             "Loại test",
-            ["Auto (khuyến nghị)", "Numeric ↔ Numeric", "Numeric ↔ Categorical", "Categorical ↔ Categorical", "Trend (time series)"],
+            ["Numeric ↔ Numeric", "Numeric ↔ Categorical", "Categorical ↔ Categorical", "Trend (time series)"],
             index=0,
-            help="Chọn tay nếu muốn ép kiểu test theo mục đích."
+            help="Chọn rõ test để X/Y lọc theo đúng kiểu dữ liệu."
         )
-        x_label = c1.selectbox("Chọn X (nhận diện kiểu)", col_labels, key="tc_x_label")
-        y_label = c2.selectbox("Chọn Y (nhận diện kiểu)", col_labels, key="tc_y_label")
-        fast_mode = c3.toggle("⚡ Fast mode", value=(len(df) >= 200_000), help="Mặc định bật khi dữ liệu rất lớn")
+        fast_mode = c2.toggle("⚡ Fast mode", value=(len(df) >= 200_000), help="Mặc định bật nếu dữ liệu rất lớn")
 
-        x_col, y_col = label_to_col[x_label], label_to_col[y_label]
-        tX, tY = tc_type(x_col), tc_type(y_col)
-
-        r1, r2, r3 = st.columns([1.0,1.0,1.0])
-        robust = r1.toggle("Robust (Spearman)", value=False, key="tc_robust")
-        topn_cat = r2.slider("Top N category", 3, 30, 10, key="tc_topn")
-        overlay_pts = r3.slider("Max overlay points", 0, 5000, 1200, step=300,
-                                help="0 = không overlay điểm", key="tc_overlay")
-
-        # Trend controls hiển thị khi test là Trend
-        dt_col = None; period_lbl = "Month"; trans = "%Δ MoM"; roll_w = 6
-        if test_choice == "Trend (time series)":
-            t1, t2, t3, t4 = st.columns([1.1,1.0,1.0,1.0])
-            dt_label = t1.selectbox("Datetime", [badge(c) for c in all_cols if tc_is_dt(c)] or ["(none)"], key="tc_dt_label")
-            dt_col = label_to_col.get(dt_label, None)
-            period_lbl = t2.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period")
-            trans = t3.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans")
-            roll_w = t4.slider("Rolling r (W)", 3, 24, 6, key="tc_roll")
-
-    # Xác định route theo test_choice
-    if test_choice == "Auto (khuyến nghị)":
-        if tX == 'numeric' and tY == 'numeric': route = "NN"
-        elif (tX == 'numeric' and tY == 'categorical') or (tX == 'categorical' and tY == 'numeric'): route = "NC"
-        elif (tX == 'categorical' and tY == 'categorical'): route = "CC"
-        else: route = "NN"  # fallback
-    elif test_choice == "Numeric ↔ Numeric": route = "NN"
-    elif test_choice == "Numeric ↔ Categorical": route = "NC"
-    elif test_choice == "Categorical ↔ Categorical": route = "CC"
-    else: route = "TR"
+        # Per-test selectors (X/Y filtered by type)
+        if test_choice == "Numeric ↔ Numeric":
+            if not NUM_LB or len(NUM_LB) < 2:
+                st.warning("Không đủ cột numeric cho test này.")
+                st.stop()
+            x_label = c1.selectbox("X (numeric)", NUM_LB, key="tc_x_nn")
+            y_label = st.selectbox("Y (numeric)", [lb for lb in NUM_LB if lb != x_label], key="tc_y_nn")
+            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
+            robust = st.toggle("Robust (Spearman)", value=False, key="tc_robust")
+            overlay_pts = st.slider("Max overlay points", 0, 5000, 1200, step=300, key="tc_overlay")
+        elif test_choice == "Numeric ↔ Categorical":
+            if not NUM_LB or not CAT_LB:
+                st.warning("Cần ít nhất 1 numeric và 1 categorical.")
+                st.stop()
+            x_label = c1.selectbox("Numeric", NUM_LB, key="tc_x_nc")
+            y_label = st.selectbox("Categorical", CAT_LB, key="tc_y_nc")
+            num_col = label_to_col[x_label]; cat_col = label_to_col[y_label]
+            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn")
+        elif test_choice == "Categorical ↔ Categorical":
+            if len(CAT_LB) < 2:
+                st.warning("Không đủ cột categorical cho test này.")
+                st.stop()
+            x_label = c1.selectbox("X (categorical)", CAT_LB, key="tc_x_cc")
+            y_label = st.selectbox("Y (categorical)", [lb for lb in CAT_LB if lb != x_label], key="tc_y_cc")
+            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
+            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn_cc")
+        else:  # Trend
+            if not NUM_LB or len(NUM_LB) < 2 or not DT_LB:
+                st.warning("Cần >=2 numeric và >=1 datetime cho Trend.")
+                st.stop()
+            x_label = c1.selectbox("X (numeric)", NUM_LB, key="tc_x_tr")
+            y_label = st.selectbox("Y (numeric)", [lb for lb in NUM_LB if lb != x_label], key="tc_y_tr")
+            dt_label = st.selectbox("Datetime", DT_LB, key="tc_dt_tr")
+            x_col, y_col, dt_col = label_to_col[x_label], label_to_col[y_label], label_to_col[dt_label]
+            c3, c4, c5 = st.columns(3)
+            period_lbl = c3.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period")
+            trans = c4.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans")
+            roll_w = c5.slider("Rolling r (W)", 3, 24, 6, key="tc_roll")
 
     # ---------- ROUTING ----------
-    if route == "TR":
-        # Trend requires numeric-numeric + a datetime column
-        if not (tX == 'numeric' and tY == 'numeric'):
-            st.warning("Trend: X & Y cần là số.")
+    if test_choice == "Numeric ↔ Numeric":
+        x = pd.to_numeric(df[x_col], errors='coerce')
+        y = pd.to_numeric(df[y_col], errors='coerce')
+        m = x.notna() & y.notna()
+        x, y = x[m], y[m]
+        n = int(len(x))
+        if n < 3:
+            st.info("Không đủ dữ liệu.")
             st.stop()
-        if not dt_col or dt_col not in df.columns:
-            st.warning("Chưa chọn cột thời gian.")
-            st.stop()
+        if robust:
+            r_val, p_val = stats.spearmanr(x, y)
+            r_name = "Spearman"
+        else:
+            r_val, p_val = stats.pearsonr(x, y)
+            r_name = "Pearson"
+        R2 = (r_val**2)
+        # slope/intercept OLS (quick)
+        try:
+            slope, intercept = np.polyfit(x, y, 1)
+        except Exception:
+            slope, intercept = np.nan, np.nan
 
+        st.markdown(f"**{r_name} r = {r_val:.3f}**  ·  p={p_val:.4g}  ·  n={n}  ·  R²={R2:.3f}  ·  slope≈{slope:.3g}")
+
+        # Chart: density heatmap + optional sample overlay
+        if fast_mode:
+            fig = px.density_heatmap(pd.DataFrame({x_col:x, y_col:y}),
+                                     x=x_col, y=y_col, nbinsx=60, nbinsy=60, histfunc="count")
+            if overlay_pts > 0:
+                samp = pd.DataFrame({x_col:x, y_col:y}).sample(min(overlay_pts, n), random_state=42)
+                fig.add_trace(go.Scattergl(x=samp[x_col], y=samp[y_col], mode='markers',
+                                           marker=dict(size=3), name="sample"))
+        else:
+            fig = px.scatter(pd.DataFrame({x_col:x, y_col:y}), x=x_col, y=y_col,
+                             opacity=0.55, render_mode="webgl")
+        st.plotly_chart(fig, use_container_width=True)
+        st.success(f"💡 Kết luận: Tương quan {r_strength(abs(r_val))} ({'+' if r_val>=0 else '−'})")
+
+        SS['last_corr'] = pd.DataFrame([[1.0, r_val],[r_val,1.0]], index=[x_col,y_col], columns=[x_col,y_col])
+
+    elif test_choice == "Numeric ↔ Categorical":
+        s_num = pd.to_numeric(df[num_col], errors='coerce')
+        s_cat = tc_topn_cat(df[cat_col], n=topn_cat)
+        eta = tc_corr_ratio(s_cat, s_num)
+        p_val = tc_anova_p(s_cat, s_num)
+        eta2 = (eta**2) if not np.isnan(eta) else np.nan
+        st.markdown(f"**η = {eta:.3f}** (η²={eta2:.3f})  ·  ANOVA p={p_val:.4g}")
+
+        # Aggregated bar (median ± IQR/2)
+        g = pd.DataFrame({cat_col:s_cat, num_col:s_num}).dropna() \
+                .groupby(cat_col)[num_col].agg(q1=lambda s: s.quantile(0.25),
+                                               med='median', q3=lambda s: s.quantile(0.75)) \
+                .reset_index().sort_values('med', ascending=False)
+        g['err'] = (g['q3'] - g['q1']) / 2.0
+        fig = go.Figure(go.Bar(x=g[cat_col], y=g['med'],
+                               error_y=dict(array=g['err'], visible=True)))
+        fig.update_layout(yaxis_title=f"{num_col} (median ± IQR/2)")
+        st.plotly_chart(fig, use_container_width=True)
+
+        top_grp = str(g.iloc[0][cat_col]) if len(g) else "—"
+        st.success(f"💡 Kết luận: Ảnh hưởng {eta_strength(eta)}; nhóm cao nhất: **{top_grp}**")
+
+        SS['last_corr'] = None
+
+    elif test_choice == "Categorical ↔ Categorical":
+        sX = tc_topn_cat(df[x_col], n=topn_cat).astype(str)
+        sY = tc_topn_cat(df[y_col], n=topn_cat).astype(str)
+        V, p, tab = tc_cramers_v(sX, sY)
+        st.markdown(f"**Cramér’s V = {V:.3f}**  ·  χ² p={p:.4g}")
+
+        perc = (tab / tab.values.sum()).astype(float)
+        fig = px.imshow(perc, aspect='auto', labels=dict(x=y_col, y=x_col, color='Share'))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Top residual pairs (hỗ trợ quan điểm)
+        try:
+            expected = np.outer(perc.sum(axis=1), perc.sum(axis=0)) * perc.values.sum()
+            resid = (tab.values - expected) / np.sqrt(expected + 1e-12)
+            idxs = np.dstack(np.unravel_index(np.argsort(-np.abs(resid), axis=None), resid.shape))[0][:3]
+            bullets = [f"- **{tab.index[i]} × {tab.columns[j]}** (resid≈{resid[i,j]:.2f})" for (i,j) in idxs]
+            st.info("Cặp lệch nổi bật:\n" + "\n".join(bullets))
+        except Exception:
+            pass
+
+        st.success(f"💡 Kết luận: Liên hệ {V_strength(V)}.")
+        SS['last_corr'] = None
+
+    else:  # Trend (time series)
         tmp = df[[dt_col, x_col, y_col]].copy()
         tmp[dt_col] = pd.to_datetime(tmp[dt_col], errors='coerce')
         tmp = tmp.dropna(subset=[dt_col])
@@ -1704,7 +1773,6 @@ with TAB3:
             st.info("Chưa đủ kỳ để tính rolling.")
             st.stop()
 
-        # Transform
         if trans in ("%Δ MoM", "%Δ YoY"):
             kmap = {"Month": {"MoM":1, "YoY":12},
                     "Quarter":{"MoM":1, "YoY":4},
@@ -1720,17 +1788,15 @@ with TAB3:
             lbl = f"MA({w})"
 
         ser = pd.DataFrame({f"{x_col} ({lbl})": tsX, f"{y_col} ({lbl})": tsY}).dropna()
+        nK = int(len(ser))
         r_val = float(ser.iloc[:,0].corr(ser.iloc[:,1], method='pearson'))
-        st.markdown(f"**r = {r_val:.3f}**  ·  Đọc nhanh: |r| < 0.3 yếu • 0.3–0.5 vừa • ≥ 0.5 mạnh")
+        st.markdown(f"**r = {r_val:.3f}**  ·  n_kỳ={nK}")
 
-        # Rolling r
         roll_r = ser.iloc[:,0].rolling(roll_w).corr(ser.iloc[:,1])
         fig_r = px.line(roll_r.reset_index(), x="__PERIOD__", y=0,
                         labels={"__PERIOD__":"Kỳ", "0":"rolling r"})
         st.plotly_chart(fig_r, use_container_width=True)
-        st.caption("Rolling r ≥ 0.8 (≥3 cửa sổ) ⇒ đồng pha mạnh.")
 
-        # Lag scan (±6)
         best_lag, best_abs = 0, -1
         for L in range(-6, 7):
             v = ser.iloc[:,0].corr(ser.iloc[:,1].shift(L))
@@ -1741,98 +1807,6 @@ with TAB3:
         SS['last_corr'] = pd.DataFrame([[1.0, r_val],[r_val,1.0]],
                                        index=[f"{x_col} {lbl}", f"{y_col} {lbl}"],
                                        columns=[f"{x_col} {lbl}", f"{y_col} {lbl}"])
-
-    elif route == "NN":
-        # Numeric ↔ Numeric
-        x = pd.to_numeric(df[x_col], errors='coerce')
-        y = pd.to_numeric(df[y_col], errors='coerce')
-        m = x.notna() & y.notna()
-        x, y = x[m], y[m]
-        if len(x) < 3:
-            st.info("Không đủ dữ liệu.")
-            st.stop()
-
-        if robust:
-            r_val, p_val = stats.spearmanr(x, y)
-            r_name = "Spearman"
-        else:
-            r_val, p_val = stats.pearsonr(x, y)
-            r_name = "Pearson"
-        st.markdown(f"**{r_name} r = {r_val:.3f}** (p={p_val:.4g})")
-
-        # Chart: density heatmap (fast), optional overlay points
-        if fast_mode:
-            fig = px.density_heatmap(pd.DataFrame({x_col:x, y_col:y}),
-                                     x=x_col, y=y_col, nbinsx=60, nbinsy=60, histfunc="count")
-            if overlay_pts > 0:
-                samp = pd.DataFrame({x_col:x, y_col:y}).sample(min(overlay_pts, len(x)), random_state=42)
-                fig.add_trace(go.Scattergl(x=samp[x_col], y=samp[y_col], mode='markers',
-                                           marker=dict(size=3), name="sample"))
-        else:
-            fig = px.scatter(pd.DataFrame({x_col:x, y_col:y}),
-                             x=x_col, y=y_col, opacity=0.55, render_mode="webgl")
-        st.plotly_chart(fig, use_container_width=True)
-        st.success(f"💡 Kết luận: Tương quan {r_strength(abs(r_val))} ({'+' if r_val>=0 else '−'})")
-
-        SS['last_corr'] = pd.DataFrame([[1.0, r_val],[r_val,1.0]], index=[x_col,y_col], columns=[x_col,y_col])
-
-    elif route == "NC":
-        # Numeric ↔ Categorical
-        num_col = x_col if tX == 'numeric' else y_col
-        cat_col = y_col if tX == 'numeric' else x_col
-
-        s_num = pd.to_numeric(df[num_col], errors='coerce')
-        s_cat = tc_topn_cat(df[cat_col], n=topn_cat)
-
-        eta = tc_corr_ratio(s_cat, s_num)
-        p_val = tc_anova_p(s_cat, s_num)
-
-        st.markdown(f"**η = {eta:.3f}** (ANOVA p={p_val:.4g})")
-        # Aggregated bar (median ± IQR/2)
-        g = pd.DataFrame({cat_col:s_cat, num_col:s_num}).dropna() \
-                .groupby(cat_col)[num_col].agg(q1=lambda s: s.quantile(0.25),
-                                               med='median', q3=lambda s: s.quantile(0.75)) \
-                .reset_index().sort_values('med', ascending=False)
-        g['err'] = (g['q3'] - g['q1']) / 2.0
-        fig = go.Figure(go.Bar(x=g[cat_col], y=g['med'],
-                               error_y=dict(array=g['err'], visible=True)))
-        fig.update_layout(yaxis_title=f"{num_col} (median ± IQR/2)")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Kết luận ngắn với top nhóm
-        top_grp = str(g.iloc[0][cat_col]) if len(g) else "—"
-        st.success(f"💡 Kết luận: Ảnh hưởng {eta_strength(eta)}; nhóm cao nhất: **{top_grp}**")
-
-        SS['last_corr'] = None
-
-    elif route == "CC":
-        # Categorical ↔ Categorical
-        sX = tc_topn_cat(df[x_col], n=topn_cat).astype(str)
-        sY = tc_topn_cat(df[y_col], n=topn_cat).astype(str)
-        V, p, tab = tc_cramers_v(sX, sY)
-        st.markdown(f"**Cramér’s V = {V:.3f}** (χ² p={p:.4g})")
-
-        perc = (tab / tab.values.sum()).astype(float)
-        fig = px.imshow(perc, aspect='auto', labels=dict(x=y_col, y=x_col, color='Share'))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Gợi ý nhanh: top 3 cặp lệch nhiều nhất (standardized residuals đơn giản)
-        try:
-            expected = np.outer(perc.sum(axis=1), perc.sum(axis=0)) * perc.values.sum()
-            resid = (tab.values - expected) / np.sqrt(expected + 1e-12)
-            idxs = np.dstack(np.unravel_index(np.argsort(-np.abs(resid), axis=None), resid.shape))[0][:3]
-            bullets = []
-            for (i,j) in idxs:
-                bullets.append(f"- **{tab.index[i]} × {tab.columns[j]}** (resid≈{resid[i,j]:.2f})")
-            st.success("💡 Cặp nổi bật:\n" + "\n".join(bullets))
-        except Exception:
-            pass
-
-        st.info(f"💡 Kết luận: Liên hệ {V_strength(V)}.")
-        SS['last_corr'] = None
-
-    else:
-        st.info("Hỗ trợ: Numeric↔Numeric, Numeric↔Categorical, Categorical↔Categorical; hoặc Trend (time series).")
 
 # ------------------------------- TAB 3: Benford -------------------------------
 with TAB4:
