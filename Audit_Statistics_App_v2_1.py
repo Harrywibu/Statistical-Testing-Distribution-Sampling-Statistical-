@@ -1512,273 +1512,78 @@ with TAB2:
                     st.caption('Rule insights (auto • categorical): none')
                 
 
-# ---- TAB 3: Test Correlation (replaces original Correlation & Trend) ----
 with TAB3:
-    st.subheader("🧪 3) Test Correlation — quick & practical")
-
-    if SS.get('df') is None or len(SS['df']) == 0:
-        st.info("Hãy Load full data trước.")
-        st.stop()
-
-    df = SS['df']
-    all_cols = list(df.columns)
-
-    # --- Helpers (prefix: tc_) ---
-    def tc_is_num(c):  return pd.api.types.is_numeric_dtype(df[c])
-    def tc_is_dt(c):   return (pd.api.types.is_datetime64_any_dtype(df[c]) or bool(re.search(r'(date|time)', str(c), re.I)))
-    def tc_is_cat(c):  return not tc_is_num(c) and not tc_is_dt(c)
-
-    def tc_topn_cat(s: pd.Series, n=10):
-        vc = s.astype(str).fillna("NaN").value_counts()
-        top = vc.index[:n].tolist()
-        return s.astype(str).where(s.astype(str).isin(top), "Khác")
-
-    def tc_correlation_ratio(categories, measurements):
-        """
-        η (correlation ratio): 0..1
-        categories: categorical (string-like)
-        measurements: numeric (float)
-        """
-        try:
-            cats = pd.Categorical(categories)
-            y = pd.to_numeric(measurements, errors='coerce')
-            mask = cats.notna() & pd.notna(y)
-            cats = cats[mask]; y = y[mask]
-            if len(y) < 3 or cats.nunique() < 2:
-                return np.nan
-            groups = [y[cats == k] for k in cats.categories]
-            n_tot = float(len(y))
-            y_mean = float(y.mean())
-            ss_between = sum([len(g) * (float(g.mean()) - y_mean)**2 for g in groups if len(g) > 0])
-            ss_total = float(((y - y_mean)**2).sum())
-            if ss_total == 0: return 0.0
-            eta2 = ss_between / ss_total
-            return float(np.sqrt(eta2)) if eta2 >= 0 else 0.0
-        except Exception:
-            return np.nan
-
-    def tc_anova_p(categories, measurements):
-        try:
-            cats = pd.Categorical(categories)
-            y = pd.to_numeric(measurements, errors='coerce')
-            mask = cats.notna() & pd.notna(y)
-            cats = cats[mask]; y = y[mask]
-            groups = [y[cats == k] for k in cats.categories if (y[cats == k].shape[0] > 1)]
-            if len(groups) < 2: return np.nan
-            _, p = stats.f_oneway(*groups)
-            return float(p)
-        except Exception:
-            return np.nan
-
-    def tc_cramers_v(x, y):
-        """
-        Cramér’s V from chi2 on contingency table.
-        """
-        try:
-            tab = pd.crosstab(x, y, dropna=False)
-            if tab.values.sum() == 0 or tab.shape[0] < 2 or tab.shape[1] < 2:
-                return np.nan, np.nan, tab
-            chi2, p, _, _ = stats.chi2_contingency(tab)
-            n = tab.values.sum()
-            phi2 = chi2 / n
-            r, c = tab.shape
-            # Bias-corrected (Bergsma, 2013)
-            phi2corr = max(0, phi2 - ((c-1)*(r-1))/(n-1))
-            rcorr = c - ((c-1)**2)/(n-1)
-            ccorr = r - ((r-1)**2)/(n-1)
-            V = np.sqrt(phi2corr / max(1e-12, min(rcorr-1, ccorr-1)))
-            return float(V), float(p), tab
-        except Exception:
-            return np.nan, np.nan, pd.DataFrame()
-
-    def tc_polyfit(x, y):
-        x = pd.to_numeric(x, errors='coerce'); y = pd.to_numeric(y, errors='coerce')
-        mask = x.notna() & y.notna()
-        if mask.sum() < 2: return None
-        slope, intercept = np.polyfit(x[mask], y[mask], 1)
-        return slope, intercept
-
-    def tc_make_period(s: pd.Series, period_lbl: str):
-        """
-        Convert datetime series into period start (MS/QS/YS).
-        """
-        freq = {"Month":"MS","Quarter":"QS","Year":"YS"}.get(period_lbl, "MS")
-        return pd.to_datetime(s).dt.to_period({"MS":"M","QS":"Q","YS":"Y"}[freq]).dt.start_time
-
-    # --- Column typing lists (reuse if available) ---
-    DT_COLS  = [c for c in all_cols if tc_is_dt(c)]
-    NUM_COLS = [c for c in all_cols if tc_is_num(c)]
-    CAT_COLS = [c for c in all_cols if tc_is_cat(c)]
-
-    # --- UI: selectors ---
-    cfg = st.container(border=True)
-    with cfg:
-        c1, c2, c3, c4 = st.columns([1.2,1.2,1.0,1.0])
-        x_col = c1.selectbox("Chọn biến X", all_cols, index=(all_cols.index(NUM_COLS[0]) if NUM_COLS else 0), key="tc_x")
-        y_col = c2.selectbox("Chọn biến Y", all_cols, index=(all_cols.index(NUM_COLS[1]) if len(NUM_COLS) > 1 else 0), key="tc_y")
-        robust = c3.toggle("Robust/outlier → Spearman", value=False, key="tc_robust")
-        topn_cat = int(c4.number_input("Top N category", min_value=3, max_value=50, value=10, step=1, key="tc_topn"))
-
-        # Trend mode (optional)
-        trend = st.toggle("Trend (time series)", value=False, key="tc_trend")
-        if trend:
-            c5, c6, c7, c8 = st.columns([1.0,1.0,1.0,1.0])
-            dt_col = c5.selectbox("Datetime column", DT_COLS if DT_COLS else ["(none)"], index=0 if DT_COLS else 0, key="tc_dtcol")
-            period_lbl = c6.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period")
-            trans = c7.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans")
-            roll_w = c8.slider("Rolling r (W)", 3, 24, 6, key="tc_roll")
-
-    # --- Detect pair type ---
-    def tc_type(c):
-        return 'datetime' if tc_is_dt(c) else ('numeric' if tc_is_num(c) else 'categorical')
-
-    tX, tY = tc_type(x_col), tc_type(y_col)
-
-    # --- ROUTING ---
-    if trend:
-        # Require numeric-numeric + datetime column
-        if (tX != 'numeric') or (tY != 'numeric'):
-            st.warning("Trend mode yêu cầu X & Y là numeric.")
-            st.stop()
-        if not DT_COLS or (dt_col is None) or (dt_col not in df.columns):
-            st.warning("Chưa chọn cột thời gian hợp lệ.")
-            st.stop()
-
-        # Build time series at selected period
-        tmp = df[[dt_col, x_col, y_col]].copy()
-        tmp[dt_col] = pd.to_datetime(tmp[dt_col], errors='coerce')
-        tmp = tmp.dropna(subset=[dt_col])
-        tmp['__PERIOD__'] = tc_make_period(tmp[dt_col], period_lbl)
-
-        agg = tmp.groupby('__PERIOD__')[[x_col, y_col]].sum().sort_index()
-        if agg.shape[0] < max(3, roll_w):
-            st.info("Chưa đủ số kỳ để tính rolling.")
-            st.stop()
-
-        # Transform
-        if trans in ("%Δ MoM", "%Δ YoY"):
-            periods_map = {"Month": {"MoM":1, "YoY":12}, "Quarter":{"MoM":1, "YoY":4}, "Year":{"MoM":1, "YoY":1}}
-            k = periods_map[period_lbl]["YoY" if "YoY" in trans else "MoM"]
-            tsX = agg[x_col].pct_change(k)
-            tsY = agg[y_col].pct_change(k)
-            lbl = f"{trans}"
+    st.subheader('📈 Trend & 🔗 Correlation')
+    base_df = DF_FULL
+    trendL, trendR = st.columns(2)
+    with trendL:
+        num_for_trend = st.selectbox('Numeric (trend)', NUM_COLS or VIEW_COLS, key='t2_num')
+        dt_for_trend = st.selectbox('Datetime column', DT_COLS or VIEW_COLS, key='t2_dt')
+        freq = st.selectbox('Aggregate frequency', ['D','W','M','Q'], index=2)
+        agg_opt = st.radio('Aggregate by', ['sum','mean','count'], index=0, horizontal=True)
+        win = st.slider('Rolling window (periods)', 2, 24, 3)
+    @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
+    def ts_aggregate_cached(df: pd.DataFrame, dt_col: str, y_col: str, freq: str, agg: str, win: int) -> pd.DataFrame:
+        t = pd.to_datetime(df[dt_col], errors='coerce')
+        y = pd.to_numeric(df[y_col], errors='coerce')
+        sub = pd.DataFrame({'t':t, 'y':y}).dropna().sort_values('t')
+        if sub.empty: return pd.DataFrame()
+        ts = sub.set_index('t')['y']
+        if agg=='count': ser = ts.resample(freq).count()
+        elif agg=='mean': ser = ts.resample(freq).mean()
+        else: ser = ts.resample(freq).sum()
+        out = ser.to_frame('y'); out['roll']=out['y'].rolling(win, min_periods=1).mean()
+        try: return out.reset_index(names='t')
+        except TypeError: return out.reset_index().rename(columns={'index':'t'})
+    with trendR:
+        if (dt_for_trend in DF_VIEW.columns) and (num_for_trend in DF_VIEW.columns):
+            tsdf = ts_aggregate_cached(DF_VIEW, dt_for_trend, num_for_trend, freq, agg_opt, win)
+            if tsdf.empty: st.warning('Không đủ dữ liệu sau khi chuẩn hoá datetime/numeric.')
+            else:
+                if HAS_PLOTLY:
+                    figt = go.Figure()
+                    figt.add_trace(go.Scatter(x=tsdf['t'], y=tsdf['y'], name=f'{agg_opt.capitalize()}'))
+                    figt.add_trace(go.Scatter(x=tsdf['t'], y=tsdf['roll'], name=f'Rolling{win}', line=dict(dash='dash')))
+                    figt.update_layout(title=f'{num_for_trend} — Trend ({freq})', height=360)
+                    st_plotly(figt)
         else:
-            w = int(re.findall(r"\d+", trans)[0])
-            tsX = agg[x_col].rolling(w, min_periods=max(2, w//2)).mean()
-            tsY = agg[y_col].rolling(w, min_periods=max(2, w//2)).mean()
-            lbl = f"MA({w})"
+            st.info('Chọn 1 cột numeric và 1 cột datetime hợp lệ để xem Trend.')
 
-        ser = pd.DataFrame({f"{x_col} ({lbl})": tsX, f"{y_col} ({lbl})": tsY}).dropna()
-        if ser.shape[0] < max(3, roll_w):
-            st.info("Chưa đủ điểm sau biến đổi.")
-            st.stop()
-
-        # Pearson on transformed + Rolling r
-        r = float(ser.iloc[:,0].corr(ser.iloc[:,1], method='pearson'))
-        st.markdown(f"**r (Pearson) trên chuỗi đã biến đổi**: `{r:.3f}`  —  "
-                    f"*Đọc nhanh:* |r| < 0.3 yếu • 0.3–0.5 vừa • ≥ 0.5 mạnh.")
-
-        # Rolling correlation line
-        roll_r = ser.iloc[:,0].rolling(roll_w).corr(ser.iloc[:,1])
-        fig_r = px.line(roll_r.reset_index(), x="__PERIOD__", y=0, markers=False,
-                        labels={"__PERIOD__":"Kỳ","0":"rolling r"})
-        fig_r.update_traces(name=f"rolling r (W={roll_w})")
-        st_plotly(fig_r)
-        st.caption("**Rolling correlation** giúp quan sát đồng pha theo thời gian; ≥ 0.8 liên tiếp (≥3 cửa sổ) ⇒ đồng pha mạnh.")
-
-        # Simple lag scan (−6..+6)
-        lag_range = range(-6, 7)
-        best_lag, best_val = 0, -2
-        for L in lag_range:
-            sX = ser.iloc[:,0]
-            sY = ser.iloc[:,1].shift(L)
-            val = sX.corr(sY)
-            if pd.notna(val) and abs(val) > abs(best_val):
-                best_val, best_lag = float(val), int(L)
-        st.info(f"**Lag tốt nhất** trong [−6..+6]: `{best_lag}` (r = {best_val:.3f}). "
-                f"Lag > 0 nghĩa là **Y trễ X**; Lag < 0 nghĩa là **X trễ Y**.")
-
-        # Update Rule Engine context (small corr matrix)
-        SS['last_corr'] = pd.DataFrame(
-            [[1.0, r],[r,1.0]],
-            index=[f"{x_col} {lbl}", f"{y_col} {lbl}"],
-            columns=[f"{x_col} {lbl}", f"{y_col} {lbl}"]
-        )
-
+    st.markdown('### 🔗 Correlation heatmap')
+    if len(NUM_COLS) < 2:
+        st.info('Cần ≥2 cột numeric để tính tương quan.')
     else:
-        # Non-trend: pick 3 most-used cases
-        if tX == 'numeric' and tY == 'numeric':
-            # ----- Numeric ↔ Numeric -----
-            method = 'spearman' if robust else 'pearson'
-            x = pd.to_numeric(df[x_col], errors='coerce')
-            y = pd.to_numeric(df[y_col], errors='coerce')
-            mask = x.notna() & y.notna()
-            x = x[mask]; y = y[mask]
-            if len(x) < 3:
-                st.info("Không đủ dữ liệu hợp lệ.")
-                st.stop()
-
-            r, p = stats.spearmanr(x, y) if method=='spearman' else stats.pearsonr(x, y)
-            st.markdown(f"**{method.title()} r = {r:.3f}** (p = {p:.4g}) — *Đọc nhanh:* |r| < 0.3 yếu • 0.3–0.5 vừa • ≥ 0.5 mạnh.")
-
-            fig = px.scatter(pd.DataFrame({x_col:x, y_col:y}), x=x_col, y=y_col, opacity=0.65)
-            ls = tc_polyfit(x, y)
-            if ls is not None:
-                slope, intercept = ls
-                xs = np.linspace(x.min(), x.max(), 50)
-                ys = slope*xs + intercept
-                fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', name='Fit (OLS)'))
-            st_plotly(fig)
-
-            # Update small corr matrix for Rule Engine
-            SS['last_corr'] = pd.DataFrame([[1.0, r],[r,1.0]], index=[x_col,y_col], columns=[x_col,y_col])
-
-        elif (tX == 'numeric' and tY == 'categorical') or (tX == 'categorical' and tY == 'numeric'):
-            # ----- Numeric ↔ Categorical -----
-            num_col = x_col if tX == 'numeric' else y_col
-            cat_col = y_col if tX == 'numeric' else x_col
-
-            s_num = pd.to_numeric(df[num_col], errors='coerce')
-            s_cat = df[cat_col].astype(str)
-            s_cat = tc_topn_cat(s_cat, n=topn_cat)
-
-            eta = tc_correlation_ratio(s_cat, s_num)
-            p_anova = tc_anova_p(s_cat, s_num)
-            st.markdown(f"**η (correlation ratio) = {eta:.3f}**  (ANOVA p = {p_anova:.4g}) — "
-                        f"*Đọc nhanh:* η ≈ 0.0–0.25 (yếu đến vừa), ≥ 0.38 (mạnh).")
-
-            fig = px.violin(pd.DataFrame({cat_col:s_cat, num_col:s_num}), x=cat_col, y=num_col, box=True, points='outliers')
-            st_plotly(fig)
-            st.caption("Violin/box theo nhóm; xem nhóm lệch nhiều để hành động (ưu tiên, loại bỏ, tách chính sách).")
-
-            SS['last_corr'] = None  # không áp cho ma trận r
-
-        elif tX == 'categorical' and tY == 'categorical':
-            # ----- Categorical ↔ Categorical -----
-            sX = tc_topn_cat(df[x_col].astype(str), n=topn_cat)
-            sY = tc_topn_cat(df[y_col].astype(str), n=topn_cat)
-            V, p, tab = tc_cramers_v(sX, sY)
-            st.markdown(f"**Cramér’s V = {V:.3f}** (χ² p = {p:.4g}) — *Đọc nhanh:* V < 0.3 yếu • 0.3–0.5 vừa • ≥ 0.5 mạnh.")
-
-            # Heatmap % theo tổng để dễ đọc
-            perc = (tab / tab.values.sum()).astype(float)
-            fig = px.imshow(perc, text_auto=True, aspect='auto',
-                            labels=dict(x=y_col, y=x_col, color='Share'),
-                            x=list(perc.columns), y=list(perc.index))
-            st_plotly(fig)
-            st.caption("Association heatmap — ô đậm = cặp xuất hiện vượt kỳ vọng tương đối.")
-
-            SS['last_corr'] = None  # không áp cho ma trận r
-
+        with st.expander('🧪 Tuỳ chọn cột (mặc định: tất cả numeric)'):
+            default_cols = NUM_COLS[:30]
+            pick_cols = st.multiselect('Chọn cột để tính tương quan', options=NUM_COLS, default=default_cols, key='t2_corr_cols')
+        if len(pick_cols) < 2:
+            st.warning('Chọn ít nhất 2 cột để tính tương quan.')
         else:
-            st.info("Cặp biến chưa được hỗ trợ. Hãy chọn Numeric/Numeric, Numeric/Categorical hoặc Categorical/Categorical, hoặc bật Trend mode.")
-
-    st.divider()
-    st.markdown("**Cách đọc nhanh (bỏ túi)**")
-    st.caption("- Pearson/Spearman: |r| < 0.3 yếu • 0.3–0.5 vừa • ≥ 0.5 mạnh.  "
-               "- Correlation ratio (η): ~0.0–0.25 yếu/vừa • ≥ 0.38 mạnh.  "
-               "- Cramér’s V: <0.3 yếu • 0.3–0.5 vừa • ≥0.5 mạnh.  "
-               "- Trend: rolling |r| ≥ 0.8 liên tiếp (≥3 cửa sổ) ⇒ đồng pha mạnh.")
+            method_label = 'Spearman (recommended)' if SS.get('spearman_recommended') else 'Spearman'
+            method = st.radio('Correlation method', ['Pearson', method_label], index=(1 if SS.get('spearman_recommended') else 0), horizontal=True, key='t2_corr_m')
+            mth = 'pearson' if method.startswith('Pearson') else 'spearman'
+            corr = corr_cached(DF_VIEW, pick_cols, mth)
+            SS['last_corr']=corr
+            if corr.empty:
+                st.warning('Không thể tính ma trận tương quan (có thể do cột hằng hoặc NA).')
+            else:
+                if HAS_PLOTLY:
+                    figH = px.imshow(corr, color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title=f'Correlation heatmap ({mth.capitalize()})', aspect='auto')
+                    figH.update_xaxes(tickangle=45)
+                    st_plotly(figH)
+                with st.expander('📌 Top tương quan theo |r| (bỏ đường chéo)'):
+                    tri = corr.where(~np.eye(len(corr), dtype=bool))
+                    pairs=[]; cols=list(tri.columns)
+                    for i in range(len(cols)):
+                        for j in range(i+1, len(cols)):
+                            r = tri.iloc[i,j]
+                            if pd.notna(r): pairs.append((cols[i], cols[j], float(r), abs(float(r))))
+                    pairs = sorted(pairs, key=lambda x: x[3], reverse=True)[:30]
+                    if pairs:
+                        df_pairs = pd.DataFrame(pairs, columns=['var1','var2','r','|r|'])
+                        st_df(df_pairs, use_container_width=True, height=260)
+                    else:
+                        st.write('Không có cặp đáng kể.')
 
 # ------------------------------- TAB 3: Benford -------------------------------
 with TAB4:
