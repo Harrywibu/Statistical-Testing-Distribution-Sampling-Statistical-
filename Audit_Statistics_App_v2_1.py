@@ -745,7 +745,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) Tests', '6) Regression', '7) Flags & Risk/Export'])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) ANOVA & Nonparametric', '6) Regression', '7) Flags & Risk/Export'])
 # ---- TAB 0: Data Quality (FULL) ----
 with TAB0:
     st.subheader('🧪 Data Quality')
@@ -1958,8 +1958,7 @@ with TAB4:
                     
                     st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
-
-# ------------------------------ TAB ? : Statistics Test (ANOVA & Nonparametric) ------------------------------
+# ------------------------------ TAB ? : Statistics Test (ANOVA & Nonparametric, balanced UI) ------------------------------
 with TAB5:
     import numpy as np, pandas as pd, re
     import plotly.express as px
@@ -1998,63 +1997,89 @@ with TAB5:
     def group_summary(y, g):
         """Return summary per group: n, mean, std, median, se, ci95(≈1.96*se)."""
         d = pd.DataFrame({"y": y, "g": g}).dropna()
-        if d.empty: return pd.DataFrame(columns=["n","mean","std","median","se","ci95"])
+        if d.empty: 
+            return pd.DataFrame(columns=["group","n","mean","std","median","se","ci95"])
         agg = d.groupby("g")["y"].agg(n="count", mean="mean", std="std", median="median")
         agg["se"] = agg["std"] / np.sqrt(agg["n"].clip(lower=1))
         agg["ci95"] = 1.96 * agg["se"]
-        return agg.reset_index().rename(columns={"g":"group"})
+        out = agg.reset_index().rename(columns={"g":"group"})
+        # fillna to avoid plotly errors
+        return out.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     def holm_bonferroni(pvals, labels):
-        """Return DataFrame of Holm-adjusted p-values."""
-        m = len(pvals)
-        order = np.argsort(pvals)
+        """Holm-Bonferroni adjust (two-sided)."""
+        p = np.asarray(pvals, dtype=float)
+        m = len(p)
+        order = np.argsort(p)  # ascending
         adj = np.empty(m, dtype=float)
-        prev = 0.0
-        for rank, idx in enumerate(order):
-            adj[idx] = max(prev, (m - rank) * pvals[idx])
-            prev = adj[idx]
-        adj = np.clip(adj, 0, 1)
-        return pd.DataFrame({"pair": labels, "p_raw": pvals, "p_adj_holm": adj}).sort_values("p_adj_holm")
+        running_max = 0.0
+        for r, idx in enumerate(order):
+            adj_val = (m - r) * p[idx]
+            running_max = max(running_max, adj_val)
+            adj[idx] = min(1.0, running_max)
+        return pd.DataFrame({"pair": labels, "p_raw": p, "p_adj_holm": adj}).sort_values("p_adj_holm")
 
     def one_way_anova_fast(y, g):
-        """One-way ANOVA via group sums (nhanh cho dữ liệu lớn). Return F, p, df1, df2, eta2, omega2, leve_p."""
+        """
+        One-way ANOVA via grouped sums (nhanh/ổn định).
+        Return: F, p, df1, df2, eta2, omega2, levene_p
+        """
         d = pd.DataFrame({"y": pd.to_numeric(y, errors="coerce"), "g": g}).dropna()
         if d["g"].nunique() < 2 or len(d) < 3:
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-        # Levene (kiểm phương sai bằng nhau)
-        # (center='median' ổn định khi lệch)
+            return *(np.nan,)*7
+        # Levene (center='median' bền vững)
         try:
-            leve_p = stats.levene(*[grp["y"].values for _, grp in d.groupby("g")], center="median").pvalue
+            levene_p = stats.levene(*[grp["y"].values for _, grp in d.groupby("g")], center="median").pvalue
         except Exception:
-            leve_p = np.nan
+            levene_p = np.nan
 
-        # ANOVA từ tổng hợp
         grp = d.groupby("g")["y"].agg(n="count", mean="mean")
-        # cần sumsq cho SS_within
         ssq = d.assign(y2=d["y"]**2).groupby("g")["y2"].sum()
-        grand_mean = d["y"].mean()
-        # SS_between
+        grand_mean = float(d["y"].mean())
         ssb = float((grp["n"] * (grp["mean"] - grand_mean) ** 2).sum())
-        # SS_within
         ssw = float((ssq - grp["n"] * (grp["mean"] ** 2)).sum())
-        # tổng
         sst = float(((d["y"] - grand_mean) ** 2).sum())
         k = int(grp.shape[0]); n = int(d.shape[0])
-        df1 = k - 1
-        df2 = n - k if n > k else 1
-        msb = ssb / max(df1, 1)
-        msw = ssw / max(df2, 1)
-        F = msb / msw if msw > 0 else np.inf
+        df1 = k - 1; df2 = max(n - k, 1)
+        msb = ssb / max(df1, 1); msw = ssw / max(df2, 1)
+        F = (msb / msw) if msw > 0 else np.inf
         p = 1 - stats.f.cdf(F, df1, df2) if np.isfinite(F) else 0.0
-        eta2 = ssb / sst if sst > 0 else np.nan
-        omega2 = (ssb - df1 * msw) / (sst + msw) if (sst + msw) > 0 else np.nan
-        return float(F), float(p), float(df1), float(df2), float(eta2), float(omega2), float(leve_p)
+        eta2 = (ssb / sst) if sst > 0 else np.nan
+        omega2 = ((ssb - df1 * msw) / (sst + msw)) if (sst + msw) > 0 else np.nan
+        return float(F), float(p), float(df1), float(df2), float(eta2), float(omega2), float(levene_p)
 
     def kruskal_eps2(H, k, n):
-        """Epsilon-squared effect size for Kruskal–Wallis."""
+        """Epsilon-squared for Kruskal–Wallis."""
         return float((H - (k - 1)) / (n - k)) if (n - k) > 0 else np.nan
 
-    # ===== UI containers =====
+    # ===== UI helpers (balanced & hints) =====
+    def _dtype_name(col):
+        if col is None: return "—"
+        try:
+            if pd.api.types.is_datetime64_any_dtype(DF[col]): return "datetime"
+            if pd.api.types.is_numeric_dtype(DF[col]): return "numeric"
+            return "categorical"
+        except Exception:
+            return "unknown"
+
+    def _type_hint(label, col, expect):
+        actual = _dtype_name(col)
+        ok = (actual == expect)
+        icon = "✅" if ok else "⚠️"
+        st.caption(f"{icon} {label}: `{col}` · {actual} (yêu cầu: {expect})")
+
+    def _cheatsheet_note():
+        with st.container(border=True):
+            st.markdown(
+                "### 📝 Gợi ý chọn test nhanh\n"
+                "- **ANOVA (Parametric)**: Y **numeric** + nhóm **categorical** (≥2 nhóm); dữ liệu gần chuẩn, phương sai gần bằng.\n"
+                "- **Nonparametric**:\n"
+                "  - **Independent** (between): 2 nhóm → *Mann–Whitney*; ≥3 nhóm → *Kruskal–Wallis*.\n"
+                "  - **Repeated** (within, cùng đối tượng): 2 điều kiện → *Wilcoxon*; ≥3 → *Friedman*.\n"
+                "- **Big data**: dùng **Max rows (fit)**, **Fast**, **Top-N group** để tăng tốc."
+            )
+
+    # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
 
     # ====================== ANOVA (Parametric) ======================
@@ -2062,96 +2087,101 @@ with TAB5:
         if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
             st.info("Cần tối thiểu 1 cột numeric (Y) và 1 cột categorical (factor).")
         else:
-            c1, c2, c3, c4, c5 = st.columns([1.2, 1.4, 0.9, 0.9, 0.9])
-            y_col = c1.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="anova_y")
-            fac_col = c2.selectbox("🏷️ Factor (categorical)", CAT_COLS, key="anova_g")
-            topN = int(c3.number_input("Top N groups", 2, 50, 10, step=1, key="anova_topn"))
-            max_fit = int(c4.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="anova_max"))
-            fast = c5.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="anova_fast")
-            run = st.button("▶️ Run ANOVA", use_container_width=True, key="anova_run")
+            # ---- Balanced header (L: chọn dữ liệu, R: note) ----
+            box_top = st.container(border=True)
+            with box_top:
+                L, R = st.columns(2)
+                with L:
+                    st.markdown("### Thiết kế ANOVA")
+                    y_col = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="anova_y")
+                    fac_col = st.selectbox("🏷️ Factor (categorical)", CAT_COLS, key="anova_g")
+                    _type_hint("Dependent", y_col, "numeric")
+                    _type_hint("Factor", fac_col, "categorical")
+                with R:
+                    _cheatsheet_note()
 
-            with st.expander("⚙️ Post-hoc & tuỳ chọn", expanded=False):
-                posthoc = st.checkbox("Pairwise (Holm adjust)", value=True, key="anova_posthoc")
-                show_ci = st.checkbox("Hiện 95% CI", value=True, key="anova_ci")
-                chart_sample = st.number_input("Chart sample overlay", 0, 200_000, 10_000, step=1_000, key="anova_samp")
+            # ---- Controls (balanced) ----
+            box_ctl = st.container(border=True)
+            with box_ctl:
+                L, R = st.columns(2)
+                with L:
+                    topN = int(st.number_input("Top N groups", 2, 50, 10, step=1, key="anova_topn"))
+                    show_ci = st.checkbox("Hiện 95% CI", value=True, key="anova_ci")
+                    posthoc = st.checkbox("Pairwise (Holm adjust)", value=True, key="anova_posthoc")
+                with R:
+                    max_fit = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="anova_max"))
+                    fast = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="anova_fast")
+                    chart_sample = st.number_input("Chart sample overlay", 0, 200_000, 10_000, step=1_000, key="anova_samp")
+                    run = st.button("▶️ Run ANOVA", use_container_width=True, key="anova_run")
 
+            # ---- Compute & report ----
             if run:
                 sub = DF[[y_col, fac_col]].copy()
-                # sample for speed
                 if len(sub) > max_fit:
                     sub = sub.sample(n=max_fit, random_state=42)
                 sub[fac_col] = topn_cat(sub[fac_col], n=topN)
-                # cast
                 y = pd.to_numeric(sub[y_col], errors="coerce")
                 g = sub[fac_col].astype(str)
                 ok = (~y.isna()) & (~g.isna())
                 y, g = y[ok], g[ok]
 
-                # --- Summary table
                 summ = group_summary(y, g).sort_values("mean", ascending=False)
-                n_groups = summ.shape[0]
                 st.dataframe(summ, use_container_width=True, hide_index=True)
-
-                if n_groups < 2 or len(y) < 3:
+                if summ.shape[0] < 2 or len(y) < 3:
                     st.warning("Không đủ nhóm/hàng để chạy ANOVA.")
                     st.stop()
 
-                # --- ANOVA (one-way)
-                F, p, df1, df2, eta2, omega2, leve_p = one_way_anova_fast(y, g)
+                F, p, df1, df2, eta2, omega2, lev_p = one_way_anova_fast(y, g)
 
-                # Cards
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("F", f"{F:.3f}")
                 m2.metric("p-value", f"{p:.4g}")
                 m3.metric("η²", f"{eta2:.3f}" if not np.isnan(eta2) else "—")
                 m4.metric("ω²", f"{omega2:.3f}" if not np.isnan(omega2) else "—")
-                st.caption(f"Levene (phương sai bằng nhau) p = {leve_p:.4g}")
+                st.caption(f"Levene (phương sai bằng nhau) p = {lev_p:.4g}")
 
-                # --- Chart (big-data friendly)
-                if show_ci:
-                    fig = go.Figure(go.Bar(
-                        x=summ["group"], y=summ["mean"],
-                        error_y=dict(type="data", array=summ["ci95"], visible=True)
-                    ))
-                    fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
+                # Chart
+                if fast or not show_ci:
+                    fig = px.bar(summ, x="group", y="mean",
+                                 labels={"group": fac_col, "mean": f"Mean {y_col}"})
                 else:
-                    fig = px.bar(summ, x="group", y="mean", labels={"group": fac_col, "mean": f"Mean {y_col}"})
+                    fig = go.Figure(go.Bar(x=summ["group"], y=summ["mean"],
+                                           error_y=dict(type="data", array=summ["ci95"], visible=True)))
+                    fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # --- Post-hoc (pairwise t-test Welch + Holm)
-                if posthoc and n_groups >= 2:
-                    pairs = []
-                    pvals = []
-                    labs = []
-                    for i, gi in enumerate(summ["group"]):
+                # Post-hoc (Welch t-test + Holm)
+                if posthoc and summ.shape[0] >= 2:
+                    groups = summ["group"].tolist()
+                    pvals, labs = [], []
+                    for i in range(len(groups)):
+                        gi = groups[i]
                         xi = y[g == gi].values
-                        for j in range(i + 1, n_groups):
-                            gj = summ["group"].iloc[j]
+                        for j in range(i + 1, len(groups)):
+                            gj = groups[j]
                             xj = y[g == gj].values
                             if len(xi) >= 2 and len(xj) >= 2:
                                 tt = stats.ttest_ind(xi, xj, equal_var=False)
-                                pvals.append(tt.pvalue)
+                                pvals.append(float(tt.pvalue))
                                 labs.append(f"{gi} vs {gj}")
-                                pairs.append((gi, gj, float(xi.mean()), float(xj.mean())))
-                    if len(pvals):
+                    if pvals:
                         adj = holm_bonferroni(np.array(pvals), np.array(labs))
-                        # thêm chênh lệch mean
+                        # add mean diff
                         diffs = []
-                        for pair in adj["pair"].tolist():
-                            gi, gj = pair.split(" vs ")
+                        for pair in adj["pair"]:
+                            gi, gj = str(pair).split(" vs ")
                             mi = summ.loc[summ["group"] == gi, "mean"].values[0]
                             mj = summ.loc[summ["group"] == gj, "mean"].values[0]
                             diffs.append(mi - mj)
                         adj["mean_diff"] = diffs
-                        st.dataframe(adj.head(30), use_container_width=True, hide_index=True)
-                        st.caption("Pairwise Welch t-test (Holm-adjusted). Xem `mean_diff` để biết nhóm nào cao/thấp hơn.")
+                        st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
+                        st.caption("Pairwise Welch t-test (Holm-adjusted). Xem `mean_diff` để biết nhóm cao/thấp hơn.")
 
-                # --- Kết luận ngắn
                 strength = ("yếu" if (np.isnan(eta2) or eta2 < 0.06) else ("vừa" if eta2 < 0.14 else "mạnh"))
-                best = summ.iloc[0]["group"]
+                best = str(summ.iloc[0]["group"])
                 st.success(f"**Kết luận:** Khác biệt giữa các nhóm {strength} (η²={eta2:.2f}). Nhóm cao nhất: **{best}**.")
 
-        # (Optional) Repeated measures ANOVA: dùng statsmodels nếu có
+        # ---- Optional: Repeated Measures ANOVA via statsmodels (nếu có) ----
         with st.expander("🔁 ANOVA lặp (Repeated Measures, tùy chọn)", expanded=False):
             try:
                 from statsmodels.stats.anova import AnovaRM
@@ -2168,7 +2198,6 @@ with TAB5:
                         sub = DF[[y_rm, id_rm, within_rm]].dropna()
                         if len(sub) > max_fit_rm:
                             sub = sub.sample(max_fit_rm, random_state=42)
-                        # chỉ giữ các subject có đủ tất cả levels
                         counts = sub.groupby([id_rm, within_rm]).size().unstack(within_rm).dropna()
                         keep_ids = counts.index
                         sub = sub[sub[id_rm].isin(keep_ids)]
@@ -2184,19 +2213,35 @@ with TAB5:
 
     # ====================== NONPARAMETRIC ======================
     with tab_np:
-        mode = st.segmented_control("Thiết kế", ["Independent (between)", "Repeated (within)"], key="np_mode")
+        mode = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
 
+        # ---------- Independent (between) ----------
         if mode == "Independent (between)":
             if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
                 st.info("Cần 1 numeric (Y) và 1 categorical (group).")
             else:
-                c1, c2, c3, c4, c5 = st.columns([1.2, 1.4, 0.9, 0.9, 0.9])
-                y_col = c1.selectbox("🎯 Y (numeric)", NUM_COLS, key="np_y")
-                g_col = c2.selectbox("🏷️ Group", CAT_COLS, key="np_g")
-                topN = int(c3.number_input("Top N groups", 2, 50, 10, step=1, key="np_topn"))
-                max_fit = int(c4.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="np_max"))
-                fast = c5.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="np_fast")
-                run = st.button("▶️ Run", use_container_width=True, key="np_run")
+                # Balanced header
+                box_top_np = st.container(border=True)
+                with box_top_np:
+                    L, R = st.columns(2)
+                    with L:
+                        st.markdown("### Thiết kế Nonparametric — Independent")
+                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="np_y")
+                        g_col = st.selectbox("🏷️ Group (categorical)", CAT_COLS, key="np_g")
+                        _type_hint("Y", y_col, "numeric")
+                        _type_hint("Group", g_col, "categorical")
+                    with R:
+                        _cheatsheet_note()
+
+                box_ctl_np = st.container(border=True)
+                with box_ctl_np:
+                    L, R = st.columns(2)
+                    with L:
+                        topN = int(st.number_input("Top N groups", 2, 50, 10, step=1, key="np_topn"))
+                        fast = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="np_fast")
+                    with R:
+                        max_fit = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="np_max"))
+                        run = st.button("▶️ Run", use_container_width=True, key="np_run")
 
                 if run:
                     sub = DF[[y_col, g_col]].copy()
@@ -2216,33 +2261,35 @@ with TAB5:
                     n = int(sum(len(arr) for arr in groups))
 
                     if k == 2:
-                        # Mann–Whitney U (two-sided)
+                        # Mann–Whitney U
                         ures = stats.mannwhitneyu(groups[0], groups[1], alternative="two-sided")
                         p = float(ures.pvalue); U = float(ures.statistic)
-                        # z-score từ p hai phía
-                        z = float(stats.norm.isf(p / 2.0))
-                        r_eff = z / np.sqrt(n) if n > 0 else np.nan
+                        # z from p (two-sided)
+                        z = float(stats.norm.isf(p / 2.0)) if p > 0 else np.inf
+                        r_eff = z / np.sqrt(n) if n > 0 and np.isfinite(z) else np.nan
                         st.markdown(f"**Mann–Whitney U**: U = {U:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f}")
-                        # Box/Violin nhanh
-                        fig = px.violin(pd.DataFrame({g_col: g, y_col: y}), x=g_col, y=y_col, box=True, points=False)
+
+                        fig = px.violin(pd.DataFrame({g_col: g, y_col: y}), x=g_col, y=y_col,
+                                        box=True, points=False)
                         st.plotly_chart(fig, use_container_width=True)
-                        hi = summ.iloc[0]["group"]
-                        st.success(f"**Kết luận:** Khác biệt {('mạnh' if r_eff>=0.5 else 'vừa' if r_eff>=0.3 else 'yếu')} (r≈{r_eff:.2f}). Nhóm median cao nhất: **{hi}**.")
+
+                        hi = str(summ.iloc[0]['group']) if len(summ) else "—"
+                        level = ("mạnh" if (not np.isnan(r_eff) and r_eff >= 0.5)
+                                 else "vừa" if (not np.isnan(r_eff) and r_eff >= 0.3) else "yếu")
+                        st.success(f"**Kết luận:** Khác biệt {level} (r≈{r_eff:.2f}). Nhóm median cao nhất: **{hi}**.")
                     else:
                         # Kruskal–Wallis
                         H, p = stats.kruskal(*groups)
                         eps2 = kruskal_eps2(H, k, n)
                         st.markdown(f"**Kruskal–Wallis**: H = {H:.3f}, p = {p:.4g}, ε² = {eps2:.3f}")
 
-                        fig = go.Figure(go.Bar(
-                            x=summ["group"], y=summ["median"],
-                            error_y=dict(array=summ["ci95"], visible=True)
-                        ))
+                        fig = go.Figure(go.Bar(x=summ["group"], y=summ["median"],
+                                               error_y=dict(array=summ["ci95"], visible=True)))
                         fig.update_layout(yaxis_title=f"{y_col} (median ± 95% CI≈)")
                         st.plotly_chart(fig, use_container_width=True)
 
                         # Post-hoc: pairwise Mann–Whitney + Holm
-                        pairs, pvals, labs = [], [], []
+                        pvals, labs = [], []
                         for i in range(k):
                             for j in range(i+1, k):
                                 u = stats.mannwhitneyu(groups[i], groups[j], alternative="two-sided")
@@ -2250,79 +2297,91 @@ with TAB5:
                                 labs.append(f"{summ['group'].iloc[i]} vs {summ['group'].iloc[j]}")
                         if pvals:
                             adj = holm_bonferroni(np.array(pvals), np.array(labs))
-                            st.dataframe(adj.head(30), use_container_width=True, hide_index=True)
+                            st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
                             st.caption("Pairwise Mann–Whitney (Holm-adjusted).")
 
-                        strength = ("yếu" if (np.isnan(eps2) or eps2 < 0.06) else ("vừa" if eps2 < 0.14 else "mạnh"))
-                        hi = summ.iloc[0]["group"]
+                        strength = ("yếu" if (np.isnan(eps2) or eps2 < 0.06)
+                                    else ("vừa" if eps2 < 0.14 else "mạnh"))
+                        hi = str(summ.iloc[0]["group"]) if len(summ) else "—"
                         st.success(f"**Kết luận:** Khác biệt {strength} (ε²={eps2:.2f}). Nhóm median cao nhất: **{hi}**.")
 
-        else:  # Repeated (within)
-            # cần 1 ID (subject), 1 factor (condition), 1 Y numeric
+        # ---------- Repeated (within) ----------
+        else:
             cand_id = [c for c in DF.columns if is_cat(c)]
             cand_factor = [c for c in CAT_COLS]
             if len(NUM_COLS) == 0 or len(cand_id) == 0 or len(cand_factor) == 0:
                 st.info("Cần: 1 numeric (Y), 1 ID (subject), 1 categorical (condition).")
             else:
-                c1, c2, c3, c4, c5 = st.columns([1.1, 1.1, 1.2, 0.9, 0.9])
-                y_col = c1.selectbox("🎯 Y (numeric)", NUM_COLS, key="rep_y")
-                id_col = c2.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="rep_id")
-                cond_col = c3.selectbox("🏷️ Condition (within)", cand_factor, key="rep_cond")
-                max_subj_fit = int(c4.number_input("Max subjects (fit)", 50, 50_000, 5_000, step=50, key="rep_max"))
-                plot_subj = int(c5.number_input("Spaghetti sample", 0, 1000, 80, step=20, key="rep_sp"))
-                run = st.button("▶️ Run", use_container_width=True, key="rep_run")
+                box_top_r = st.container(border=True)
+                with box_top_r:
+                    L, R = st.columns(2)
+                    with L:
+                        st.markdown("### Thiết kế Nonparametric — Repeated (within)")
+                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="rep_y")
+                        id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="rep_id")
+                        cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="rep_cond")
+                        _type_hint("Y", y_col, "numeric")
+                        _type_hint("ID", id_col, "categorical")
+                        _type_hint("Condition", cond_col, "categorical")
+                    with R:
+                        _cheatsheet_note()
+
+                box_ctl_r = st.container(border=True)
+                with box_ctl_r:
+                    L, R = st.columns(2)
+                    with L:
+                        max_subj_fit = int(st.number_input("Max subjects (fit)", 50, 50_000, 5_000, step=50, key="rep_max"))
+                    with R:
+                        plot_subj = int(st.number_input("Spaghetti sample", 0, 1000, 80, step=20, key="rep_sp"))
+                        run = st.button("▶️ Run", use_container_width=True, key="rep_run")
 
                 if run:
                     d0 = DF[[y_col, id_col, cond_col]].dropna().copy()
-                    # Giữ các subject đủ tất cả levels
+                    # Keep subjects having all levels
                     count = d0.groupby([id_col, cond_col]).size().unstack(cond_col).dropna()
                     subj_keep = count.index
                     d = d0[d0[id_col].isin(subj_keep)]
-                    # limit subjects for fit
+
                     uniq_ids = d[id_col].unique()
                     if len(uniq_ids) > max_subj_fit:
                         keep = pd.Index(uniq_ids).sample(max_subj_fit, random_state=42)
                         d = d[d[id_col].isin(keep)]
 
                     pivot = d.pivot_table(index=id_col, columns=cond_col, values=y_col, aggfunc="mean")
-                    pivot = pivot.dropna(axis=0)  # subjects đủ dữ liệu
+                    pivot = pivot.dropna(axis=0)
                     levels = list(pivot.columns)
-                    m = len(levels)
-                    n = pivot.shape[0]
+                    m = len(levels); n = pivot.shape[0]
 
                     if m == 2:
-                        # Wilcoxon signed-rank
                         a = pivot[levels[0]].values
                         b = pivot[levels[1]].values
                         res = stats.wilcoxon(a, b, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
-                        p = float(res.pvalue)
-                        z = float(stats.norm.isf(p/2.0))
-                        r_eff = z / np.sqrt(n) if n > 0 else np.nan
-                        st.markdown(f"**Wilcoxon signed-rank**: W = {float(res.statistic):.3f}, p = {p:.4g}, r ≈ {r_eff:.3f}")
-                        # Chart: mean line + spaghetti sample
-                        means = pivot.mean().reset_index().rename(columns={"index":"cond", 0:"mean"})
-                        fig = px.line(means, x=means.index, y="mean", markers=True)
-                        fig.update_layout(xaxis=dict(tickmode='array', tickvals=list(range(m)), ticktext=levels),
-                                          yaxis_title=f"Mean {y_col}")
+                        p = float(res.pvalue); Wstat = float(res.statistic)
+                        z = float(stats.norm.isf(p/2.0)) if p > 0 else np.inf
+                        r_eff = z / np.sqrt(n) if n > 0 and np.isfinite(z) else np.nan
+                        st.markdown(f"**Wilcoxon signed-rank**: W = {Wstat:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f}")
+
+                        means = pivot.mean().reset_index()
+                        means.columns = ["cond","mean"]
+                        fig = px.line(means, x="cond", y="mean", markers=True)
                         st.plotly_chart(fig, use_container_width=True)
-                        # spaghetti
                         if plot_subj > 0:
                             samp = pivot.sample(min(plot_subj, pivot.shape[0]), random_state=42)
                             for _, row in samp.iterrows():
-                                fig.add_trace(go.Scatter(x=list(range(m)), y=row.values, mode="lines", opacity=0.25, showlegend=False))
+                                fig.add_trace(go.Scatter(x=levels, y=row.values, mode="lines", opacity=0.25, showlegend=False))
                             st.plotly_chart(fig, use_container_width=True)
-                        st.success(f"**Kết luận:** Khác biệt {('mạnh' if r_eff>=0.5 else 'vừa' if r_eff>=0.3 else 'yếu')} (r≈{r_eff:.2f}).")
+
+                        level = ("mạnh" if (not np.isnan(r_eff) and r_eff >= 0.5)
+                                 else "vừa" if (not np.isnan(r_eff) and r_eff >= 0.3) else "yếu")
+                        st.success(f"**Kết luận:** Khác biệt {level} (r≈{r_eff:.2f}).")
 
                     else:
-                        # Friedman
                         fr = stats.friedmanchisquare(*[pivot[c].values for c in levels])
                         chi2 = float(fr.statistic); p = float(fr.pvalue)
-                        # Kendall's W
                         W = chi2 / (n * m * (m + 1) / 12.0) if n > 0 else np.nan
                         st.markdown(f"**Friedman**: χ² = {chi2:.3f}, p = {p:.4g}, W = {W:.3f}")
 
-                        # Chart: mean line + spaghetti
-                        means = pivot.mean().reset_index().rename(columns={"index":"cond", 0:"mean"})
+                        means = pivot.mean().reset_index()
                         means.columns = ["cond","mean"]
                         fig = px.line(means, x="cond", y="mean", markers=True)
                         st.plotly_chart(fig, use_container_width=True)
@@ -2336,18 +2395,20 @@ with TAB5:
                         pvals, labs = [], []
                         for i in range(m):
                             for j in range(i+1, m):
-                                wi = stats.wilcoxon(pivot[levels[i]], pivot[levels[j]], zero_method="wilcox",
-                                                    correction=False, alternative="two-sided", mode="auto")
+                                wi = stats.wilcoxon(pivot[levels[i]], pivot[levels[j]],
+                                                    zero_method="wilcox", correction=False,
+                                                    alternative="two-sided", mode="auto")
                                 pvals.append(float(wi.pvalue))
                                 labs.append(f"{levels[i]} vs {levels[j]}")
                         if pvals:
                             adj = holm_bonferroni(np.array(pvals), np.array(labs))
-                            st.dataframe(adj.head(30), use_container_width=True, hide_index=True)
+                            st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
                             st.caption("Pairwise Wilcoxon (Holm-adjusted).")
 
                         strength = ("yếu" if (np.isnan(W) or W < 0.1) else ("vừa" if W < 0.3 else "mạnh"))
-                        best = means.sort_values("mean", ascending=False).iloc[0]["cond"]
+                        best = str(means.sort_values("mean", ascending=False).iloc[0]["cond"])
                         st.success(f"**Kết luận:** Khác biệt {strength} (W={W:.2f}). Điều kiện cao nhất: **{best}**.")
+
 
 
 # ------------------------------ TAB 6: Regression (Compact • Big-data friendly) ------------------------------
