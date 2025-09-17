@@ -2020,13 +2020,10 @@ with TAB5:
         return pd.DataFrame({"pair": labels, "p_raw": p, "p_adj_holm": adj}).sort_values("p_adj_holm")
 
     def one_way_anova_fast(y, g):
-        """
-        One-way ANOVA via grouped sums (nhanh/ổn định).
-        Return: F, p, df1, df2, eta2, omega2, levene_p
-        """
+        """One-way ANOVA via group sums. Return F, p, df1, df2, eta2, omega2, leve_p."""
         d = pd.DataFrame({"y": pd.to_numeric(y, errors="coerce"), "g": g}).dropna()
         if d["g"].nunique() < 2 or len(d) < 3:
-            return *(np.nan,)*7
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         # Levene (center='median' bền vững)
         try:
             levene_p = stats.levene(*[grp["y"].values for _, grp in d.groupby("g")], center="median").pvalue
