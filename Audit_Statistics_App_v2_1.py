@@ -1960,7 +1960,7 @@ with TAB4:
 
 
 # ------------------------------ TAB ? : Statistics Test (ANOVA & Nonparametric) ------------------------------
-with TAB_5:
+with TAB5:
     import numpy as np, pandas as pd, re
     import plotly.express as px
     import plotly.graph_objects as go
