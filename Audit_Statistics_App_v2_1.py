@@ -2140,170 +2140,397 @@ with TAB5:
             st_df(df_r, use_container_width=True)
         else:
             st.info('Không có rule nào khớp.')
-# ------------------------------ TAB 5: Regression -----------------------------
+# ------------------------------ TAB 6: Regression (Compact • Big-data friendly) ------------------------------
 with TAB6:
-    st.subheader('📘 Regression (Linear / Logistic)')
-    base_df = DF_FULL
-    if not HAS_SK:
-        st.info('Cần cài scikit‑learn để chạy Regression: `pip install scikit-learn`.')
-    else:
-        use_full_reg = True
-        REG_DF = DF_FULL
-        tab_lin, tab_log = st.tabs(['Linear Regression','Logistic Regression'])
+    st.subheader('📘 Regression — gọn, dễ đọc, chạy tốt dữ liệu lớn')
 
-        with tab_lin:
-            if len(NUM_COLS) < 2:
-                st.info('Cần ≥2 biến numeric để chạy Linear Regression.')
-            else:
-                c1,c2,c3 = st.columns([2,2,1])
-                with c1:
-                    y_lin = st.selectbox('Target (numeric)', NUM_COLS, key='lin_y')
-                with c2:
-                    X_lin = st.multiselect('Features (X) — numeric', options=[c for c in NUM_COLS if c!=y_lin],
-                                           default=[c for c in NUM_COLS if c!=y_lin][:3], key='lin_X')
-                with c3:
-                    test_size = st.slider('Test size', 0.1, 0.5, 0.25, 0.05, key='lin_ts')
-                optL, optR = st.columns(2)
-                with optL:
-                    impute_na = st.checkbox('Impute NA (median)', value=True, key='lin_impute')
-                    drop_const = st.checkbox('Loại cột variance=0', value=True, key='lin_drop_const')
-                with optR:
-                    show_diag = st.checkbox('Hiện chẩn đoán residuals', value=True, key='lin_diag')
-                run_lin = st.button('▶️ Run Linear Regression', key='btn_run_lin', use_container_width=True)
-                if run_lin:
-                    try:
-                        sub = REG_DF[[y_lin] + X_lin].copy()
-                        for c in [y_lin] + X_lin:
-                            if not pd.api.types.is_numeric_dtype(sub[c]):
-                                sub[c] = pd.to_numeric(sub[c], errors='coerce')
-                        if impute_na:
-                            med = sub[X_lin].median(numeric_only=True)
-                            sub[X_lin] = sub[X_lin].fillna(med)
-                            sub = sub.dropna(subset=[y_lin])
-                        else:
-                            sub = sub.dropna()
-                        removed=[]
-                        if drop_const:
-                            nunique = sub[X_lin].nunique(); keep=[c for c in X_lin if nunique.get(c,0)>1]
-                            removed=[c for c in X_lin if c not in keep]; X_lin=keep
-                        if (len(sub) < (len(X_lin)+5)) or (len(X_lin)==0):
-                            st.error('Không đủ dữ liệu sau khi xử lý NA/const (cần ≥ số features + 5).')
-                        else:
-                            X=sub[X_lin]; y=sub[y_lin]
-                            Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=test_size,random_state=42)
-                            mdl = LinearRegression().fit(Xtr,ytr); yhat = mdl.predict(Xte)
-                            r2 = r2_score(yte,yhat); adj = 1-(1-r2)*(len(yte)-1)/max(len(yte)-Xte.shape[1]-1,1)
-                            rmse = float(np.sqrt(mean_squared_error(yte,yhat)))
-                            mae = float(np.mean(np.abs(yte-yhat)))
-                            meta_cols = {
-                                'R2': round(r2,4), 'Adj_R2': round(adj,4), 'RMSE': round(rmse,4), 'MAE': round(mae,4),
-                                'n_test': int(len(yte)), 'k_features': int(Xte.shape[1]),
-                                'removed_const': (', '.join(removed[:5]) + ('...' if len(removed)>5 else '')) if removed else None,
-                            }
-                            SS['last_linear']=meta_cols
-                            st.json(meta_cols)
-                            coef_df = pd.DataFrame({'feature': X_lin, 'coef': mdl.coef_}).sort_values('coef', key=lambda s: s.abs(), ascending=False)
-                            st_df(coef_df, use_container_width=True, height=240)
-                            if show_diag and HAS_PLOTLY:
-                                resid = yte - yhat
-                                g1,g2 = st.columns(2)
-                                with g1:
-                                    fig1 = px.scatter(x=yhat, y=resid, labels={'x':'Fitted','y':'Residuals'}, title='Residuals vs Fitted'); st_plotly(fig1)
-                                with g2:
-                                    fig2 = px.histogram(resid, nbins=SS['bins'], title='Residuals distribution'); st_plotly(fig2)
-                                try:
-                                    if len(resid)>7:
-                                        p_norm = float(stats.normaltest(resid)[1]); st.caption(f'Normality test (residuals) p-value: {p_norm:.4f}')
-                                except Exception: pass
-                    except Exception as e:
-                        st.error(f'Linear Regression error: {e}')
+    # ===== Safe imports =====
+    try:
+        import numpy as np, pandas as pd, re
+        from sklearn.model_selection import train_test_split, KFold, cross_val_score
+        from sklearn.linear_model import LinearRegression, Ridge, Lasso, LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import (
+            r2_score, mean_squared_error, mean_absolute_error,
+            accuracy_score, roc_auc_score, roc_curve
+        )
+        import plotly.express as px
+        import plotly.graph_objects as go
+    except Exception as e:
+        st.error(f"Thiếu thư viện: {e}. Cài đặt scikit-learn / plotly trước khi dùng.")
+        st.stop()
 
-        with tab_log:
-            # binary-like target detection
-            bin_candidates=[]
-            for c in REG_DF.columns:
-                s = REG_DF[c].dropna()
-                if s.nunique()==2: bin_candidates.append(c)
-            if len(bin_candidates)==0:
-                st.info('Không tìm thấy cột nhị phân (chính xác 2 giá trị duy nhất).')
-            else:
-                c1,c2 = st.columns([2,3])
-                with c1:
-                    y_col = st.selectbox('Target (binary)', bin_candidates, key='logit_y')
-                    uniq = sorted(REG_DF[y_col].dropna().unique().tolist())
-                    pos_label = st.selectbox('Positive class', uniq, index=len(uniq)-1, key='logit_pos')
-                with c2:
-                    X_cand = [c for c in REG_DF.columns if c!=y_col and pd.api.types.is_numeric_dtype(REG_DF[c])]
-                    X_sel = st.multiselect('Features (X) — numeric only', options=X_cand, default=X_cand[:4], key='logit_X')
-                optA,optB,optC = st.columns([2,2,1.4])
-                with optA:
-                    impute_na_l = st.checkbox('Impute NA (median)', value=True, key='logit_impute')
-                    drop_const_l = st.checkbox('Loại cột variance=0', value=True, key='logit_drop_const')
-                with optB:
-                    class_bal = st.checkbox("Class weight = 'balanced'", value=True, key='logit_cw')
-                    thr = st.slider('Ngưỡng phân loại (threshold)', 0.1, 0.9, 0.5, 0.05, key='logit_thr')
-                with optC:
-                    test_size_l = st.slider('Test size', 0.1, 0.5, 0.25, 0.05, key='logit_ts')
-                run_log = st.button('▶️ Run Logistic Regression', key='btn_run_log', use_container_width=True)
-                if run_log:
-                    try:
-                        sub = REG_DF[[y_col] + X_sel].copy()
-                        y_raw = sub[y_col]
-                        y = (y_raw == pos_label).astype(int)
-                        for c in X_sel:
-                            if not pd.api.types.is_numeric_dtype(sub[c]):
-                                sub[c] = pd.to_numeric(sub[c], errors='coerce')
-                        if impute_na_l:
-                            med = sub[X_sel].median(numeric_only=True)
-                            sub[X_sel] = sub[X_sel].fillna(med)
-                            df_ready = pd.concat([y, sub[X_sel]], axis=1).dropna()
-                        else:
-                            df_ready = pd.concat([y, sub[X_sel]], axis=1).dropna()
-                        removed=[]
-                        if drop_const_l:
-                            nunique = df_ready[X_sel].nunique(); keep=[c for c in X_sel if nunique.get(c,0)>1]
-                            removed=[c for c in X_sel if c not in keep]; X_sel=keep
-                        if (len(df_ready) < (len(X_sel)+10)) or (len(X_sel)==0):
-                            st.error('Không đủ dữ liệu sau khi xử lý NA/const (cần ≥ số features + 10).')
-                        else:
-                            X = df_ready[X_sel]; yb = df_ready[y_col]
-                            Xtr,Xte,ytr,yte = train_test_split(X, yb, test_size=test_size_l, random_state=42, stratify=yb)
-                            model = LogisticRegression(max_iter=1000, class_weight=('balanced' if class_bal else None)).fit(Xtr,ytr)
-                            proba = model.predict_proba(Xte)[:,1]; pred = (proba>=thr).astype(int)
-                            acc = accuracy_score(yte, pred)
-                            # metrics
+    DF = SS.get('df')
+    if DF is None or len(DF) == 0:
+        st.info("Hãy nạp dữ liệu trước.")
+        st.stop()
 
-                            tp = int(((pred==1)&(yte==1)).sum()); fp=int(((pred==1)&(yte==0)).sum())
-                            fn = int(((pred==0)&(yte==1)).sum()); tn=int(((pred==0)&(yte==0)).sum())
-                            prec = (tp/(tp+fp)) if (tp+fp) else 0.0
-                            rec  = (tp/(tp+fn)) if (tp+fn) else 0.0
-                            f1   = (2*prec*rec/(prec+rec)) if (prec+rec) else 0.0
-                            try: auc = roc_auc_score(yte, proba)
-                            except Exception: auc=np.nan
-                            meta = {
-                                'Accuracy': round(float(acc),4), 'Precision': round(float(prec),4), 'Recall': round(float(rec),4), 'F1': round(float(f1),4),
-                                'ROC_AUC': (round(float(auc),4) if not np.isnan(auc) else None), 'n_test': int(len(yte)), 'threshold': float(thr),
-                                'removed_const': (', '.join(removed[:5]) + ('...' if len(removed)>5 else '')) if removed else None
-                            }
-                            SS['last_logistic']=meta
-                            st.json(meta)
+    # ===== Type helpers =====
+    def is_num(c):
+        try: return pd.api.types.is_numeric_dtype(DF[c])
+        except: return False
+    def is_dt(c):
+        if c not in DF.columns: return False
+        if pd.api.types.is_datetime64_any_dtype(DF[c]): return True
+        return bool(re.search(r'(date|time|ngày|thời gian)', str(c), flags=re.I))
+    def is_cat(c):
+        return (not is_num(c)) and (not is_dt(c))
+
+    NUM_COLS = [c for c in DF.columns if is_num(c)]
+    CAT_COLS = [c for c in DF.columns if is_cat(c)]
+
+    # ===== Quick guide (collapsed) =====
+    with st.expander("💡 Hướng dẫn chọn mô hình (rất ngắn)", expanded=False):
+        st.markdown(
+            "- **Linear**: Target là **số liên tục** (Revenue, AOV…). Nếu lệch mạnh → bật **log1p(Y)**.\n"
+            "- **Ridge/Lasso**: nhiều feature / đa cộng tuyến → ổn định hệ số.\n"
+            "- **Logistic**: Target **nhị phân (0/1)** (Mua/Không, Fraud…). Mất cân bằng lớp → **class weight**.\n"
+            "- **Big data**: dùng **Fast**, giới hạn **Max rows (fit)** và **Chart sample**."
+        )
+
+    tab_lin, tab_log = st.tabs(['Linear Regression', 'Logistic Regression'])
+
+    # ============================== LINEAR ==============================
+    with tab_lin:
+        if len(NUM_COLS) < 2:
+            st.info("Cần ≥2 biến numeric để chạy Linear.")
+        else:
+            # ---- Controls (compact) ----
+            c1, c2, c3, c4, c5 = st.columns([1.2, 1.6, 0.8, 0.8, 0.8])
+            y_lin = c1.selectbox("🎯 Target (numeric)", NUM_COLS, key="lin_y")
+            X_cand = [c for c in NUM_COLS if c != y_lin]
+            X_lin = c2.multiselect("🧩 Features (numeric)", options=X_cand,
+                                   default=X_cand[:min(6, len(X_cand))], key="lin_X")
+            test_size = c3.slider("Test %", 0.1, 0.5, 0.25, 0.05, key="lin_ts")
+            fast_mode = c4.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="lin_fast")
+            run_lin = c5.button("▶️ Run", use_container_width=True, key="lin_run")
+
+            with st.expander("⚙️ Advanced", expanded=False):
+                a1, a2, a3, a4, a5 = st.columns(5)
+                standardize = a1.checkbox("Standardize X", value=True, key="lin_std")
+                logy = a1.checkbox("log1p(Y)", value=False, key="lin_logy")
+                impute_na = a2.checkbox("Impute NA (median)", value=True, key="lin_impute")
+                drop_const = a2.checkbox("Drop const", value=True, key="lin_const")
+                penalty = a3.selectbox("Penalty", ["OLS", "Ridge", "Lasso"], index=0, key="lin_penalty")
+                alpha = a3.slider("Alpha", 0.01, 10.0, 1.0, 0.01, key="lin_alpha")
+                kcv = a4.slider("CV folds (train)", 3, 10, 5, key="lin_kcv")
+                max_rows_fit = a5.number_input("Max rows (fit)", min_value=5_000, max_value=2_000_000,
+                                               value=200_000, step=5_000, help="Giới hạn số dòng dùng để fit.")
+                chart_sample = a5.number_input("Chart sample", min_value=0, max_value=200_000,
+                                               value=10_000, step=1_000, help="0 = không overlay điểm")
+
+            # ---- Fit & Report ----
+            if run_lin:
+                try:
+                    sub = DF[[y_lin] + X_lin].copy()
+                    # numeric coerce
+                    for c in [y_lin] + X_lin:
+                        if not pd.api.types.is_numeric_dtype(sub[c]):
+                            sub[c] = pd.to_numeric(sub[c], errors="coerce")
+                    # sample rows for fitting (speed)
+                    if len(sub) > max_rows_fit:
+                        sub = sub.sample(n=int(max_rows_fit), random_state=42)
+                    # impute/drop
+                    if impute_na:
+                        med = sub[X_lin].median(numeric_only=True)
+                        sub[X_lin] = sub[X_lin].fillna(med)
+                        sub = sub.dropna(subset=[y_lin])
+                    else:
+                        sub = sub.dropna()
+                    removed = []
+                    if drop_const and len(X_lin) > 0:
+                        nunique = sub[X_lin].nunique()
+                        keep = [c for c in X_lin if nunique.get(c, 0) > 1]
+                        removed = [c for c in X_lin if c not in keep]
+                        X_lin = keep
+
+                    if (len(sub) < (len(X_lin) + 5)) or (len(X_lin) == 0):
+                        st.error("Không đủ dữ liệu sau xử lý (cần ≥ số features + 5).")
+                    else:
+                        X = sub[X_lin].copy()
+                        y = sub[y_lin].copy()
+                        y_t = np.log1p(y) if logy else y
+                        Xtr, Xte, ytr, yte = train_test_split(X, y_t, test_size=test_size, random_state=42)
+
+                        if standardize and Xtr.shape[1] > 0:
+                            scaler = StandardScaler().fit(Xtr)
+                            Xtr = pd.DataFrame(scaler.transform(Xtr), index=Xtr.index, columns=Xtr.columns)
+                            Xte = pd.DataFrame(scaler.transform(Xte), index=Xte.index, columns=Xte.columns)
+
+                        if penalty == "OLS":
+                            model = LinearRegression()
+                        elif penalty == "Ridge":
+                            model = Ridge(alpha=alpha, random_state=42)
+                        else:
+                            model = Lasso(alpha=alpha, random_state=42, max_iter=10_000)
+
+                        # CV (train) r2 — skip if fast_mode and too large features
+                        cv_r2 = np.nan
+                        if not fast_mode:
                             try:
-                                fpr,tpr,thr_arr = roc_curve(yte, proba)
-                                if HAS_PLOTLY:
-                                    fig = px.area(x=fpr, y=tpr, title='ROC Curve', labels={'x':'False Positive Rate','y':'True Positive Rate'})
-                                    fig.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
-                                    st_plotly(fig)
+                                cv = KFold(n_splits=kcv, shuffle=True, random_state=42)
+                                cv_r2 = float(np.nanmean(cross_val_score(model, Xtr, ytr, cv=cv, scoring='r2')))
                             except Exception:
                                 pass
-                    except Exception as e:
-                        st.error(f'Logistic Regression error: {e}')
 
-    with st.expander('🧠 Rule Engine (Regression) — Insights'):
-        ctx = build_rule_context(); df_r = evaluate_rules(ctx, scope='regression')
-        if not df_r.empty:
-            st_df(df_r, use_container_width=True)
+                        model.fit(Xtr, ytr)
+                        yhat_te = model.predict(Xte)
+                        yhat = np.expm1(yhat_te) if logy else yhat_te
+                        ytrue = np.expm1(yte) if logy else yte
+
+                        r2 = r2_score(ytrue, yhat)
+                        adj = 1 - (1 - r2) * (len(ytrue) - 1) / max(len(ytrue) - Xte.shape[1] - 1, 1)
+                        rmse = float(np.sqrt(mean_squared_error(ytrue, yhat)))
+                        mae = float(mean_absolute_error(ytrue, yhat))
+
+                        # ===== Summary cards =====
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("R² (test)", f"{r2:.3f}")
+                        m2.metric("Adj R²", f"{adj:.3f}")
+                        m3.metric("RMSE", f"{rmse:,.3f}")
+                        m4.metric("MAE", f"{mae:,.3f}")
+                        st.caption(f"CV R² (train): {cv_r2:.3f}" if not np.isnan(cv_r2) else "CV R² (train): —")
+
+                        # ===== Equation / Coef =====
+                        coef_s = pd.Series(model.coef_, index=X_lin, dtype=float)
+                        intercept = float(model.intercept_)
+                        with st.expander("📐 Phương trình hồi quy & hệ số", expanded=False):
+                            st.code(
+                                "Y{} = {:.6g} + ".format(" (log1p)" if logy else "", intercept) +
+                                " + ".join([f"{b:.6g}·{name}" for name, b in coef_s.items()]),
+                                language="text"
+                            )
+                            coef_show = coef_s.sort_values(key=lambda s: s.abs(), ascending=False).to_frame("coef")
+                            st.dataframe(coef_show.head(30), use_container_width=True)
+
+                        # ===== Charts in tabs (lightweight for big data) =====
+                        t1, t2 = st.tabs(["Residuals & Fitted", "Feature importance"])
+                        with t1:
+                            # Residuals vs Fitted (density heatmap for fast) + hist residuals
+                            resid = ytrue - yhat
+                            if fast_mode:
+                                df_plot = pd.DataFrame({"Fitted": yhat, "Residuals": resid})
+                                fig1 = px.density_heatmap(df_plot, x="Fitted", y="Residuals", nbinsx=60, nbinsy=60)
+                            else:
+                                df_plot = pd.DataFrame({"Fitted": yhat, "Residuals": resid})
+                                # overlay sample points if requested
+                                if chart_sample > 0 and len(df_plot) > chart_sample:
+                                    samp = df_plot.sample(chart_sample, random_state=42)
+                                else:
+                                    samp = df_plot
+                                fig1 = px.scatter(samp, x="Fitted", y="Residuals", opacity=0.55, render_mode="webgl")
+                            st.plotly_chart(fig1, use_container_width=True)
+
+                            fig2 = px.histogram(resid, nbins=SS.get("bins", 50), title="Residuals distribution")
+                            st.plotly_chart(fig2, use_container_width=True)
+
+                        with t2:
+                            imp = coef_s.abs().sort_values(ascending=False).head(20)
+                            fig_imp = px.bar(x=imp.index, y=imp.values, labels={"x":"Feature","y":"|coef|"})
+                            st.plotly_chart(fig_imp, use_container_width=True)
+
+                        # ===== Conclusion =====
+                        top_feat = imp.index[0] if len(imp) else "—"
+                        strength = ("yếu" if r2 < 0.2 else ("vừa" if r2 < 0.5 else "mạnh"))
+                        st.success(
+                            f"**Kết luận:** Mô hình {penalty}{' (α='+str(alpha)+')' if penalty!='OLS' else ''} {strength} (R²={r2:.2f}). "
+                            f"Yếu tố ảnh hưởng lớn nhất: **{top_feat}**. "
+                            f"{'Đã log1p(Y). ' if logy else ''}{'Đã chuẩn hoá X. ' if standardize else ''}"
+                            f"{'(Fast mode) ' if fast_mode else ''}"
+                            f"{'Loại cột hằng: ' + ', '.join(removed[:5]) + ('…' if len(removed)>5 else '') if removed else ''}"
+                        )
+                except Exception as e:
+                    st.error(f"Linear Regression error: {e}")
+
+    # ============================== LOGISTIC ==============================
+    with tab_log:
+        # tìm các cột nhị phân
+        bin_targets = []
+        for c in DF.columns:
+            s = DF[c].dropna()
+            if s.nunique() == 2:
+                bin_targets.append(c)
+
+        if len(bin_targets) == 0:
+            st.info("Không thấy cột nhị phân (2 giá trị).")
         else:
-            st.info('Không có rule nào khớp.')
+            # ---- Controls (compact) ----
+            c1, c2, c3, c4, c5 = st.columns([1.2, 1.6, 0.8, 0.8, 0.8])
+            y_col = c1.selectbox("🎯 Target (binary)", bin_targets, key="log_y")
+            uniq = sorted(DF[y_col].dropna().unique().tolist())
+            pos_label = c1.selectbox("Positive class", uniq, index=len(uniq)-1, key="log_pos")
+
+            X_num_cand = [c for c in DF.columns if c != y_col and pd.api.types.is_numeric_dtype(DF[c])]
+            X_cat_cand = [c for c in DF.columns if c != y_col and (not pd.api.types.is_numeric_dtype(DF[c])) and (not is_dt(c))]
+            sel_num = c2.multiselect("🧩 Numeric features", options=X_num_cand, default=X_num_cand[:4], key="log_Xn")
+            sel_cat = c2.multiselect("🏷️ Categorical features (optional)", options=X_cat_cand, default=[], key="log_Xc")
+
+            test_size_l = c3.slider("Test %", 0.1, 0.5, 0.25, 0.05, key="log_ts")
+            fast_mode_l = c4.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="log_fast")
+            run_log = c5.button("▶️ Run", use_container_width=True, key="log_run")
+
+            with st.expander("⚙️ Advanced", expanded=False):
+                a1, a2, a3, a4, a5 = st.columns(5)
+                impute_na = a1.checkbox("Impute NA (median)", value=True, key="log_impute")
+                drop_const = a1.checkbox("Drop const", value=True, key="log_const")
+                class_bal = a2.checkbox("Class weight='balanced'", value=True, key="log_cw")
+                standardize = a2.checkbox("Standardize numeric", value=True, key="log_std")
+                topn_levels = a3.slider("Top-N / categorical", 3, 30, 8, key="log_topn")
+                max_rows_fit = a4.number_input("Max rows (fit)", min_value=5_000, max_value=2_000_000,
+                                               value=200_000, step=5_000, key="log_maxfit")
+                chart_sample = a5.number_input("Chart sample", min_value=0, max_value=200_000,
+                                               value=20_000, step=2_000, key="log_chartsamp")
+                thr_mode = a3.selectbox("Gợi ý ngưỡng theo", ["F1","Youden J"], index=0, key="log_thrmode")
+                thr_manual = a4.slider("Ngưỡng thủ công", 0.1, 0.9, 0.5, 0.05, key="log_thr")
+
+            # ---- Fit & Report ----
+            if run_log:
+                try:
+                    # y
+                    y_raw = DF[y_col]
+                    y = (y_raw == pos_label).astype(int)
+
+                    # X numeric
+                    Xn = DF[sel_num].copy()
+                    for c in sel_num:
+                        if not pd.api.types.is_numeric_dtype(Xn[c]):
+                            Xn[c] = pd.to_numeric(Xn[c], errors="coerce")
+
+                    # X categorical -> one-hot Top-N
+                    Xc_list = []
+                    for c in sel_cat:
+                        s = DF[c].astype(str)
+                        top = s.value_counts().head(topn_levels).index.tolist()
+                        s2 = s.where(s.isin(top), "Other")
+                        d = pd.get_dummies(s2, prefix=c, drop_first=True)
+                        Xc_list.append(d)
+                    Xc = pd.concat(Xc_list, axis=1) if Xc_list else pd.DataFrame(index=DF.index)
+
+                    X_all = pd.concat([Xn, Xc], axis=1)
+
+                    # limit rows for fit (speed)
+                    idx = DF.index
+                    if len(idx) > max_rows_fit:
+                        idx = DF.sample(n=int(max_rows_fit), random_state=42).index
+                    X_all = X_all.loc[idx]
+                    y = y.loc[idx]
+
+                    # impute / drop NA
+                    if impute_na:
+                        med = X_all.median(numeric_only=True)
+                        X_all = X_all.fillna(med)
+                    df_ready = pd.concat([y, X_all], axis=1).dropna()
+
+                    # drop const
+                    removed = []
+                    if drop_const and X_all.shape[1] > 0:
+                        nunique = df_ready.drop(columns=[y.name]).nunique()
+                        keep = [c for c in X_all.columns if nunique.get(c, 0) > 1]
+                        removed = [c for c in X_all.columns if c not in keep]
+                        X_all = X_all[keep]
+                        df_ready = pd.concat([y, X_all], axis=1)
+
+                    if (len(df_ready) < (X_all.shape[1] + 10)) or (X_all.shape[1] == 0):
+                        st.error("Không đủ dữ liệu sau xử lý (cần ≥ số features + 10).")
+                    else:
+                        X = df_ready.drop(columns=[y.name])
+                        yb = df_ready[y.name]
+
+                        Xtr, Xte, ytr, yte = train_test_split(X, yb, test_size=test_size_l, random_state=42, stratify=yb)
+
+                        if standardize and Xtr.shape[1] > 0:
+                            scaler = StandardScaler(with_mean=True, with_std=True).fit(Xtr)
+                            Xtr = pd.DataFrame(scaler.transform(Xtr), index=Xtr.index, columns=Xtr.columns)
+                            Xte = pd.DataFrame(scaler.transform(Xte), index=Xte.index, columns=Xte.columns)
+
+                        model = LogisticRegression(max_iter=1000, class_weight=('balanced' if class_bal else None))
+                        model.fit(Xtr, ytr)
+                        proba = model.predict_proba(Xte)[:, 1]
+
+                        # suggest threshold
+                        thr_grid = np.linspace(0.1, 0.9, 17)
+                        best_thr, best_score = 0.5, -1.0
+                        for t in thr_grid:
+                            pred = (proba >= t).astype(int)
+                            tp = int(((pred == 1) & (yte == 1)).sum()); fp = int(((pred == 1) & (yte == 0)).sum())
+                            fn = int(((pred == 0) & (yte == 1)).sum()); tn = int(((pred == 0) & (yte == 0)).sum())
+                            prec = (tp / (tp + fp)) if (tp + fp) else 0.0
+                            rec  = (tp / (tp + fn)) if (tp + fn) else 0.0
+                            f1   = (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+                            youden = (rec + (tn / (tn + fp) if (tn + fp) else 0.0) - 1.0)
+                            score = f1 if (thr_mode == "F1") else youden
+                            if score > best_score:
+                                best_score, best_thr = score, float(t)
+
+                        thr_use = float(thr_manual) if thr_manual else best_thr
+                        pred = (proba >= thr_use).astype(int)
+
+                        acc = accuracy_score(yte, pred)
+                        try: auc = roc_auc_score(yte, proba)
+                        except Exception: auc = np.nan
+
+                        # ===== Summary cards =====
+                        # Precision/Recall/F1 nhanh
+                        tp = int(((pred == 1) & (yte == 1)).sum()); fp = int(((pred == 1) & (yte == 0)).sum())
+                        fn = int(((pred == 0) & (yte == 1)).sum()); tn = int(((pred == 0) & (yte == 0)).sum())
+                        prec = (tp / (tp + fp)) if (tp + fp) else 0.0
+                        rec  = (tp / (tp + fn)) if (tp + fn) else 0.0
+                        f1   = (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Accuracy", f"{acc:.3f}")
+                        m2.metric("Precision", f"{prec:.3f}")
+                        m3.metric("Recall", f"{rec:.3f}")
+                        m4.metric("F1", f"{f1:.3f}")
+                        st.caption(f"AUC: {auc:.3f}" if not np.isnan(auc) else "AUC: —")
+                        st.caption(f"Threshold dùng: {thr_use:.2f} (gợi ý: {best_thr:.2f} theo {thr_mode})")
+
+                        # ===== Charts in tabs (lightweight) =====
+                        t1, t2, t3 = st.tabs(["Confusion", "ROC", "Coefficients"])
+                        with t1:
+                            cm = pd.DataFrame([[tn, fp],[fn, tp]], index=["Actual 0","Actual 1"], columns=["Pred 0","Pred 1"])
+                            fig_cm = px.imshow(cm, text_auto=True, aspect="auto", title="Confusion matrix")
+                            st.plotly_chart(fig_cm, use_container_width=True)
+                        with t2:
+                            try:
+                                fpr, tpr, _ = roc_curve(yte, proba)
+                                # subsample ROC if huge
+                                if fast_mode_l and len(fpr) > 50_000:
+                                    step = len(fpr) // 50_000 + 1
+                                    fpr, tpr = fpr[::step], tpr[::step]
+                                fig_roc = px.area(x=fpr, y=tpr, labels={"x":"FPR","y":"TPR"}, title="ROC Curve")
+                                fig_roc.add_shape(type="line", line=dict(dash="dash"), x0=0, x1=1, y0=0, y1=1)
+                                st.plotly_chart(fig_roc, use_container_width=True)
+                            except Exception:
+                                st.info("Không vẽ được ROC.")
+                        with t3:
+                            try:
+                                coef = pd.Series(model.coef_[0], index=Xtr.columns).sort_values(key=lambda s: s.abs(), ascending=False)
+                                show = coef.head(20)
+                                fig_coef = px.bar(x=show.index, y=show.values, labels={"x":"Feature","y":"coef"})
+                                st.plotly_chart(fig_coef, use_container_width=True)
+                                st.dataframe(show.head(30).to_frame("coef"), use_container_width=True)
+                            except Exception:
+                                st.info("Chưa có hệ số để hiển thị.")
+
+                        # ===== Conclusion =====
+                        strength = ("yếu" if (np.isnan(auc) or auc < 0.7) else ("vừa" if auc < 0.8 else "mạnh"))
+                        try:
+                            top_pos = coef[coef>0].index[0]
+                            top_neg = coef[coef<0].index[0]
+                            dir_feat = f" (+){top_pos}, (−){top_neg}"
+                        except Exception:
+                            dir_feat = ""
+                        st.success(
+                            f"**Kết luận:** Mô hình phân loại {strength} (F1={f1:.2f}, AUC={auc if not np.isnan(auc) else float('nan'):.2f})."
+                            f"{' Tín hiệu mạnh:' + dir_feat if dir_feat else ''}  Ngưỡng: {thr_use:.2f}. "
+                            f"{'(Fast mode) ' if fast_mode_l else ''}"
+                            f"{'Đã chuẩn hoá numeric. ' if standardize else ''}"
+                            f"{'Đã one-hot Top-N cho categorical. ' if len(sel_cat)>0 else ''}"
+                            f"{'Loại cột hằng: ' + ', '.join(removed[:5]) + ('…' if len(removed)>5 else '') if 'removed' in locals() and removed else ''}"
+                        )
+                except Exception as e:
+                    st.error(f"Logistic Regression error: {e}")
 # -------------------------------- TAB 6: Flags --------------------------------
 with TAB7:
     base_df = DF_FULL
