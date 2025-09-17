@@ -1693,46 +1693,6 @@ with cfg:
 
 # (giữ nguyên phần ROUTING phía dưới)
 
-
-        # Per-test selectors (X/Y filtered by type)
-        if test_choice == "Numeric ↔ Numeric":
-            if not NUM_LB or len(NUM_LB) < 2:
-                st.warning("Không đủ cột numeric cho test này.")
-                st.stop()
-            x_label = c1.selectbox("X (numeric)", NUM_LB, key="tc_x_nn")
-            y_label = st.selectbox("Y (numeric)", [lb for lb in NUM_LB if lb != x_label], key="tc_y_nn")
-            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
-            robust = st.toggle("Robust (Spearman)", value=False, key="tc_robust")
-            overlay_pts = st.slider("Max overlay points", 0, 5000, 1200, step=300, key="tc_overlay")
-        elif test_choice == "Numeric ↔ Categorical":
-            if not NUM_LB or not CAT_LB:
-                st.warning("Cần ít nhất 1 numeric và 1 categorical.")
-                st.stop()
-            x_label = c1.selectbox("Numeric", NUM_LB, key="tc_x_nc")
-            y_label = st.selectbox("Categorical", CAT_LB, key="tc_y_nc")
-            num_col = label_to_col[x_label]; cat_col = label_to_col[y_label]
-            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn")
-        elif test_choice == "Categorical ↔ Categorical":
-            if len(CAT_LB) < 2:
-                st.warning("Không đủ cột categorical cho test này.")
-                st.stop()
-            x_label = c1.selectbox("X (categorical)", CAT_LB, key="tc_x_cc")
-            y_label = st.selectbox("Y (categorical)", [lb for lb in CAT_LB if lb != x_label], key="tc_y_cc")
-            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
-            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn_cc")
-        else:  # Trend
-            if not NUM_LB or len(NUM_LB) < 2 or not DT_LB:
-                st.warning("Cần >=2 numeric và >=1 datetime cho Trend.")
-                st.stop()
-            x_label = c1.selectbox("X (numeric)", NUM_LB, key="tc_x_tr")
-            y_label = st.selectbox("Y (numeric)", [lb for lb in NUM_LB if lb != x_label], key="tc_y_tr")
-            dt_label = st.selectbox("Datetime", DT_LB, key="tc_dt_tr")
-            x_col, y_col, dt_col = label_to_col[x_label], label_to_col[y_label], label_to_col[dt_label]
-            c3, c4, c5 = st.columns(3)
-            period_lbl = c3.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period")
-            trans = c4.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans")
-            roll_w = c5.slider("Rolling r (W)", 3, 24, 6, key="tc_roll")
-
     # ---------- ROUTING ----------
     if test_choice == "Numeric ↔ Numeric":
         x = pd.to_numeric(df[x_col], errors='coerce')
