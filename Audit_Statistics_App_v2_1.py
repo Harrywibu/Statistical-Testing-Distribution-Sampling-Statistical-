@@ -2145,7 +2145,7 @@ with TAB5:
                 with box_top:
                     L, R = st.columns(2)
                     with L:
-                        st.markdown("### Thiết kế ANOVA — Independent (between)")
+                        st.markdown("### ANOVA — Independent (between)")
                         y_col  = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="av_y")
                         a_col  = st.selectbox("🏷️ Factor A (categorical)", CAT_COLS, key="av_a")
                         use_two = st.toggle("➕ Two-way ANOVA (thêm Factor B)", value=False, key="av_two")
@@ -2326,7 +2326,7 @@ with TAB5:
                 with box_top_r:
                     L, R = st.columns(2)
                     with L:
-                        st.markdown("### Thiết kế ANOVA — Repeated (within)")
+                        st.markdown("### ANOVA — Repeated (within)")
                         y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="av_rep_y")
                         id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="av_rep_id")
                         cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="av_rep_cond")
@@ -2401,7 +2401,7 @@ with TAB5:
                 with box_top_np:
                     L, R = st.columns(2)
                     with L:
-                        st.markdown("### Thiết kế Nonparametric — Independent")
+                        st.markdown("### Nonparametric — Independent")
                         y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="np_y")
                         g_col = st.selectbox("🏷️ Group (categorical)", CAT_COLS, key="np_g")
                         _type_hint("Y", y_col, "numeric")
@@ -2492,7 +2492,7 @@ with TAB5:
                 with box_top_r:
                     L, R = st.columns(2)
                     with L:
-                        st.markdown("### Thiết kế Nonparametric — Repeated (within)")
+                        st.markdown("### Nonparametric — Repeated (within)")
                         y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="rep_y")
                         id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="rep_id")
                         cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="rep_cond")
