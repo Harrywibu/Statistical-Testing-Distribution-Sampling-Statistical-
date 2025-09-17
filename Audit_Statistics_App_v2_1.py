@@ -2065,22 +2065,75 @@ with TAB5:
         icon = "✅" if ok else "⚠️"
         st.caption(f"{icon} {label}: `{col}` · {actual} (yêu cầu: {expect})")
 
-    def _cheatsheet_note():
-    with st.container(border=True):
-        st.markdown(
-            "### 📝 Gợi ý chọn test nhanh\n"
-            "- **ANOVA (Parametric)**: Y **numeric** + nhóm **categorical** (≥2 nhóm); dữ liệu khá chuẩn, phương sai gần bằng.\n"
-            "- **Nonparametric**:\n"
-            "  - **Independent** (between): ≥2 nhóm độc lập → *Mann–Whitney* (2 nhóm) / *Kruskal–Wallis* (≥3 nhóm).\n"
-            "  - **Repeated** (within): đo lặp trên cùng đối tượng → *Wilcoxon* (2 điều kiện) / *Friedman* (≥3).\n"
-            "- **Big data**: dùng **Max rows (fit)**, **Fast**, **Top-N group** để tăng tốc."
-        )
+    def _cheatsheet_note(expanded: bool = False):
+        with st.expander("📝 Xác định nhanh theo mục tiêu & dữ liệu", expanded=expanded):
+            # Thu nhỏ chữ & khoảng cách
+            st.markdown(
+                """
+                <style>
+                  .mini-note p, .mini-note li { margin-bottom: 0.15rem; }
+                  .mini-note h5 { margin: 0.2rem 0 0.4rem 0; font-size: 1rem; }
+                  .mini-note { font-size: 0.92rem; line-height: 1.25; }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+    
+            # Tóm tắt 1 dòng theo mục tiêu & dữ liệu
+            st.markdown(
+                """
+                <div class="mini-note">
+                <strong>➤ So sánh trung bình/median (Y numeric)</strong><br>
+                <em>Independent (between):</em> 2 nhóm → <strong>Welch t-test</strong> (mặc định) / <em>Mann–Whitney U</em>; ≥3 nhóm → <strong>One-way ANOVA</strong> (var≈) / <strong>Welch ANOVA</strong> (var≠) / <em>Kruskal–Wallis</em>; 2 yếu tố → <strong>Two-way ANOVA</strong> (kiểm <em>interaction</em>); có biến kiểm soát → <strong>ANCOVA</strong>.<br>
+                <em>Repeated (within):</em> 2 điều kiện → <strong>Paired t-test</strong> / <em>Wilcoxon</em>; ≥3 điều kiện → <strong>RM-ANOVA</strong> / <em>Friedman</em>.<br>
+                <em>Big data:</em> dùng <strong>Max rows (fit)</strong>, <strong>Top-N groups</strong>, <strong>Fast charts</strong> (heatmap/violin), <strong>sample overlay</strong>.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
+            # Hai cột: ANOVA vs Non-Parametric
+            c1, c2 = st.columns(2, gap="small")
+            with c1:
+                st.markdown('<div class="mini-note"><h5>ANOVA (Parametric)</h5>', unsafe_allow_html=True)
+                st.markdown(
+                    """
+                    <div class="mini-note">
+                    <em>Independent (between):</em><br>
+                    • <strong>One-way ANOVA</strong>: Y numeric + factor categorical (≥2), giả định gần chuẩn & phương sai gần bằng. Var≠ → <strong>Welch ANOVA</strong>.<br>
+                    • <strong>Two-way ANOVA</strong>: Factor A, B; đọc <em>interaction</em> A×B trước khi kết luận main effects.<br>
+                    • <em>Post-hoc</em>: <strong>Tukey HSD</strong> (var≈) / <strong>Games-Howell</strong> (var≠).<br><br>
+                    <em>Repeated (within):</em><br>
+                    • <strong>RM-ANOVA</strong>: kiểm <em>sphericity</em>; vi phạm → hiệu chỉnh <strong>Greenhouse–Geisser</strong>. <em>Post-hoc</em> Bonferroni.<br>
+                    • 2 điều kiện lặp → <strong>Paired t-test</strong>.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+    
+            with c2:
+                st.markdown('<div class="mini-note"><h5>Non-Parametric</h5>', unsafe_allow_html=True)
+                st.markdown(
+                    """
+                    <div class="mini-note">
+                    <em>Independent (between):</em><br>
+                    • 2 nhóm → <strong>Mann–Whitney U</strong> (effect size <em>r≈|Z|/√N</em>).<br>
+                    • ≥3 nhóm → <strong>Kruskal–Wallis</strong> (effect size <em>ε²</em>); <em>Post-hoc</em> <strong>Dunn + Holm</strong>.<br><br>
+                    <em>Repeated (within):</em><br>
+                    • 2 điều kiện → <strong>Wilcoxon signed-rank</strong> (effect size <em>r</em>).<br>
+                    • ≥3 điều kiện → <strong>Friedman</strong> (effect size <em>Kendall’s W</em>); <em>Post-hoc</em> cặp-đôi Wilcoxon + Holm.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
 
     # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
 # ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
     with tab_a:
-        mode_a = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
+        mode_a = st.radio("Testing", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
     
         # ---------- Independent (between) ----------
         if mode_a == "Independent (between)":
@@ -2336,7 +2389,7 @@ with TAB5:
 
     # ====================== NONPARAMETRIC ======================
     with tab_np:
-        mode = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
+        mode = st.radio("Testing", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
 
         # ---------- Independent (between) ----------
         if mode == "Independent (between)":
@@ -2574,7 +2627,7 @@ with TAB6:
     CAT_COLS = [c for c in DF.columns if is_cat(c)]
 
     # ===== Quick guide (collapsed) =====
-    with st.expander("💡 Hướng dẫn chọn mô hình (rất ngắn)", expanded=False):
+    with st.expander("💡 Hướng dẫn chọn mô hình ", expanded=False):
         st.markdown(
             "- **Linear**: Target là **số liên tục** (Revenue, AOV…). Nếu lệch mạnh → bật **log1p(Y)**.\n"
             "- **Ridge/Lasso**: nhiều feature / đa cộng tuyến → ổn định hệ số.\n"
