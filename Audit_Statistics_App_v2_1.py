@@ -2079,134 +2079,226 @@ with TAB5:
     # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
 
-    # ====================== ANOVA (Parametric) ======================
+    # ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
     with tab_a:
-        if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
-            st.info("Cần tối thiểu 1 cột numeric (Y) và 1 cột categorical (factor).")
-        else:
-            # ---- Balanced header (L: chọn dữ liệu, R: note) ----
-            box_top = st.container(border=True)
-            with box_top:
-                L, R = st.columns(2)
-                with L:
-                    st.markdown("### Thiết kế ANOVA")
-                    y_col = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="anova_y")
-                    fac_col = st.selectbox("🏷️ Factor (categorical)", CAT_COLS, key="anova_g")
-                    _type_hint("Dependent", y_col, "numeric")
-                    _type_hint("Factor", fac_col, "categorical")
-                with R:
-                    _cheatsheet_note()
-
-            # ---- Controls (balanced) ----
-            box_ctl = st.container(border=True)
-            with box_ctl:
-                L, R = st.columns(2)
-                with L:
-                    topN = int(st.number_input("Top N groups", 2, 50, 10, step=1, key="anova_topn"))
-                    show_ci = st.checkbox("Hiện 95% CI", value=True, key="anova_ci")
-                    posthoc = st.checkbox("Pairwise (Holm adjust)", value=True, key="anova_posthoc")
-                with R:
-                    max_fit = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="anova_max"))
-                    fast = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="anova_fast")
-                    chart_sample = st.number_input("Chart sample overlay", 0, 200_000, 10_000, step=1_000, key="anova_samp")
-                    run = st.button("▶️ Run ANOVA", use_container_width=True, key="anova_run")
-
-            # ---- Compute & report ----
-            if run:
-                sub = DF[[y_col, fac_col]].copy()
-                if len(sub) > max_fit:
-                    sub = sub.sample(n=max_fit, random_state=42)
-                sub[fac_col] = topn_cat(sub[fac_col], n=topN)
-                y = pd.to_numeric(sub[y_col], errors="coerce")
-                g = sub[fac_col].astype(str)
-                ok = (~y.isna()) & (~g.isna())
-                y, g = y[ok], g[ok]
-
-                summ = group_summary(y, g).sort_values("mean", ascending=False)
-                st.dataframe(summ, use_container_width=True, hide_index=True)
-                if summ.shape[0] < 2 or len(y) < 3:
-                    st.warning("Không đủ nhóm/hàng để chạy ANOVA.")
-                    st.stop()
-
-                F, p, df1, df2, eta2, omega2, lev_p = one_way_anova_fast(y, g)
-
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("F", f"{F:.3f}")
-                m2.metric("p-value", f"{p:.4g}")
-                m3.metric("η²", f"{eta2:.3f}" if not np.isnan(eta2) else "—")
-                m4.metric("ω²", f"{omega2:.3f}" if not np.isnan(omega2) else "—")
-                st.caption(f"Levene (phương sai bằng nhau) p = {lev_p:.4g}")
-
-                # Chart
-                if fast or not show_ci:
-                    fig = px.bar(summ, x="group", y="mean",
-                                 labels={"group": fac_col, "mean": f"Mean {y_col}"})
-                else:
-                    fig = go.Figure(go.Bar(x=summ["group"], y=summ["mean"],
-                                           error_y=dict(type="data", array=summ["ci95"], visible=True)))
-                    fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Post-hoc (Welch t-test + Holm)
-                if posthoc and summ.shape[0] >= 2:
-                    groups = summ["group"].tolist()
-                    pvals, labs = [], []
-                    for i in range(len(groups)):
-                        gi = groups[i]
-                        xi = y[g == gi].values
-                        for j in range(i + 1, len(groups)):
-                            gj = groups[j]
-                            xj = y[g == gj].values
-                            if len(xi) >= 2 and len(xj) >= 2:
-                                tt = stats.ttest_ind(xi, xj, equal_var=False)
-                                pvals.append(float(tt.pvalue))
-                                labs.append(f"{gi} vs {gj}")
-                    if pvals:
-                        adj = holm_bonferroni(np.array(pvals), np.array(labs))
-                        # add mean diff
-                        diffs = []
-                        for pair in adj["pair"]:
-                            gi, gj = str(pair).split(" vs ")
-                            mi = summ.loc[summ["group"] == gi, "mean"].values[0]
-                            mj = summ.loc[summ["group"] == gj, "mean"].values[0]
-                            diffs.append(mi - mj)
-                        adj["mean_diff"] = diffs
-                        st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
-                        st.caption("Pairwise Welch t-test (Holm-adjusted). Xem `mean_diff` để biết nhóm cao/thấp hơn.")
-
-                strength = ("yếu" if (np.isnan(eta2) or eta2 < 0.06) else ("vừa" if eta2 < 0.14 else "mạnh"))
-                best = str(summ.iloc[0]["group"])
-                st.success(f"**Kết luận:** Khác biệt giữa các nhóm {strength} (η²={eta2:.2f}). Nhóm cao nhất: **{best}**.")
-
-        # ---- Optional: Repeated Measures ANOVA via statsmodels (nếu có) ----
-        with st.expander("🔁 ANOVA lặp (Repeated Measures, tùy chọn)", expanded=False):
-            try:
-                from statsmodels.stats.anova import AnovaRM
-                if len(NUM_COLS) == 0 or len(CAT_COLS) < 2:
-                    st.info("Cần 1 numeric (Y), 1 categorical (within) và 1 ID (categorical).")
-                else:
-                    c1, c2, c3, c4 = st.columns([1.2,1.2,1.2,0.8])
-                    y_rm = c1.selectbox("🎯 Y (numeric)", NUM_COLS, key="rm_y")
-                    id_rm = c2.selectbox("🧑‍🤝‍🧑 ID (subject)", [c for c in DF.columns if is_cat(c)], key="rm_id")
-                    within_rm = c3.selectbox("🏷️ Within-factor", [c for c in CAT_COLS if c != id_rm], key="rm_within")
-                    max_fit_rm = int(c4.number_input("Max rows", 10_000, 2_000_000, 300_000, step=5_000, key="rm_max"))
-                    run_rm = st.button("▶️ Run RM-ANOVA", key="rm_run")
-                    if run_rm:
-                        sub = DF[[y_rm, id_rm, within_rm]].dropna()
-                        if len(sub) > max_fit_rm:
-                            sub = sub.sample(max_fit_rm, random_state=42)
-                        counts = sub.groupby([id_rm, within_rm]).size().unstack(within_rm).dropna()
-                        keep_ids = counts.index
-                        sub = sub[sub[id_rm].isin(keep_ids)]
-                        if sub.empty:
-                            st.warning("Không đủ subject có đầy đủ điều kiện.")
+        mode_a = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
+    
+        # ---------- Independent (between) ----------
+        if mode_a == "Independent (between)":
+            if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
+                st.info("Cần tối thiểu 1 cột numeric (Y) và 1 cột categorical (factor).")
+            else:
+                # Header balanced: Left (design), Right (note)
+                box_top = st.container(border=True)
+                with box_top:
+                    L, R = st.columns(2)
+                    with L:
+                        st.markdown("### Thiết kế ANOVA — Independent (between)")
+                        y_col  = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="av_y")
+                        a_col  = st.selectbox("🏷️ Factor A (categorical)", CAT_COLS, key="av_a")
+                        use_two = st.toggle("➕ Two-way ANOVA (thêm Factor B)", value=False, key="av_two")
+                        b_col = None
+                        if use_two:
+                            b_choices = [c for c in CAT_COLS if c != a_col]
+                            b_col = st.selectbox("🏷️ Factor B (categorical)", b_choices, key="av_b")
+                        # type hints
+                        _type_hint("Dependent", y_col, "numeric")
+                        _type_hint("Factor A", a_col, "categorical")
+                        if use_two and b_col:
+                            _type_hint("Factor B", b_col, "categorical")
+                    with R:
+                        _cheatsheet_note()
+    
+                # Controls balanced
+                box_ctl = st.container(border=True)
+                with box_ctl:
+                    L, R = st.columns(2)
+                    with L:
+                        topN_A = int(st.number_input("Top N nhóm (Factor A)", 2, 50, 10, step=1, key="av_topn_a"))
+                        if use_two:
+                            topN_B = int(st.number_input("Top N nhóm (Factor B)", 2, 50, 8, step=1, key="av_topn_b"))
+                        show_ci  = st.checkbox("Hiện 95% CI", value=True, key="av_ci")
+                        posthoc  = (not use_two) and st.checkbox("Pairwise (Holm adjust)", value=True, key="av_posthoc")
+                    with R:
+                        max_fit  = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="av_max"))
+                        fast     = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="av_fast")
+                        chart_sample = st.number_input("Chart sample overlay", 0, 200_000, 10_000, step=1_000, key="av_samp")
+                        run = st.button("▶️ Run ANOVA", use_container_width=True, key="av_run")
+    
+                # Compute & report
+                if run:
+                    if not use_two:
+                        # ----- One-way ANOVA (giữ công thức nhanh) -----
+                        sub = DF[[y_col, a_col]].copy()
+                        if len(sub) > max_fit:
+                            sub = sub.sample(n=max_fit, random_state=42)
+                        sub[a_col] = topn_cat(sub[a_col], n=topN_A)
+    
+                        y = pd.to_numeric(sub[y_col], errors="coerce")
+                        g = sub[a_col].astype(str)
+                        ok = (~y.isna()) & (~g.isna())
+                        y, g = y[ok], g[ok]
+    
+                        summ = group_summary(y, g).sort_values("mean", ascending=False)
+                        st.dataframe(summ, use_container_width=True, hide_index=True)
+                        if summ.shape[0] < 2 or len(y) < 3:
+                            st.warning("Không đủ nhóm/hàng để chạy ANOVA.")
+                            st.stop()
+    
+                        F, p, df1, df2, eta2, omega2, lev_p = one_way_anova_fast(y, g)
+    
+                        # metric cards
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("F", f"{F:.3f}")
+                        m2.metric("p-value", f"{p:.4g}")
+                        m3.metric("η²", f"{eta2:.3f}" if not np.isnan(eta2) else "—")
+                        m4.metric("ω²", f"{omega2:.3f}" if not np.isnan(omega2) else "—")
+                        st.caption(f"Levene (phương sai bằng nhau) p = {lev_p:.4g}")
+    
+                        # chart
+                        if fast or not show_ci:
+                            fig = px.bar(summ, x="group", y="mean", labels={"group": a_col, "mean": f"Mean {y_col}"})
                         else:
-                            model = AnovaRM(sub, depvar=y_rm, subject=id_rm, within=[within_rm])
-                            res = model.fit()
-                            st.text(res.summary())
-                            st.success("Đọc nhanh: xem p-value của within-factor; nếu <0.05 ⇒ khác biệt theo điều kiện.")
-            except Exception:
-                st.info("Để chạy RM-ANOVA, cần `statsmodels`. Nếu chưa có, dùng tab **Nonparametric → Friedman**.")
+                            fig = go.Figure(go.Bar(x=summ["group"], y=summ["mean"],
+                                                   error_y=dict(type="data", array=summ["ci95"], visible=True)))
+                            fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
+                        st.plotly_chart(fig, use_container_width=True)
+    
+                        # post-hoc (Welch t-test + Holm)
+                        if posthoc and summ.shape[0] >= 2:
+                            groups = summ["group"].tolist()
+                            pvals, labs = [], []
+                            for i in range(len(groups)):
+                                gi = groups[i]; xi = y[g == gi].values
+                                for j in range(i+1, len(groups)):
+                                    gj = groups[j]; xj = y[g == gj].values
+                                    if len(xi) >= 2 and len(xj) >= 2:
+                                        tt = stats.ttest_ind(xi, xj, equal_var=False)
+                                        pvals.append(float(tt.pvalue)); labs.append(f"{gi} vs {gj}")
+                            if pvals:
+                                adj = holm_bonferroni(np.array(pvals), np.array(labs))
+                                diffs = []
+                                for pair in adj["pair"]:
+                                    gi, gj = str(pair).split(" vs ")
+                                    mi = summ.loc[summ["group"] == gi, "mean"].values[0]
+                                    mj = summ.loc[summ["group"] == gj, "mean"].values[0]
+                                    diffs.append(mi - mj)
+                                adj["mean_diff"] = diffs
+                                st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
+                                st.caption("Pairwise Welch t-test (Holm-adjusted).")
+    
+                        strength = ("yếu" if (np.isnan(eta2) or eta2 < 0.06) else ("vừa" if eta2 < 0.14 else "mạnh"))
+                        best = str(summ.iloc[0]["group"]) if len(summ) else "—"
+                        st.success(f"**Kết luận:** Khác biệt giữa các nhóm {strength} (η²={eta2:.2f}). Nhóm cao nhất: **{best}**.")
+    
+                    else:
+                        # ----- Two-way ANOVA (OLS + anova_lm) -----
+                        try:
+                            import statsmodels.api as sm
+                            import statsmodels.formula.api as smf
+                        except Exception:
+                            st.error("Two-way ANOVA cần `statsmodels`. Hãy cài đặt gói này.")
+                            st.stop()
+    
+                        sub = DF[[y_col, a_col, b_col]].dropna().copy()
+                        if len(sub) > max_fit:
+                            sub = sub.sample(n=max_fit, random_state=42)
+                        sub[a_col] = topn_cat(sub[a_col], n=topN_A)
+                        sub[b_col] = topn_cat(sub[b_col], n=topN_B)
+    
+                        # rename for formula
+                        d = sub.rename(columns={y_col: "Y", a_col: "A", b_col: "B"})
+                        d["Y"] = pd.to_numeric(d["Y"], errors="coerce")
+                        d = d.dropna(subset=["Y"])
+                        if d["A"].nunique() < 2 or d["B"].nunique() < 2:
+                            st.warning("Cần ≥2 mức cho mỗi factor sau khi Top-N.")
+                            st.stop()
+    
+                        model = smf.ols("Y ~ C(A) + C(B) + C(A):C(B)", data=d).fit()
+                        an_tbl = sm.stats.anova_lm(model, typ=2)  # sum_sq, df, F, PR(>F)
+                        st.dataframe(an_tbl, use_container_width=True)
+    
+                        # partial η² cho từng hiệu ứng
+                        if "Residual" in an_tbl.index and "sum_sq" in an_tbl.columns:
+                            ss_res = float(an_tbl.loc["Residual", "sum_sq"])
+                            def peta(row): 
+                                ss = float(row["sum_sq"])
+                                return ss / (ss + ss_res) if (ss + ss_res) > 0 else np.nan
+                            peta_vals = an_tbl.apply(peta, axis=1)
+                            pe = peta_vals.to_dict()
+                        else:
+                            pe = {}
+    
+                        # cards: A, B, A×B
+                        def card_val(name, col):
+                            if name in an_tbl.index:
+                                Fv = an_tbl.loc[name, "F"]; pv = an_tbl.loc[name, "PR(>F)"]
+                                ev = pe.get(name, np.nan)
+                                col.metric(name.replace("C(","").replace(")",""), f"F={Fv:.2f}", f"p={pv:.3g}")
+                                if not np.isnan(ev): col.caption(f"partial η² ≈ {ev:.3f}")
+                            else:
+                                col.metric(name, "—", "—")
+    
+                        c1, c2, c3 = st.columns(3)
+                        card_val("C(A)", c1); card_val("C(B)", c2); card_val("C(A):C(B)", c3)
+    
+                        # summary means (bar grouped)
+                        grp = d.groupby(["A","B"])["Y"].agg(n="count", mean="mean").reset_index()
+                        fig = px.bar(grp, x="A", y="mean", color="B", barmode="group",
+                                     labels={"A": a_col, "B": b_col, "mean": f"Mean {y_col}"})
+                        st.plotly_chart(fig, use_container_width=True)
+    
+                        # kết luận
+                        pA = float(an_tbl.loc["C(A)", "PR(>F)"]) if "C(A)" in an_tbl.index else np.nan
+                        pB = float(an_tbl.loc["C(B)", "PR(>F)"]) if "C(B)" in an_tbl.index else np.nan
+                        pI = float(an_tbl.loc["C(A):C(B)", "PR(>F)"]) if "C(A):C(B)" in an_tbl.index else np.nan
+                        msg = []
+                        if not np.isnan(pI) and pI < 0.05:
+                            msg.append("**có tương tác A×B** (p<0.05) — nên đọc theo từng lát cắt.")
+                        if not np.isnan(pA) and pA < 0.05:
+                            msg.append("Factor **A** có ý nghĩa.")
+                        if not np.isnan(pB) and pB < 0.05:
+                            msg.append("Factor **B** có ý nghĩa.")
+                        if not msg: msg = ["Chưa thấy hiệu ứng có ý nghĩa (p≥0.05)."]
+                        st.success(" ; ".join(msg))
+    
+        # ---------- Repeated (within) ----------
+        else:
+            cand_id = [c for c in DF.columns if is_cat(c)]
+            cand_factor = [c for c in CAT_COLS]
+            if len(NUM_COLS) == 0 or len(cand_id) == 0 or len(cand_factor) == 0:
+                st.info("Cần: 1 numeric (Y), 1 ID (subject), 1 categorical (condition).")
+            else:
+                # Header balanced
+                box_top_r = st.container(border=True)
+                with box_top_r:
+                    L, R = st.columns(2)
+                    with L:
+                        st.markdown("### Thiết kế ANOVA — Repeated (within)")
+                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="av_rep_y")
+                        id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="av_rep_id")
+                        cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="av_rep_cond")
+                        _type_hint("Y", y_col, "numeric")
+                        _type_hint("ID", id_col, "categorical")
+                        _type_hint("Condition", cond_col, "categorical")
+                    with R:
+                        _cheatsheet_note()
+    
+                box_ctl_r = st.container(border=True)
+                with box_ctl_r:
+                    L, R = st.columns(2)
+                    with L:
+                        max_subj_fit = int(st.number_input("Max subjects (fit)", 50, 50_000, 5_000, step=50, key="av_rep_max"))
+                    with R:
+                        plot_subj = int(st.number_input("Spaghetti sample", 0, 1000, 80, step=20, key="av_rep_sp"))
+                        run = st.button("▶️ Run", use_container_width=True, key="av_rep_run")
+    
+                if run:
+                    # Prefer RM-ANOVA via statsmodels; nếu không có, hướng dẫn dùng Friedman (đã có ở tab Nonparametric)
+                    try:
+                        from statsmodels.stats.anova import AnovaRM
+                    except Exception:
+
 
     # ====================== NONPARAMETRIC ======================
     with tab_np:
