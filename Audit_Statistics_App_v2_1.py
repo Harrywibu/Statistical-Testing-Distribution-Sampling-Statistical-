@@ -652,6 +652,187 @@ def spearman_flag(df: pd.DataFrame, cols: List[str]) -> bool:
         if (abs(sk) > 1) or (abs(ku) > 3) or (tail > 0.02) or (p_norm < 0.05):
             return True
     return False
+# ------------------------------ Rule Engine Core ------------------------------
+class Rule:
+    def __init__(self, id: str, name: str, scope: str, severity: str,
+                 condition: Callable[[Dict[str,Any]], bool],
+                 action: str, rationale: str):
+        self.id=id; self.name=name; self.scope=scope; self.severity=severity
+        self.condition=condition; self.action=action; self.rationale=rationale
+
+    def eval(self, ctx: Dict[str,Any]) -> Optional[Dict[str,Any]]:
+        try:
+            if self.condition(ctx):
+                return {
+                    'id': self.id,
+                    'name': self.name,
+                    'scope': self.scope,
+                    'severity': self.severity,
+                    'action': self.action,
+                    'rationale': self.rationale,
+                }
+        except Exception:
+            return None
+        return None
+
+SEV_ORDER = {'High':3,'Medium':2,'Low':1,'Info':0}
+
+def _get(ctx: Dict[str,Any], *keys, default=None):
+    cur = ctx
+    for k in keys:
+        if cur is None: return default
+        cur = cur.get(k) if isinstance(cur, dict) else None
+    return cur if cur is not None else default
+
+def build_rule_context() -> Dict[str,Any]:
+    ctx = {
+        'thr': {
+            'benford_diff': SS.get('risk_diff_threshold', 0.05),
+            'zero_ratio': 0.30,
+            'tail_p99': 0.02,
+            'off_hours': 0.15,
+            'weekend': 0.25,
+            'corr_high': 0.9,
+            'gap_p95_hours': 12.0,
+            'hhi': 0.2,
+        },
+        'last_numeric': SS.get('last_numeric_profile'),
+        'gof': SS.get('last_gof'),
+        'benford': {
+            'r1': SS.get('bf1_res'),
+            'r2': SS.get('bf2_res')
+        },
+        't4': SS.get('t4_results'),
+        'corr': SS.get('last_corr'),
+        'regression': {
+            'linear': SS.get('last_linear'),
+            'logistic': SS.get('last_logistic'),
+        },
+        'flags': SS.get('fraud_flags') or [],
+    }
+    # convenience derivations
+    r1 = ctx['benford'].get('r1')
+    if r1 and isinstance(r1, dict) and 'variance' in r1:
+        try:
+            ctx['benford']['r1_maxdiff'] = float(r1['variance']['diff_pct'].abs().max())
+        except Exception:
+            ctx['benford']['r1_maxdiff'] = None
+    r2 = ctx['benford'].get('r2')
+    if r2 and isinstance(r2, dict) and 'variance' in r2:
+        try:
+            ctx['benford']['r2_maxdiff'] = float(r2['variance']['diff_pct'].abs().max())
+        except Exception:
+            ctx['benford']['r2_maxdiff'] = None
+    return ctx
+
+def rules_catalog() -> List[Rule]:
+    R: List[Rule] = []
+    # Profiling — zero heavy
+    R.append(Rule(
+        id='NUM_ZERO_HEAVY', name='Zero‑heavy numeric', scope='profiling', severity='Medium',
+        condition=lambda c: _get(c,'last_numeric','zero_ratio', default=0)<=1 and _get(c,'last_numeric','zero_ratio', default=0) > _get(c,'thr','zero_ratio'),
+        action='Kiểm tra policy/threshold; χ² tỷ lệ theo đơn vị/nhóm; cân nhắc data quality.',
+        rationale='Tỉ lệ 0 cao có thể do ngưỡng phê duyệt/không sử dụng trường/ETL.'
+    ))
+    # Profiling — heavy right tail
+    R.append(Rule(
+        id='NUM_TAIL_HEAVY', name='Đuôi phải dày (>P99)', scope='profiling', severity='High',
+        condition=lambda c: _get(c,'last_numeric','tail_gt_p99', default=0) > _get(c,'thr','tail_p99'),
+        action='Benford 1D/2D; xem cut‑off cuối kỳ; rà soát outliers/drill‑down.',
+        rationale='Đuôi phải dày liên quan bất thường giá trị lớn/outliers.'
+    ))
+    # GoF suggests transform
+    R.append(Rule(
+        id='GOF_TRANSFORM', name='Nên biến đổi (log/Box‑Cox)', scope='profiling', severity='Info',
+        condition=lambda c: bool(_get(c,'gof','suggest')) and _get(c,'gof','best') in {'Lognormal','Gamma'},
+        action='Áp dụng log/Box‑Cox trước các test tham số hoặc dùng phi tham số.',
+        rationale='Phân phối lệch/không chuẩn — biến đổi giúp thỏa giả định tham số.'
+    ))
+    # Benford 1D
+    R.append(Rule(
+        id='BENFORD_1D_SEV', name='Benford 1D lệch', scope='benford', severity='High',
+        condition=lambda c: (_get(c,'benford','r1') is not None) and \
+            ((_get(c,'benford','r1','p', default=1.0) < 0.05) or (_get(c,'benford','r1','MAD', default=0) > 0.012) or \
+             (_get(c,'benford','r1_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
+        action='Drill‑down nhóm digit chênh nhiều; đối chiếu nhà CC/kỳ; kiểm tra cut‑off.',
+        rationale='Lệch Benford gợi ý thresholding/làm tròn/chia nhỏ hóa đơn.'
+    ))
+    # Benford 2D
+    R.append(Rule(
+        id='BENFORD_2D_SEV', name='Benford 2D lệch', scope='benford', severity='Medium',
+        condition=lambda c: (_get(c,'benford','r2') is not None) and \
+            ((_get(c,'benford','r2','p', default=1.0) < 0.05) or (_get(c,'benford','r2','MAD', default=0) > 0.012) or \
+             (_get(c,'benford','r2_maxdiff', default=0) >= _get(c,'thr','benford_diff'))),
+        action='Xem hot‑pair (19/29/…); đối chiếu chính sách giá; không mặc định là gian lận.',
+        rationale='Mẫu cặp chữ số đầu bất thường có thể phản ánh hành vi định giá.'
+    ))
+    # Categorical — HHI high
+    R.append(Rule(
+        id='HHI_HIGH', name='Tập trung nhóm cao (HHI)', scope='tests', severity='Medium',
+        condition=lambda c: _get(c,'t4','hhi','hhi', default=0) > _get(c,'thr','hhi'),
+        action='Đánh giá rủi ro phụ thuộc nhà cung cấp/GL; kiểm soát phê duyệt.',
+        rationale='HHI cao cho thấy rủi ro tập trung vào ít nhóm.'
+    ))
+    # Categorical — Chi-square significant
+    R.append(Rule(
+        id='CGOF_SIG', name='Chi‑square GoF khác Uniform', scope='tests', severity='Medium',
+        condition=lambda c: _get(c,'t4','cgof','p', default=1.0) < 0.05,
+        action='Drill‑down residual lớn; xem data quality/policy phân loại.',
+        rationale='Sai khác mạnh so với uniform gợi ý phân phối lệch có chủ đích.'
+    ))
+    # Time — Gap large
+    R.append(Rule(
+        id='TIME_GAP_LARGE', name='Khoảng cách thời gian lớn (p95)', scope='tests', severity='Low',
+        condition=lambda c: to_float(_get(c,'t4','gap','gaps','gap_hours','describe','95%', default=np.nan)) or False,
+        action='Xem kịch bản bỏ sót/chèn nghiệp vụ; đối chiếu lịch chốt.',
+        rationale='Khoảng trống dài bất thường có thể do quy trình/ghi nhận không liên tục.'
+    ))
+    # Correlation — high multicollinearity
+    def _corr_high(c: Dict[str,Any]):
+        M = _get(c,'corr');
+        if not isinstance(M, pd.DataFrame) or M.empty: return False
+        thr = _get(c,'thr','corr_high', default=0.9)
+        tri = M.where(~np.eye(len(M), dtype=bool))
+        return np.nanmax(np.abs(tri.values)) >= thr
+    R.append(Rule(
+        id='CORR_HIGH', name='Tương quan rất cao giữa biến', scope='correlation', severity='Info',
+        condition=_corr_high,
+        action='Kiểm tra đa cộng tuyến; cân nhắc loại bớt biến khi hồi quy.',
+        rationale='|r| cao gây bất ổn ước lượng tham số.'
+    ))
+    # Flags — duplicates
+    def _flags_dup(c: Dict[str,Any]):
+        return any((isinstance(x, dict) and 'Duplicate' in str(x.get('flag',''))) for x in _get(c,'flags', default=[]))
+    R.append(Rule(
+        id='DUP_KEYS', name='Trùng khóa/tổ hợp', scope='flags', severity='High',
+        condition=_flags_dup,
+        action='Rà soát entries trùng; kiểm soát nhập liệu/phê duyệt; root‑cause.',
+        rationale='Trùng lặp có thể là double posting/ghost entries.'
+    ))
+    # Flags — off hours/weekend
+    def _flags_off(c):
+        return any('off-hours' in str(x.get('flag','')).lower() for x in _get(c,'flags', default=[]))
+    R.append(Rule(
+        id='OFF_HOURS', name='Hoạt động off‑hours/ cuối tuần', scope='flags', severity='Medium',
+        condition=_flags_off,
+        action='Rà soát phân quyền/ca trực/automation; χ² theo khung giờ × status.',
+        rationale='Hoạt động bất thường ngoài giờ có thể là tín hiệu rủi ro.'
+    ))
+    # Regression — poor linear fit
+    R.append(Rule(
+        id='LIN_POOR', name='Linear Regression kém (R2 thấp)', scope='regression', severity='Info',
+        condition=lambda c: to_float(_get(c,'regression','linear','R2')) is not None and to_float(_get(c,'regression','linear','R2')) < 0.3,
+        action='Xem lại chọn biến/biến đổi/log/phi tuyến hoặc dùng mô hình khác.',
+        rationale='R2 thấp: mô hình chưa giải thích tốt biến thiên mục tiêu.'
+    ))
+    # Regression — logistic good AUC
+    R.append(Rule(
+        id='LOGIT_GOOD', name='Logistic phân biệt tốt (AUC ≥ 0.7)', scope='regression', severity='Info',
+        condition=lambda c: to_float(_get(c,'regression','logistic','ROC_AUC')) is not None and to_float(_get(c,'regression','logistic','ROC_AUC')) >= 0.7,
+        action='Dùng model hỗ trợ ưu tiên kiểm thử; xem fairness & leakage.',
+        rationale='AUC cao: có cấu trúc dự đoán hữu ích cho điều tra rủi ro.'
+    ))
+    return R
 
 def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFrame:
     rows=[]
