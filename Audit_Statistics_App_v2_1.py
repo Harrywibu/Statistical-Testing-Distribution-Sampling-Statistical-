@@ -2078,11 +2078,9 @@ with TAB5:
 
     # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
-
     # ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
     with tab_a:
         mode_a = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
-    
         # ---------- Independent (between) ----------
         if mode_a == "Independent (between)":
             if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
