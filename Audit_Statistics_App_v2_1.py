@@ -6,6 +6,23 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+def require_full_data(banner='Chưa có dữ liệu FULL. Hãy dùng **Load full data** trước khi chạy tab này.'):
+    df = SS.get('df')
+    import pandas as pd
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        st.info(banner); st.stop()
+    return df
+    
+def _first_match(colnames, patterns):
+    cols = [c for c in colnames]
+    low = {c: str(c).lower() for c in cols}
+    for p in patterns:
+        p = p.lower()
+        for c in cols:
+            if p in low[c]:
+                return c
+    return None
+
 def _decode_bytes_to_str(v):
     if isinstance(v, (bytes, bytearray)):
         for enc in ('utf-8','latin-1','cp1252'):
