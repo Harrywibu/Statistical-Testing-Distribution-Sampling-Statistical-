@@ -1624,74 +1624,72 @@ with TAB3:
         if np.isnan(V): return "—"
         return "yếu" if V < 0.3 else ("vừa" if V < 0.5 else "mạnh")
 
-   # ---------- UI (compact, typed selectors) ----------
-cfg = st.container(border=True)
-with cfg:
-    # Hàng 1: test + X + Y + Fast (+ Robust nếu NN)
-    c0, c1, c2, c3, c4 = st.columns([1.25, 1.1, 1.1, 0.7, 0.7])
-    test_choice = c0.selectbox(
-        "Loại test",
-        ["Numeric ↔ Numeric", "Numeric ↔ Categorical", "Categorical ↔ Categorical", "Trend (time series)"],
-        index=0,
-        help="Chọn rõ test để X/Y chỉ hiện cột phù hợp."
-    )
-    fast_mode = c3.toggle("⚡ Fast", value=(len(df) >= 200_000))
-
-    # --- Selectors gọn: lọc theo test ---
-    overlay_pts = 0; topn_cat = 10
-    robust = False
-    dt_col, period_lbl, trans, roll_w = None, "Month", "%Δ MoM", 6
-
-    if test_choice == "Numeric ↔ Numeric":
-        if len(NUM_LB) < 2:
-            st.warning("Thiếu cột numeric.")
-            st.stop()
-        x_label = c1.selectbox("X", NUM_LB, key="tc_x_nn", label_visibility="visible")
-        y_label = c2.selectbox("Y", [lb for lb in NUM_LB if lb != x_label], key="tc_y_nn", label_visibility="visible")
-        x_col, y_col = label_to_col[x_label], label_to_col[y_label]
-        robust = c4.toggle("Robust", value=False, help="Spearman cho dữ liệu lệch/outlier")
-        # Tùy chọn mở rộng — để ngắn gọn mặc định
-        with st.expander("⚙️ Tùy chọn", expanded=False):
-            colA, colB = st.columns([1,1])
-            overlay_pts = colA.slider("Overlay points", 0, 5000, 1200, step=300,
-                                      help="Lấy mẫu điểm chấm đè lên heatmap.", key="tc_overlay")
-
-    elif test_choice == "Numeric ↔ Categorical":
-        if (not NUM_LB) or (not CAT_LB):
-            st.warning("Cần ≥1 numeric và ≥1 categorical.")
-            st.stop()
-        x_label = c1.selectbox("Numeric", NUM_LB, key="tc_x_nc", label_visibility="visible")
-        y_label = c2.selectbox("Categorical", CAT_LB, key="tc_y_nc", label_visibility="visible")
-        num_col, cat_col = label_to_col[x_label], label_to_col[y_label]
-        with st.expander("⚙️ Tùy chọn", expanded=False):
-            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn")
-
-    elif test_choice == "Categorical ↔ Categorical":
-        if len(CAT_LB) < 2:
-            st.warning("Thiếu cột categorical.")
-            st.stop()
-        x_label = c1.selectbox("X", CAT_LB, key="tc_x_cc", label_visibility="visible")
-        y_label = c2.selectbox("Y", [lb for lb in CAT_LB if lb != x_label], key="tc_y_cc", label_visibility="visible")
-        x_col, y_col = label_to_col[x_label], label_to_col[y_label]
-        with st.expander("⚙️ Tùy chọn", expanded=False):
-            topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn_cc")
-
-    else:  # Trend (time series)
-        if len(NUM_LB) < 2 or not DT_LB:
-            st.warning("Cần ≥2 numeric và ≥1 datetime.")
-            st.stop()
-        x_label = c1.selectbox("X", NUM_LB, key="tc_x_tr", label_visibility="visible")
-        y_label = c2.selectbox("Y", [lb for lb in NUM_LB if lb != x_label], key="tc_y_tr", label_visibility="visible")
-        dt_label = c4.selectbox("🗓", DT_LB, key="tc_dt_tr", label_visibility="collapsed",
-                                help="Cột thời gian")
-        x_col, y_col, dt_col = label_to_col[x_label], label_to_col[y_label], label_to_col[dt_label]
-        # Hàng 2 gọn cho tham số thời gian
-        t1, t2, t3 = st.columns([1.0, 1.0, 1.0])
-        period_lbl = t1.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period", label_visibility="visible")
-        trans = t2.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans", label_visibility="visible")
-        roll_w = t3.slider("Rolling r (W)", 3, 24, 6, key="tc_roll", label_visibility="visible")
-
-# (giữ nguyên phần ROUTING phía dưới)
+ # ---------- UI (compact, typed selectors) ----------
+    cfg = st.container(border=True)
+    with cfg:
+        # Hàng 1: test + X + Y + Fast (+ Robust nếu NN)
+        c0, c1, c2, c3, c4 = st.columns([1.25, 1.1, 1.1, 0.7, 0.7])
+        test_choice = c0.selectbox(
+            "Loại test",
+            ["Numeric ↔ Numeric", "Numeric ↔ Categorical", "Categorical ↔ Categorical", "Trend (time series)"],
+            index=0,
+            help="Chọn rõ test để X/Y chỉ hiện cột phù hợp."
+        )
+        fast_mode = c3.toggle("⚡ Fast", value=(len(df) >= 200_000))
+    
+        # --- Selectors gọn: lọc theo test ---
+        overlay_pts = 0; topn_cat = 10
+        robust = False
+        dt_col, period_lbl, trans, roll_w = None, "Month", "%Δ MoM", 6
+    
+        if test_choice == "Numeric ↔ Numeric":
+            if len(NUM_LB) < 2:
+                st.warning("Thiếu cột numeric.")
+                st.stop()
+            x_label = c1.selectbox("X", NUM_LB, key="tc_x_nn", label_visibility="visible")
+            y_label = c2.selectbox("Y", [lb for lb in NUM_LB if lb != x_label], key="tc_y_nn", label_visibility="visible")
+            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
+            robust = c4.toggle("Robust", value=False, help="Spearman cho dữ liệu lệch/outlier")
+            # Tùy chọn mở rộng — để ngắn gọn mặc định
+            with st.expander("⚙️ Tùy chọn", expanded=False):
+                colA, colB = st.columns([1,1])
+                overlay_pts = colA.slider("Overlay points", 0, 5000, 1200, step=300,
+                                          help="Lấy mẫu điểm chấm đè lên heatmap.", key="tc_overlay")
+    
+        elif test_choice == "Numeric ↔ Categorical":
+            if (not NUM_LB) or (not CAT_LB):
+                st.warning("Cần ≥1 numeric và ≥1 categorical.")
+                st.stop()
+            x_label = c1.selectbox("Numeric", NUM_LB, key="tc_x_nc", label_visibility="visible")
+            y_label = c2.selectbox("Categorical", CAT_LB, key="tc_y_nc", label_visibility="visible")
+            num_col, cat_col = label_to_col[x_label], label_to_col[y_label]
+            with st.expander("⚙️ Tùy chọn", expanded=False):
+                topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn")
+    
+        elif test_choice == "Categorical ↔ Categorical":
+            if len(CAT_LB) < 2:
+                st.warning("Thiếu cột categorical.")
+                st.stop()
+            x_label = c1.selectbox("X", CAT_LB, key="tc_x_cc", label_visibility="visible")
+            y_label = c2.selectbox("Y", [lb for lb in CAT_LB if lb != x_label], key="tc_y_cc", label_visibility="visible")
+            x_col, y_col = label_to_col[x_label], label_to_col[y_label]
+            with st.expander("⚙️ Tùy chọn", expanded=False):
+                topn_cat = st.slider("Top N category", 3, 30, 10, key="tc_topn_cc")
+    
+        else:  # Trend (time series)
+            if len(NUM_LB) < 2 or not DT_LB:
+                st.warning("Cần ≥2 numeric và ≥1 datetime.")
+                st.stop()
+            x_label = c1.selectbox("X", NUM_LB, key="tc_x_tr", label_visibility="visible")
+            y_label = c2.selectbox("Y", [lb for lb in NUM_LB if lb != x_label], key="tc_y_tr", label_visibility="visible")
+            dt_label = c4.selectbox("🗓", DT_LB, key="tc_dt_tr", label_visibility="collapsed",
+                                    help="Cột thời gian")
+            x_col, y_col, dt_col = label_to_col[x_label], label_to_col[y_label], label_to_col[dt_label]
+            # Hàng 2 gọn cho tham số thời gian
+            t1, t2, t3 = st.columns([1.0, 1.0, 1.0])
+            period_lbl = t1.selectbox("Period", ["Month","Quarter","Year"], index=0, key="tc_period", label_visibility="visible")
+            trans = t2.selectbox("Biến đổi", ["%Δ MoM","%Δ YoY","MA(3)","MA(6)"], index=0, key="tc_trans", label_visibility="visible")
+            roll_w = t3.slider("Rolling r (W)", 3, 24, 6, key="tc_roll", label_visibility="visible")
 
     # ---------- ROUTING ----------
     if test_choice == "Numeric ↔ Numeric":
