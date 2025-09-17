@@ -2078,9 +2078,10 @@ with TAB5:
 
     # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
-    # ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
+# ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
     with tab_a:
         mode_a = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
+    
         # ---------- Independent (between) ----------
         if mode_a == "Independent (between)":
             if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
@@ -2296,7 +2297,43 @@ with TAB5:
                     try:
                         from statsmodels.stats.anova import AnovaRM
                     except Exception:
-                        
+                        st.error("RM-ANOVA cần `statsmodels`. Bạn có thể dùng tab **Nonparametric → Friedman** như một thay thế.")
+                        st.stop()
+    
+                    d0 = DF[[y_col, id_col, cond_col]].dropna().copy()
+                    cnt = d0.groupby([id_col, cond_col]).size().unstack(cond_col).dropna()
+                    keep_ids = cnt.index
+                    d = d0[d0[id_col].isin(keep_ids)]
+                    # limit subjects
+                    uniq_ids = d[id_col].unique()
+                    if len(uniq_ids) > max_subj_fit:
+                        keep = pd.Index(uniq_ids).sample(max_subj_fit, random_state=42)
+                        d = d[d[id_col].isin(keep)]
+    
+                    if d.empty or d[cond_col].nunique() < 2:
+                        st.warning("Không đủ subject/điều kiện để chạy RM-ANOVA.")
+                        st.stop()
+    
+                    model = AnovaRM(d, depvar=y_col, subject=id_col, within=[cond_col])
+                    res = model.fit()
+                    st.text(res.summary())
+    
+                    # Means + spaghetti
+                    pivot = d.pivot_table(index=id_col, columns=cond_col, values=y_col, aggfunc="mean")
+                    levels = list(pivot.columns)
+                    means = pivot.mean().reset_index()
+                    means.columns = ["cond","mean"]
+                    fig = px.line(means, x="cond", y="mean", markers=True)
+                    st.plotly_chart(fig, use_container_width=True)
+                    if plot_subj > 0 and pivot.shape[0] > 0:
+                        samp = pivot.sample(min(plot_subj, pivot.shape[0]), random_state=42)
+                        for _, row in samp.iterrows():
+                            fig.add_trace(go.Scatter(x=levels, y=row.values, mode="lines", opacity=0.25, showlegend=False))
+                        st.plotly_chart(fig, use_container_width=True)
+    
+                    # Quick read
+                    st.success("**Kết luận:** xem p-value của within-factor trong bảng; p<0.05 ⇒ có khác biệt giữa các điều kiện.")
+
     # ====================== NONPARAMETRIC ======================
     with tab_np:
         mode = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
