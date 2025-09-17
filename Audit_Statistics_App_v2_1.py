@@ -2066,38 +2066,38 @@ with TAB5:
         st.caption(f"{icon} {label}: `{col}` · {actual} (yêu cầu: {expect})")
 
     def _cheatsheet_note(expanded: bool = False, title: str = "📝 Gợi ý chọn test nhanh"):
-    with st.expander(title, expanded=expanded):
-        # Thu nhỏ font cho gợi ý
-        st.markdown(
-            """
-            <style>
-              .mini-note p, .mini-note li { margin-bottom: 0.15rem; }
-              .mini-note { font-size: 0.92rem; line-height: 1.25; }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            """
-            <div class="mini-note">
-            <strong>➤ Xác định nhanh theo mục tiêu & dữ liệu</strong><br><br>
-
-            <strong>So sánh trung bình/median (Y numeric)</strong><br><br>
-
-            <em>Độc lập (between):</em><br>
-            • 2 nhóm → <strong>Welch t-test</strong> (mặc định; an toàn khi phương sai/size khác nhau) • thay thế: <em>Mann-Whitney U</em> (phi tham số).<br>
-            • ≥3 nhóm → <strong>One-way ANOVA</strong> (nếu phương sai gần bằng) / <strong>Welch ANOVA</strong> (không bằng) • thay thế: <em>Kruskal-Wallis</em>.<br>
-            • 2 yếu tố → <strong>Two-way ANOVA</strong> (+ kiểm <em>interaction</em> A×B).<br>
-            • Có biến kiểm soát → <strong>ANCOVA</strong> (ANOVA + covariate numeric).<br><br>
-
-            <em>Lặp lại (within, đo nhiều lần trên cùng đối tượng):</em><br>
-            • 2 điều kiện → <strong>Paired t-test</strong> • thay: <em>Wilcoxon signed-rank</em>.<br>
-            • ≥3 điều kiện → <strong>RM-ANOVA</strong> • thay: <em>Friedman</em>.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
+        with st.expander(title, expanded=expanded):
+            # Thu nhỏ font cho gợi ý
+            st.markdown(
+                """
+                <style>
+                  .mini-note p, .mini-note li { margin-bottom: 0.15rem; }
+                  .mini-note { font-size: 0.92rem; line-height: 1.25; }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                """
+                <div class="mini-note">
+                <strong>➤ Xác định nhanh theo mục tiêu & dữ liệu</strong><br><br>
+    
+                <strong>So sánh trung bình/median (Y numeric)</strong><br><br>
+    
+                <em>Độc lập (between):</em><br>
+                • 2 nhóm → <strong>Welch t-test</strong> (mặc định; an toàn khi phương sai/size khác nhau) • thay thế: <em>Mann-Whitney U</em> (phi tham số).<br>
+                • ≥3 nhóm → <strong>One-way ANOVA</strong> (nếu phương sai gần bằng) / <strong>Welch ANOVA</strong> (không bằng) • thay thế: <em>Kruskal-Wallis</em>.<br>
+                • 2 yếu tố → <strong>Two-way ANOVA</strong> (+ kiểm <em>interaction</em> A×B).<br>
+                • Có biến kiểm soát → <strong>ANCOVA</strong> (ANOVA + covariate numeric).<br><br>
+    
+                <em>Lặp lại (within, đo nhiều lần trên cùng đối tượng):</em><br>
+                • 2 điều kiện → <strong>Paired t-test</strong> • thay: <em>Wilcoxon signed-rank</em>.<br>
+                • ≥3 điều kiện → <strong>RM-ANOVA</strong> • thay: <em>Friedman</em>.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
 
     # ===== Tabs =====
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
