@@ -2298,8 +2298,7 @@ with TAB5:
                     try:
                         from statsmodels.stats.anova import AnovaRM
                     except Exception:
-
-
+                        
     # ====================== NONPARAMETRIC ======================
     with tab_np:
         mode = st.radio("Thiết kế", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
