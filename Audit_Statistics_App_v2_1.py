@@ -127,15 +127,6 @@ except Exception:
 st.set_page_config(page_title='Audit Statistics', layout='wide', initial_sidebar_state='expanded')
 SS = st.session_state
 
-
-# -- Apply schema mapping once after full data is loaded --
-try:
-    if SS.get('df') is not None and not SS.get('_schema_mapped_v2', False):
-        SS['df'], SS['std_cols'] = apply_schema_mapping(SS['df'])
-        SS['_schema_mapped_v2'] = True
-except Exception as _e:
-    st.warning(f'Schema mapping warning: {str(_e)}')
-
 DEFAULTS = {
     'bins': 50,
     'log_scale': False,
