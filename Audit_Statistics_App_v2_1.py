@@ -827,7 +827,7 @@ with TAB1:
     PERIOD_MAP = {"MS":"M","QS":"Q","YS":"Y"}
     YOY_LAG    = {"MS":12,"QS":4,"YS":1}
 
-   # ---------------- 0) Cấu hình dữ liệu (bắt buộc) — 2 hàng gọn ----------------
+# ---------------- 0) Cấu hình dữ liệu (bắt buộc) — 2 hàng ----------------
     st.markdown("### ⚙️ Cấu hình dữ liệu (bắt buộc)")
     
     def _pick(col, label, key):
@@ -835,8 +835,8 @@ with TAB1:
         return None if val == "—" else val
     
     with st.container(border=True):
-        # ===== HÀNG 1: Time / IDs / Dimensions (6 ô song song) =====
-        c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 1, 1, 1, 1])
+        # HÀNG 1 — Time / IDs / Dimensions (6 ô)
+        c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
         time_col    = _pick(c1, "🕒 Time",        "cfg_time")
         order_col   = _pick(c2, "🧾 Order/Doc",   "cfg_order")
         cust_col    = _pick(c3, "👤 Customer",    "cfg_cust")
@@ -844,50 +844,49 @@ with TAB1:
         region_col  = _pick(c5, "🌍 Region",      "cfg_region")
         channel_col = _pick(c6, "🛒 Channel",     "cfg_channel")
     
-        # ===== HÀNG 2: Schema + Value columns (tất cả nằm trên 1 hàng) =====
+        # HÀNG 2 — Schema + Value columns (tất cả nằm trên 1 hàng)
         left, right = st.columns([0.9, 3.1])
-        schema = left.segmented_control(
-            "Schema",
-            ["Amount + Type column", "Separate numeric columns"],
-            key="cfg_schema"
-        )
+        schema = left.segmented_control("Schema", ["Amount + Type (2-type cols)", "Separate numeric cols"], key="cfg_schema")
     
-        if schema == "Amount + Type column":
-            # 2 ô bắt buộc: Amount & Type
-            a1, a2 = right.columns([1, 1])
-            amt_col  = _pick(a1, "💰 Amount", "cfg_amt")
-            type_col = _pick(a2, "🏷️ Type",   "cfg_type")
+        if schema == "Amount + Type (2-type cols)":
+            # 3 ô: Amount + Txn type + Adj type
+            a1, a2, a3 = right.columns([1, 1, 1])
+            amt_col   = _pick(a1, "💰 Amount",         "cfg_amt")
+            type_col  = _pick(a2, "🏷️ Txn type",       "cfg_txn_type")   # Sales/Purchase/Transfer/Returns
+            adj_col   = _pick(a3, "🏷️ Adj type",       "cfg_adj_type")   # Sales/Discount
     
-            # Mapping 6 nhóm — để trong expander (mặc định đóng) để vẫn giữ đúng 2 hàng tổng thể
-            if type_col:
-                _types = list(pd.Series(df[type_col].astype(str).unique()).sort_values())[:2000]
-            else:
-                _types = []
+            # Mapping để trong 2 expander nhỏ — vẫn giữ đúng 2 hàng tổng thể
+            uniq_txn = list(pd.Series(df[type_col].astype(str).unique()).sort_values())[:2000] if type_col else []
+            uniq_adj = list(pd.Series(df[adj_col].astype(str).unique()).sort_values())[:2000] if adj_col else []
     
-            with st.expander("Mapping Type (Sales / Purchase / Transfer-in / Transfer-out / Returns / Discount)", expanded=False):
-                e1, e2, e3, e4, e5, e6 = st.columns(6)
-                val_sales    = e1.multiselect("Sales",        options=_types, default=[], key="map_sales")
-                val_purchase = e2.multiselect("Purchase",     options=_types, default=[], key="map_purchase")
-                val_tin      = e3.multiselect("Transfer-in",  options=_types, default=[], key="map_tin")
-                val_tout     = e4.multiselect("Transfer-out", options=_types, default=[], key="map_tout")
-                val_returns  = e5.multiselect("Returns",      options=_types, default=[], key="map_returns")
-                val_disc     = e6.multiselect("Discount",     options=_types, default=[], key="map_disc")
+            with st.expander("Mapping Txn (Sales/Purchase/T-in/T-out/Returns)", expanded=False):
+                t1, t2, t3, t4, t5 = st.columns(5)
+                val_txn_sales   = t1.multiselect("Sales",        uniq_txn, key="map_txn_sales")
+                val_purchase    = t2.multiselect("Purchase",     uniq_txn, key="map_purchase")
+                val_tin         = t3.multiselect("Transfer-in",  uniq_txn, key="map_tin")
+                val_tout        = t4.multiselect("Transfer-out", uniq_txn, key="map_tout")
+                val_returns     = t5.multiselect("Returns",      uniq_txn, key="map_returns")
+    
+            with st.expander("Mapping Adj (Sales/Discount)", expanded=False):
+                a1_, a2_ = st.columns(2)
+                val_adj_sales = a1_.multiselect("Adj = Sales",    uniq_adj, key="map_adj_sales")
+                val_adj_disc  = a2_.multiselect("Adj = Discount", uniq_adj, key="map_adj_disc")
     
             # đảm bảo biến tồn tại nếu user chưa mở expander
-            for _v in ["val_sales","val_purchase","val_tin","val_tout","val_returns","val_disc"]:
+            for _v in ["val_txn_sales","val_purchase","val_tin","val_tout","val_returns","val_adj_sales","val_adj_disc"]:
                 if _v not in locals(): locals()[_v] = []
     
         else:
-            # Separate numeric columns — 5 ô song song trên cùng 1 hàng
-            b1, b2, b3, b4, b5 = right.columns([1, 1, 1, 1, 1])
+            # Separate numeric columns — 5 ô, nằm trên cùng 1 hàng
+            b1, b2, b3, b4, b5 = right.columns([1,1,1,1,1])
             sales_col   = _pick(b1, "Sales",            "cfg_sales")
             returns_col = _pick(b2, "Returns (opt)",    "cfg_ret")
             disc_col    = _pick(b3, "Discount (opt)",   "cfg_disc")
             tin_col     = _pick(b4, "Transfer-in (opt)","cfg_tin")
             tout_col    = _pick(b5, "Transfer-out (opt)","cfg_tout")
-    
-            # giá trị mapping không dùng ở schema này nhưng tạo biến rỗng để code sau không lỗi
-            val_sales = val_purchase = val_tin = val_tout = val_returns = val_disc = []
+            # tạo biến rỗng cho nhánh còn lại
+            val_txn_sales = val_purchase = val_tin = val_tout = val_returns = val_adj_sales = val_adj_disc = []
+            type_col = adj_col = None
 
 
     # ---------------- 1) Cấu hình hiển thị ----------------
@@ -901,100 +900,128 @@ with TAB1:
     period = _norm_period_value(period_raw)
     rule   = RULE_MAP[period]
 
-    # ---------------- 2) Chuẩn hóa series giá trị ----------------
+   # ---------------- 2) Chuẩn hóa series theo schema ----------------
     if not time_col:
         st.warning("Vui lòng chọn cột thời gian.")
         st.stop()
+    
     s_time = pd.to_datetime(df[time_col], errors="coerce")
     valid_mask = ~s_time.isna()
-
-    if schema == "Amount + Type column":
-        if not (amt_col and type_col):
-            st.warning("Vui lòng chọn Amount và Type.")
+    
+    if schema == "Amount + Type (2-type cols)":
+        if not (amt_col and type_col and adj_col):
+            st.warning("Vui lòng chọn Amount, Txn type và Adj type.")
             st.stop()
-        s_amt  = pd.to_numeric(df[amt_col], errors="coerce").fillna(0.0)
-        s_type = df[type_col].astype(str)
-
-        def _is(vset):  # kiểm tra thuộc nhóm
-            return s_type.isin(set(map(str, vset))) if vset else pd.Series(False, index=df.index)
-
-        sales_s     = s_amt.where(_is(val_sales),    0.0)
-        purchase_s  = s_amt.where(_is(val_purchase), 0.0)  # để tham khảo nếu cần
-        tin_s       = s_amt.where(_is(val_tin),      0.0)
-        tout_s      = s_amt.where(_is(val_tout),     0.0)
-        returns_s   = s_amt.where(_is(val_returns),  0.0)
-        disc_s      = s_amt.where(_is(val_disc),     0.0)
+    
+        s_amt   = pd.to_numeric(df[amt_col], errors="coerce").fillna(0.0)
+        s_txn   = df[type_col].astype(str)
+        s_adj   = df[adj_col].astype(str)
+    
+        def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=df.index)
+    
+        # Txn mask
+        m_txn_sales = _isin(s_txn, val_txn_sales)
+        m_purchase  = _isin(s_txn, val_purchase)
+        m_tin       = _isin(s_txn, val_tin)
+        m_tout      = _isin(s_txn, val_tout)
+        m_returns   = _isin(s_txn, val_returns)
+    
+        # Adj mask (độc lập)
+        m_adj_sales = _isin(s_adj, val_adj_sales)
+        m_adj_disc  = _isin(s_adj, val_adj_disc)
+    
+        # Amount theo nhóm
+        # Sales dùng Adj=Sales (bao trùm cả txn sales/transfer nếu cùng là bán thu)
+        sales_s     = s_amt.where(m_adj_sales, 0.0)
+        disc_s      = s_amt.where(m_adj_disc,  0.0)   # thường âm, ta sẽ lấy abs() khi tính %Disc
+    
+        # Transfer tính theo txn (được tính vào Net như bán nội bộ)
+        tin_s       = s_amt.where(m_tin,  0.0)
+        tout_s      = s_amt.where(m_tout, 0.0)
+    
+        # Returns theo txn
+        returns_s   = s_amt.where(m_returns, 0.0)
+    
     else:
         def _num(col): return pd.to_numeric(df[col], errors="coerce").fillna(0.0) if col else pd.Series(0.0, index=df.index)
-        sales_s, returns_s, disc_s, tin_s, tout_s = _num(sales_col), _num(returns_col), _num(disc_col), _num(tin_col), _num(tout_col)
-        purchase_s = pd.Series(0.0, index=df.index)  # không có type riêng
-
-    # Quy ước NET: Sales + Transfer(in/out) − |Returns| − |Discount|
+        sales_s   = _num(sales_col)
+        returns_s = _num(returns_col)
+        disc_s    = _num(disc_col)
+        tin_s     = _num(tin_col)
+        tout_s    = _num(tout_col)
+    
+    # Net = Sales + Transfer(in/out) − |Returns| − |Discount|
     transfer_s   = tin_s.abs() + tout_s.abs()
-    sales_pos    = sales_s.abs()      # để so sánh với discount theo yêu cầu (đưa về dương)
+    sales_pos    = sales_s.abs()          # để so sánh với discount
     discount_abs = disc_s.abs()
     returns_abs  = returns_s.abs()
     net_s        = sales_s + transfer_s - returns_abs - discount_abs
 
-    # ---------------- 3) KPI mới ----------------
+    # ---------------- 3) KPI — nhỏ gọn, 2 hàng × 4 thẻ ----------------
     orders_total = (df[order_col].nunique() if order_col else len(df))
-    # product chỉ đếm trên dòng phát sinh Sales/Transfer
+    
+    # Chỉ đếm product trên dòng có doanh thu dương (Sales hoặc Transfer)
     product_mask = ((sales_pos + transfer_s) > 0)
     prod_total   = (df.loc[product_mask, prod_col].nunique() if prod_col else np.nan)
-
-    # %Sales & %Transfer trên (Sales + Transfer)
+    
     sales_total_pos    = float(sales_pos.sum())
     transfer_total_pos = float(transfer_s.sum())
     pos_total          = sales_total_pos + transfer_total_pos
     pct_sales          = (sales_total_pos/pos_total*100.0) if pos_total>0 else np.nan
     pct_transfer       = (transfer_total_pos/pos_total*100.0) if pos_total>0 else np.nan
-
-    # Discount% so với Sales (dương): theo quý / TB tháng (của năm đầy đủ gần nhất) / theo năm (last full year)
-    # Theo quý (last quarter)
-    q_idx = s_time.dt.to_period("Q").dt.start_time
-    q_agg = pd.DataFrame({"q": q_idx, "sales": sales_pos, "disc": discount_abs}).groupby("q").sum()
-    disc_pct_quarter = (q_agg["disc"].iloc[-1] / q_agg["sales"].iloc[-1]) if (not q_agg.empty and q_agg["sales"].iloc[-1] > 0) else np.nan
-
-    # Theo tháng
+    net_total          = float(net_s.sum())
+    
+    # Discount% theo đúng Excel:
+    #   - Tháng:  disc_m = sum(abs(discount)) ; sales_m = sum(abs(sales)) ; pct_m = disc_m/sales_m
+    #   - Quý:    tổng discount dương / tổng sales dương của quý
+    #   - Năm:    tương tự
     m_idx = s_time.dt.to_period("M").dt.start_time
-    m_agg = pd.DataFrame({"m": m_idx, "sales": sales_pos, "disc": discount_abs}).groupby("m").sum()
-    m_agg = m_agg[m_agg["sales"] > 0]
-
-    # Năm đầy đủ gần nhất (đủ 12 tháng)
-    if not m_agg.empty:
-        m_agg["year"] = m_agg.index.year
-        count_months = m_agg.groupby("year").size()
-        full_years   = count_months[count_months >= 12].index.tolist()
+    q_idx = s_time.dt.to_period("Q").dt.start_time
+    y_idx = s_time.dt.to_period("Y").dt.start_time
+    
+    mon_df = pd.DataFrame({"m": m_idx, "sales": sales_pos, "disc": discount_abs})
+    q_df   = pd.DataFrame({"q": q_idx, "sales": sales_pos, "disc": discount_abs})
+    y_df   = pd.DataFrame({"y": y_idx, "sales": sales_pos, "disc": discount_abs})
+    
+    # Last quarter %
+    q_agg = q_df.groupby("q").sum()
+    disc_pct_quarter = (q_agg["disc"].iloc[-1] / q_agg["sales"].iloc[-1]) if (not q_agg.empty and q_agg["sales"].iloc[-1] > 0) else np.nan
+    
+    # Avg monthly of last full year & Year %
+    mon = mon_df.groupby("m").sum()
+    mon = mon[mon["sales"] > 0]
+    if not mon.empty:
+        mon["year"] = mon.index.year
+        m_cnt = mon.groupby("year").size()
+        full_years = m_cnt[m_cnt >= 12].index.tolist()
         if full_years:
-            last_full_year = max(full_years)
-            m_y = m_agg[m_agg["year"] == last_full_year]
-            # TB tháng của năm đầy đủ gần nhất
-            disc_pct_month_avg = (m_y["disc"]/m_y["sales"]).mean()
-            # Tỷ lệ cả năm (disc / sales) của năm đầy đủ gần nhất
-            disc_pct_year = m_y["disc"].sum() / m_y["sales"].sum()
+            ly = max(full_years)
+            mon_ly = mon[mon["year"] == ly]
+            disc_pct_month_avg = (mon_ly["disc"]/mon_ly["sales"]).mean()           # trung bình % theo tháng trong năm đầy đủ
+            disc_pct_year      =  mon_ly["disc"].sum() / mon_ly["sales"].sum()    # % cả năm đầy đủ gần nhất
         else:
             disc_pct_month_avg = np.nan
-            disc_pct_year = np.nan
+            disc_pct_year      = np.nan
     else:
         disc_pct_month_avg = np.nan
-        disc_pct_year = np.nan
-
-    net_total = float(net_s.sum())
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Net Sales", f"{net_total:,.0f}")
-    k2.metric("Orders", f"{orders_total:,.0f}")
-    k3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
-    k4.metric("%Sales (of Sales+Transfer)", f"{pct_sales:.1f}%" if not np.isnan(pct_sales) else "—")
-    k5.metric("%Transfer (of Sales+Transfer)", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
-
-    d1, d2, d3 = st.columns(3)
-    d1.metric("Discount% (last quarter)", f"{(disc_pct_quarter*100):.1f}%" if not np.isnan(disc_pct_quarter) else "—")
-    d2.metric("Discount% avg monthly (last full year)", f"{(disc_pct_month_avg*100):.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
-    d3.metric("Discount% (last full year)", f"{(disc_pct_year*100):.1f}%" if not np.isnan(disc_pct_year) else "—")
+        disc_pct_year      = np.nan
+    
+    # Hàng 1
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Net Sales", f"{net_total:,.0f}")
+    c2.metric("Orders", f"{orders_total:,.0f}")
+    c3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
+    c4.metric("%Sales (of Sales+Transfer)", f"{pct_sales:.1f}%" if not np.isnan(pct_sales) else "—")
+    
+    # Hàng 2
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("%Transfer (of Sales+Transfer)", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
+    d2.metric("Discount% (last quarter)", f"{(disc_pct_quarter*100):.1f}%" if not np.isnan(disc_pct_quarter) else "—")
+    d3.metric("Discount% avg monthly (last full year)", f"{(disc_pct_month_avg*100):.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
+    d4.metric("Discount% (last full year)", f"{(disc_pct_year*100):.1f}%" if not np.isnan(disc_pct_year) else "—")
 
     # ---------------- 4) Dimension filter (tuỳ chọn) ----------------
-    st.markdown("#### 🎛️ Lọc Dimension cho biểu đồ đóng góp")
+    st.markdown("#### 🎛️ Lọc Dimension (X) cho biểu đồ (Optional) ")
     if dim_col and dim_col != "—":
         count_by_default = order_col or cust_col or prod_col
         count_by = st.selectbox("Count unique by", ["—"] + [c for c in [order_col, cust_col, prod_col] if c], index=0 if not count_by_default else 1)
