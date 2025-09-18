@@ -827,50 +827,68 @@ with TAB1:
     PERIOD_MAP = {"MS":"M","QS":"Q","YS":"Y"}
     YOY_LAG    = {"MS":12,"QS":4,"YS":1}
 
-    # ---------------- 0) Cấu hình dữ liệu (2 hàng gọn) ----------------
-    st.markdown("### ⚙️ Cấu hình dữ liệu ")
+   # ---------------- 0) Cấu hình dữ liệu (bắt buộc) — 2 hàng gọn ----------------
+    st.markdown("### ⚙️ Cấu hình dữ liệu (bắt buộc)")
+    
     def _pick(col, label, key):
-    val = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
-    return None if val == "—" else val
+        val = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
+        return None if val == "—" else val
     
     with st.container(border=True):
-        # HÀNG 1 — Time/ID/Dimensions (6 cột)
-        r1c1, r1c2, r1c3, r1c4, r1c5, r1c6 = st.columns([1,1,1,1,1,1])
-        time_col    = _sb("🕒 Time (datetime)", df.columns, key="cfg_time")
-        order_col   = _sb("🧾 Order/Doc ID",   df.columns, key="cfg_order")
-        cust_col    = _sb("👤 Customer ID",    df.columns, key="cfg_cust")
-        prod_col    = _sb("📦 Product ID",     df.columns, key="cfg_prod")
-        region_col  = _sb("🌍 Region",         df.columns, key="cfg_region")
-        channel_col = _sb("🛒 Channel",        df.columns, key="cfg_channel")
-
-        # HÀNG 2 — Schema & Value columns (1 hàng duy nhất)
-        r2a, r2b = st.columns([0.9, 3.1])
-        schema = r2a.segmented_control("Schema", ["Amount + Type column", "Separate numeric columns"], key="cfg_schema")
-
+        # ===== HÀNG 1: Time / IDs / Dimensions (6 ô song song) =====
+        c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 1, 1, 1, 1])
+        time_col    = _pick(c1, "🕒 Time",        "cfg_time")
+        order_col   = _pick(c2, "🧾 Order/Doc",   "cfg_order")
+        cust_col    = _pick(c3, "👤 Customer",    "cfg_cust")
+        prod_col    = _pick(c4, "📦 Product",     "cfg_prod")
+        region_col  = _pick(c5, "🌍 Region",      "cfg_region")
+        channel_col = _pick(c6, "🛒 Channel",     "cfg_channel")
+    
+        # ===== HÀNG 2: Schema + Value columns (tất cả nằm trên 1 hàng) =====
+        left, right = st.columns([0.9, 3.1])
+        schema = left.segmented_control(
+            "Schema",
+            ["Amount + Type column", "Separate numeric columns"],
+            key="cfg_schema"
+        )
+    
         if schema == "Amount + Type column":
-            cA1, cA2 = r2b.columns([1, 1])
-            amt_col  = _sb("💰 Amount", df.columns, key="cfg_amt")
-            type_col = _sb("🏷️ Type column", df.columns, key="cfg_type")
-
-            # Mapping type – gộp trong expander để không vượt 2 hàng
-            uniq_types = list(pd.Series(df[type_col].astype(str).unique()).sort_values())[:2000] if type_col else []
-            with st.expander("Mapping Type (Sales / Purchase / Transfer in/out / Returns / Discount)", expanded=False):
-                m1, m2, m3, m4, m5, m6 = st.columns(6)
-                val_sales   = m1.multiselect("Sales",        options=uniq_types, default=[], key="map_sales")
-                val_purchase= m2.multiselect("Purchase",     options=uniq_types, default=[], key="map_purchase")
-                val_tin     = m3.multiselect("Transfer-in",  options=uniq_types, default=[], key="map_tin")
-                val_tout    = m4.multiselect("Transfer-out", options=uniq_types, default=[], key="map_tout")
-                val_returns = m5.multiselect("Returns",      options=uniq_types, default=[], key="map_returns")
-                val_disc    = m6.multiselect("Discount",     options=uniq_types, default=[], key="map_disc")
-
+            # 2 ô bắt buộc: Amount & Type
+            a1, a2 = right.columns([1, 1])
+            amt_col  = _pick(a1, "💰 Amount", "cfg_amt")
+            type_col = _pick(a2, "🏷️ Type",   "cfg_type")
+    
+            # Mapping 6 nhóm — để trong expander (mặc định đóng) để vẫn giữ đúng 2 hàng tổng thể
+            if type_col:
+                _types = list(pd.Series(df[type_col].astype(str).unique()).sort_values())[:2000]
+            else:
+                _types = []
+    
+            with st.expander("Mapping Type (Sales / Purchase / Transfer-in / Transfer-out / Returns / Discount)", expanded=False):
+                e1, e2, e3, e4, e5, e6 = st.columns(6)
+                val_sales    = e1.multiselect("Sales",        options=_types, default=[], key="map_sales")
+                val_purchase = e2.multiselect("Purchase",     options=_types, default=[], key="map_purchase")
+                val_tin      = e3.multiselect("Transfer-in",  options=_types, default=[], key="map_tin")
+                val_tout     = e4.multiselect("Transfer-out", options=_types, default=[], key="map_tout")
+                val_returns  = e5.multiselect("Returns",      options=_types, default=[], key="map_returns")
+                val_disc     = e6.multiselect("Discount",     options=_types, default=[], key="map_disc")
+    
+            # đảm bảo biến tồn tại nếu user chưa mở expander
+            for _v in ["val_sales","val_purchase","val_tin","val_tout","val_returns","val_disc"]:
+                if _v not in locals(): locals()[_v] = []
+    
         else:
-            # Separate numeric columns — 5 cột trong cùng 1 hàng
-            cB1, cB2, cB3, cB4, cB5 = r2b.columns([1,1,1,1,1])
-            sales_col   = _sb("Sales",            df.columns, key="cfg_sales")
-            returns_col = _sb("Returns (opt)",    df.columns, key="cfg_ret")
-            disc_col    = _sb("Discount (opt)",   df.columns, key="cfg_disc")
-            tin_col     = _sb("Transfer-in (opt)",df.columns, key="cfg_tin")
-            tout_col    = _sb("Transfer-out (opt)",df.columns, key="cfg_tout")
+            # Separate numeric columns — 5 ô song song trên cùng 1 hàng
+            b1, b2, b3, b4, b5 = right.columns([1, 1, 1, 1, 1])
+            sales_col   = _pick(b1, "Sales",            "cfg_sales")
+            returns_col = _pick(b2, "Returns (opt)",    "cfg_ret")
+            disc_col    = _pick(b3, "Discount (opt)",   "cfg_disc")
+            tin_col     = _pick(b4, "Transfer-in (opt)","cfg_tin")
+            tout_col    = _pick(b5, "Transfer-out (opt)","cfg_tout")
+    
+            # giá trị mapping không dùng ở schema này nhưng tạo biến rỗng để code sau không lỗi
+            val_sales = val_purchase = val_tin = val_tout = val_returns = val_disc = []
+
 
     # ---------------- 1) Cấu hình hiển thị ----------------
     st.markdown("### 🧭 Cấu hình hiển thị")
