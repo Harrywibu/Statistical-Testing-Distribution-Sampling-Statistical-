@@ -806,6 +806,22 @@ with TAB1:
     if df is None or df.empty:
         st.info("Hãy nạp dữ liệu trước.")
         st.stop()
+    def _norm_period_value(p):
+        """Chuẩn hoá lựa chọn period về 'Month'|'Quarter'|'Year'."""
+        if p is None:
+            return "Month"
+        s = str(p).strip().lower()
+        # tiếng Việt & viết tắt
+        if s in {"m", "mo", "mon", "month", "tháng"}:   return "Month"
+        if s in {"q", "quy", "quarter", "quý"}:         return "Quarter"
+        if s in {"y", "yr", "year", "năm"}:             return "Year"
+        if "quý" in s or s.startswith("q"):             return "Quarter"
+        if "năm" in s or s.startswith("y"):             return "Year"
+        return "Month"
+    
+    RULE_MAP   = {"Month": "MS", "Quarter": "QS", "Year": "YS"}        # resample
+    PERIOD_MAP = {"MS": "M", "QS": "Q", "YS": "Y"}                     # to_period
+    YOY_LAG    = {"MS": 12, "QS": 4, "YS": 1}                          # lag cho YoY
 
     # ========== 0) Chọn schema dữ liệu & cột (không auto-mapping) ==========
     st.markdown("#### Cấu hình dữ liệu (bắt buộc)")
@@ -911,13 +927,17 @@ with TAB1:
     k5.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
 
     # ========== 4) Trend: Bar + Line (%Δ), có chọn Y ==========
-    rule = {"Month":"MS","Quarter":"QS","Year":"YS"}[period]
-    y_series = {"Net Sales": net_s, "Sales only": sales_s, "Returns": returns_s, "Discount": disc_s}[measure]
-
-    ser = pd.Series(y_series, index=df.index).where(valid_mask).groupby(s_time.dt.to_period({'MS':'M','QS':'Q','YS':'Y'}[rule]).dt.start_time).sum()
-    ser = ser.asfreq(rule).fillna(0.0)
-
-    base = ser.shift(1) if compare=="Prev" else ser.shift(12 if rule=="MS" else (4 if rule=="QS" else 1))
+    period_norm = _norm_period_value(period)              # <- dùng biến này cho tiêu đề trục
+    rule = RULE_MAP[period_norm]
+    
+    ser = (pd.Series(y_series, index=df.index)
+             .where(valid_mask)
+             .groupby(s_time.dt.to_period(PERIOD_MAP[rule]).dt.start_time)
+             .sum()
+             .asfreq(rule)
+             .fillna(0.0))
+    
+    base = ser.shift(1) if compare == "Prev" else ser.shift(YOY_LAG[rule])
     growth = (ser - base) / base.replace(0, np.nan)
 
     fig = go.Figure()
@@ -1030,6 +1050,8 @@ with TAB1:
 
     if tbl_mode == "Theo kỳ":
         # nhóm theo kỳ từ time_col
+        period_norm = _norm_period_value(period)
+        rule = RULE_MAP[period_norm]
         s_time_ok = s_time.where(valid_mask)
         period_index = s_time_ok.dt.to_period({'Month':'M','Quarter':'Q','Year':'Y'}[period]).dt.start_time
         gg = pd.DataFrame({"period": period_index, "val": y_series})
