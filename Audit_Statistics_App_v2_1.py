@@ -927,7 +927,6 @@ with TAB1:
     k5.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
 
 # ========== 4) Trend: Bar + Line (%Δ), có chọn Y ==========
-    rule = {"Month":"MS","Quarter":"QS","Year":"YS"}[period]
     y_series = {"Net Sales": net_s, "Sales only": sales_s, "Returns": returns_s, "Discount": disc_s}[measure]
 
     ser = pd.Series(y_series, index=df.index).where(valid_mask).groupby(s_time.dt.to_period({'MS':'M','QS':'Q','YS':'Y'}[rule]).dt.start_time).sum()
