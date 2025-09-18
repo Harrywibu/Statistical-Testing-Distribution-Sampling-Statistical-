@@ -828,7 +828,11 @@ with TAB1:
     YOY_LAG    = {"MS":12,"QS":4,"YS":1}
 
     # ---------------- 0) Cấu hình dữ liệu (2 hàng gọn) ----------------
-    st.markdown("### ⚙️ Cấu hình dữ liệu (bắt buộc) — 2 hàng")
+    st.markdown("### ⚙️ Cấu hình dữ liệu ")
+    def _pick(col, label, key):
+    val = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
+    return None if val == "—" else val
+    
     with st.container(border=True):
         # HÀNG 1 — Time/ID/Dimensions (6 cột)
         r1c1, r1c2, r1c3, r1c4, r1c5, r1c6 = st.columns([1,1,1,1,1,1])
