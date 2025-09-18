@@ -980,11 +980,11 @@ with TAB1:
     k3.metric("Total Product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
     k4.metric("%Sales", f"{pct_sales:.1f}%" if not np.isnan(pct_sales) else "—")
     # Hàng 2
-    k5, k6, k7  = st.columns(4)
-    k5.metric("%Transfer ", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
-    k6.metric("Discount% avg monthly (by year)", f"{(disc_pct_month_avg*100):.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
-    k7.metric("Discount% ( avg by year)", f"{(disc_pct_year*100):.1f}%" if not np.isnan(disc_pct_year) else "—")
-
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("%Transfer (of Sales+Transfer)", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
+    k6.metric("Discount% (last quarter)", f"{(disc_pct_quarter*100):.1f}%" if not np.isnan(disc_pct_quarter) else "—")
+    k7.metric("Discount% avg monthly (last full year)", f"{(disc_pct_month_avg*100):.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
+    k8.metric("Discount% (last full year)", f"{(disc_pct_year*100):.1f}%" if not np.isnan(disc_pct_year) else "—")
     # ============================= 4) XU HƯỚNG — BAR + LINE (%Δ) =============================
     idx_p  = s_time.dt.to_period(PERIOD_MAP[rule]).dt.start_time
     ser    = (pd.DataFrame({"p": idx_p, "v": net_s})
