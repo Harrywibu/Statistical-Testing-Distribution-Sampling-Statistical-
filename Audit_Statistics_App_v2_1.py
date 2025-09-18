@@ -1163,8 +1163,6 @@ with TAB1:
 
     st.dataframe(tbl, use_container_width=True, hide_index=True)
 
-
-
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
     df = DF_FULL
