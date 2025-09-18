@@ -827,25 +827,33 @@ with TAB1:
     PERIOD_MAP = {"MS":"M","QS":"Q","YS":"Y"}
     YOY_LAG    = {"MS":12,"QS":4,"YS":1}
 
-    # ---------------- 0) Cấu hình dữ liệu (gọn) ----------------
-    st.markdown("### ⚙️ Cấu hình dữ liệu (bắt buộc)")
+   # ---------------- 0) Cấu hình dữ liệu (bắt buộc) — 2 hàng gọn ----------------
+    st.markdown("### ⚙️ Cấu hình dữ liệu (bắt buộc) — 2 hàng")
+    
+    def _pick(col, label, key):
+        val = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
+        return None if val == "—" else val
+    
     with st.container(border=True):
-        # Time & IDs
-        r1c1, r1c2, r1c3, r1c4 = st.columns([1,1,1,1])
-        time_col  = _sb("🕒 Time (datetime)", df.columns, key="cfg_time")
-        order_col = _sb("🧾 Order/Doc ID (optional)", df.columns, key="cfg_order")
-        cust_col  = _sb("👤 Customer ID (optional)", df.columns, key="cfg_cust")
-        prod_col  = _sb("📦 Product ID (optional)", df.columns, key="cfg_prod")
-
-        st.divider()
-        # Giá trị
-        r2a, r2b = st.columns([1.05, 2.95])
+        # ===== ROW 1: Time & IDs & Dimensions (6 cột) =====
+        r1c1, r1c2, r1c3, r1c4, r1c5, r1c6 = st.columns([1,1,1,1,1,1])
+        time_col  = _pick(r1c1, "🕒 Time (datetime)", "cfg_time")
+        order_col = _pick(r1c2, "🧾 Order/Doc ID",   "cfg_order")
+        cust_col  = _pick(r1c3, "👤 Customer ID",    "cfg_cust")
+        prod_col  = _pick(r1c4, "📦 Product ID",     "cfg_prod")
+        region_col  = _pick(r1c5, "🌍 Region",       "cfg_region")
+        channel_col = _pick(r1c6, "🛒 Channel",      "cfg_channel")
+    
+        # ===== ROW 2: Schema & Value columns (toàn bộ nằm trên 1 hàng) =====
+        r2a, r2b = st.columns([0.9, 3.1])
         schema = r2a.segmented_control("Schema", ["Amount + Type column", "Separate numeric columns"], key="cfg_schema")
-
+    
         if schema == "Amount + Type column":
-            cA1, cA2 = r2b.columns([1,1])
-            amt_col  = _sb("💰 Amount", df.columns, key="cfg_amt")
-            type_col = _sb("🏷️ Type column", df.columns, key="cfg_type")
+            cA1, cA2 = r2b.columns([1, 1])
+            amt_col  = _pick(cA1, "💰 Amount", "cfg_amt")
+            type_col = _pick(cA2, "🏷️ Type column", "cfg_type")
+    
+            # Mapping để trong expander (mặc định đóng) — vẫn giữ 2 hàng tổng thể
             uniq_types = list(pd.Series(df[type_col].astype(str).unique()).sort_values())[:2000] if type_col else []
             with st.expander("Mapping Type (mở khi cần)", expanded=False):
                 m1, m2, m3, m4, m5 = st.columns(5)
@@ -854,19 +862,15 @@ with TAB1:
                 val_disc    = m3.multiselect("= Discount",options=uniq_types, default=[], max_selections=50, key="map_disc")
                 val_tin     = m4.multiselect("= Transfer-in",  options=uniq_types, default=[], max_selections=50, key="map_tin")
                 val_tout    = m5.multiselect("= Transfer-out", options=uniq_types, default=[], max_selections=50, key="map_tout")
+    
         else:
+            # Separate numeric columns — 5 cột nằm trên cùng 1 hàng
             cB1, cB2, cB3, cB4, cB5 = r2b.columns([1,1,1,1,1])
-            sales_col   = _sb("Sales amount", df.columns, key="cfg_sales")
-            returns_col = _sb("Returns amount (optional)", df.columns, key="cfg_ret")
-            disc_col    = _sb("Discount amount (optional)", df.columns, key="cfg_disc")
-            tin_col     = _sb("Transfer-in (optional)", df.columns, key="cfg_tin")
-            tout_col    = _sb("Transfer-out (optional)", df.columns, key="cfg_tout")
-
-        st.divider()
-        # Dimension
-        d1, d2 = st.columns([1,1])
-        region_col  = _sb("🌍 Region column (optional)", df.columns, key="cfg_region")
-        channel_col = _sb("🛒 Channel column (optional)", df.columns, key="cfg_channel")
+            sales_col   = _pick(cB1, "Sales",           "cfg_sales")
+            returns_col = _pick(cB2, "Returns (opt)",   "cfg_ret")
+            disc_col    = _pick(cB3, "Discount (opt)",  "cfg_disc")
+            tin_col     = _pick(cB4, "Transfer-in (opt)","cfg_tin")
+            tout_col    = _pick(cB5, "Transfer-out (opt)","cfg_tout")
 
     # ---------------- 1) Cấu hình hiển thị ----------------
     st.markdown("### 🧭 Cấu hình hiển thị")
