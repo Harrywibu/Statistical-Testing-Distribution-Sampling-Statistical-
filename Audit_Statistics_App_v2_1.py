@@ -926,33 +926,38 @@ with TAB1:
     k4.metric("Total customer", f"{cust_total:,.0f}" if not np.isnan(cust_total) else "—")
     k5.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
 
-# ========== 4) Trend: Bar + Line (%Δ), có chọn Y ==========
-    y_series = {"Net Sales": net_s, "Sales only": sales_s, "Returns": returns_s, "Discount": disc_s}[measure]
+# ========= 4) Trend: Bar (Sales) + Line (%Δ) =========
+    rule = {"Month": "MS", "Quarter": "QS", "Year": "YS"}[period]
+    # series theo kỳ
+    ser_net = (df.assign(_val=lambda d: d.apply(lambda r: net_sign(r["_Type"]) * float(r[amount_col]) if pd.notna(r[amount_col]) else 0, axis=1))
+                 .set_index(date_col)["_val"]
+                 .resample(rule).sum(min_count=1)).fillna(0.0)
 
-    ser = pd.Series(y_series, index=df.index).where(valid_mask).groupby(s_time.dt.to_period({'MS':'M','QS':'Q','YS':'Y'}[rule]).dt.start_time).sum()
-    ser = ser.asfreq(rule).fillna(0.0)
-
-    base = ser.shift(1) if compare=="Prev" else ser.shift(12 if rule=="MS" else (4 if rule=="QS" else 1))
-    growth = (ser - base) / base.replace(0, np.nan)
+    base = ser_net.shift(1) if compare=="Prev" else ser_net.shift(12 if rule=="MS" else (4 if rule=="QS" else 1))
+    growth = (ser_net - base) / base.replace(0, np.nan)
 
     fig = go.Figure()
-    fig.add_bar(x=ser.index, y=ser.values, name=measure,
-                text=[f"{v:,.0f}" for v in ser.values], textposition="outside", hoverinfo="skip")
-    fig.add_scatter(x=growth.index, y=growth.values*100, name="%Δ",
-                    mode="lines+markers+text",
-                    text=[f"{(v*100):.1f}%" if pd.notna(v) else "" for v in growth.values],
-                    textposition="top center",
-                    line=dict(color="#F2C811", width=3), marker=dict(size=6),
-                    hoverinfo="skip", yaxis="y2")
+    fig.add_bar(
+        x=ser_net.index, y=ser_net.values, name="Sales",
+        text=[f"{v:,.0f}" for v in ser_net.values], textposition="outside",
+        hoverinfo="skip"
+    )
+    fig.add_scatter(
+        x=growth.index, y=growth.values*100.0, name="%Δ",
+        mode="lines+markers+text",
+        text=[f"{(v*100):.1f}%" if pd.notna(v) else "" for v in growth.values],
+        textposition="top center",
+        line=dict(color="#F2C811", width=3), marker=dict(size=6),
+        hoverinfo="skip", yaxis="y2"
+    )
     fig.update_layout(
         barmode="overlay",
-        xaxis_title=period, yaxis=dict(title=measure),
+        xaxis_title=period, yaxis=dict(title="Sales"),
         yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False),
-        margin=dict(l=10,r=10,t=10,b=10), showlegend=True, hovermode=False
+        margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption("Bar = doanh số theo Period; Line = %Δ so với baseline (Prev/YoY)")
-
    # ========== 5) Đóng góp theo nhóm (2 cột song song) ==========
     st.markdown("#### Đóng góp theo nhóm")
     cL, cR = st.columns(2)
