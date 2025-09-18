@@ -926,23 +926,15 @@ with TAB1:
     k4.metric("Total customer", f"{cust_total:,.0f}" if not np.isnan(cust_total) else "—")
     k5.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
 
-    period_norm = _norm_period_value(period)              # <- dùng biến này cho tiêu đề trục
-    rule = RULE_MAP[period_norm]
-    
-    ser = (pd.Series(y_series, index=df.index)
-             .where(valid_mask)
-             .groupby(s_time.dt.to_period(PERIOD_MAP[rule]).dt.start_time)
-             .sum()
-             .asfreq(rule)
-             .fillna(0.0))
-    
-    base = ser.shift(1) if compare == "Prev" else ser.shift(YOY_LAG[rule])
-    
-    # ... giữ nguyên phần vẽ chart
-    fig.update_layout(
-        xaxis_title=period_norm,  # <- dùng nhãn đã chuẩn hoá
-        # ...
-    )
+# ========== 4) Trend: Bar + Line (%Δ), có chọn Y ==========
+    rule = {"Month":"MS","Quarter":"QS","Year":"YS"}[period]
+    y_series = {"Net Sales": net_s, "Sales only": sales_s, "Returns": returns_s, "Discount": disc_s}[measure]
+
+    ser = pd.Series(y_series, index=df.index).where(valid_mask).groupby(s_time.dt.to_period({'MS':'M','QS':'Q','YS':'Y'}[rule]).dt.start_time).sum()
+    ser = ser.asfreq(rule).fillna(0.0)
+
+    base = ser.shift(1) if compare=="Prev" else ser.shift(12 if rule=="MS" else (4 if rule=="QS" else 1))
+    growth = (ser - base) / base.replace(0, np.nan)
 
     fig = go.Figure()
     fig.add_bar(x=ser.index, y=ser.values, name=measure,
@@ -1054,8 +1046,6 @@ with TAB1:
 
     if tbl_mode == "Theo kỳ":
         # nhóm theo kỳ từ time_col
-        period_norm = _norm_period_value(period)
-        rule = RULE_MAP[period_norm]
         s_time_ok = s_time.where(valid_mask)
         period_index = s_time_ok.dt.to_period({'Month':'M','Quarter':'Q','Year':'Y'}[period]).dt.start_time
         gg = pd.DataFrame({"period": period_index, "val": y_series})
