@@ -794,38 +794,6 @@ with TAB0:
             st_df(dq, use_container_width=True, height=min(520, 60 + 24*min(len(dq), 18)))
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
-# ================================= TAB 1 — OVERVIEW (Sales Activities) =================================
-with TAB1:
-    import pandas as pd, numpy as np
-    import plotly.graph_objects as go
-    import streamlit as st
-
-    st.subheader("📈 Overview — Sales Activities")
-
-    # ===== Guard =====
-    df = SS.get("df")
-    if df is None or df.empty:
-        st.info("Hãy nạp dữ liệu trước.")
-        st.stop()
-
-    # ===== Helpers =====
-    def _pick(col, label, key):
-        val = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
-        return None if val == "—" else val
-
-    def _norm_period_value(p):
-        if p is None: return "Month"
-        s = str(p).strip().lower()
-        if s in {"m","mo","mon","month","tháng"}: return "Month"
-        if s in {"q","quy","quarter","quý"}:     return "Quarter"
-        if s in {"y","yr","year","năm"}:         return "Year"
-        if "quý" in s or s.startswith("q"):      return "Quarter"
-        if "năm" in s or s.startswith("y"):      return "Year"
-        return "Month"
-
-    RULE_MAP   = {"Month":"MS","Quarter":"QS","Year":"YS"}           # resample rule
-    PERIOD_MAP = {"MS":"M","QS":"Q","YS":"Y"}                        # to_period code
-    YOY_LAG    = {"MS":12,"QS":4,"YS":1}
 
   # ================================= TAB 1 — OVERVIEW (Sales Activities) =================================
 with TAB1:
