@@ -926,7 +926,6 @@ with TAB1:
     k4.metric("Total customer", f"{cust_total:,.0f}" if not np.isnan(cust_total) else "—")
     k5.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
 
-    # ========== 4) Trend: Bar + Line (%Δ), có chọn Y ==========
     period_norm = _norm_period_value(period)              # <- dùng biến này cho tiêu đề trục
     rule = RULE_MAP[period_norm]
     
@@ -938,7 +937,12 @@ with TAB1:
              .fillna(0.0))
     
     base = ser.shift(1) if compare == "Prev" else ser.shift(YOY_LAG[rule])
-    growth = (ser - base) / base.replace(0, np.nan)
+    
+    # ... giữ nguyên phần vẽ chart
+    fig.update_layout(
+        xaxis_title=period_norm,  # <- dùng nhãn đã chuẩn hoá
+        # ...
+    )
 
     fig = go.Figure()
     fig.add_bar(x=ser.index, y=ser.values, name=measure,
