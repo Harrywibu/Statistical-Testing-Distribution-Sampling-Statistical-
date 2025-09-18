@@ -1189,26 +1189,6 @@ with TAB1:
 
     st.dataframe(tbl, use_container_width=True, hide_index=True)
 
-    # ---------------- 4) Dimension filter (tuỳ chọn) ----------------
-    st.markdown("#### 🎛️ Lọc Dimension (X) cho biểu đồ (Optional) ")
-    if dim_col and dim_col != "—":
-        count_by_default = order_col or cust_col or prod_col
-        count_by = st.selectbox("Count unique by", ["—"] + [c for c in [order_col, cust_col, prod_col] if c], index=0 if not count_by_default else 1)
-        if count_by == "—": count_by = None
-
-        dim_vals = df[dim_col].astype(str).fillna("(NA)")
-        if count_by:
-            cnt_series = df.groupby(dim_col)[count_by].nunique().sort_values(ascending=False)
-        else:
-            cnt_series = dim_vals.value_counts()
-
-        labels = [f"{k} ({v:,})" for k, v in cnt_series.items()]
-        picked = st.multiselect("Filter values", options=labels, default=labels)
-        keep_values = set(x.rsplit(" (", 1)[0] for x in picked) if picked else set(cnt_series.index)
-        m_dim = dim_vals.isin(keep_values)
-    else:
-        m_dim = pd.Series(True, index=df.index)
-
     # ---------------- 5) Trend: Bar + Line (%Δ) ----------------
     measure = st.radio("Y (measure)", ["Net Sales","Sales only","Returns","Discount"], horizontal=True)
 
