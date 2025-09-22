@@ -795,7 +795,7 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 
- # ================================ TAB 1 — OVERVIEW (Sales Activities) ================================
+# ================================= TAB 1 — OVERVIEW (Sales Activities) =================================
 with TAB1:
     import pandas as pd, numpy as np
     import plotly.graph_objects as go
@@ -803,7 +803,7 @@ with TAB1:
 
     st.subheader("📈 Overview — Sales Activities")
 
-    # ---------- Data guard (KHÔNG dùng st.stop để tab khác vẫn chạy) ----------
+    # ---------- Data guard (KHÔNG dùng st.stop để các tab khác vẫn chạy) ----------
     df = SS.get("df")
     if df is None or df.empty:
         st.info("Hãy nạp dữ liệu trước (các tab khác vẫn dùng được).")
@@ -856,7 +856,6 @@ with TAB1:
         val_txn_sales = val_purchase = val_tin = val_tout = val_returns = val_adj_sales = val_adj_disc = []
 
         if schema == "Amount + Type (2-type cols)":
-            # 3 select song song
             a1, a2, a3 = right.columns([1,1,1])
             amt_col  = _pick(a1, "💰 Amount",   "cfg_amt")
             type_col = _pick(a2, "🏷️ Txn type", "cfg_txn_type")   # Sales/Purchase/T-in/T-out/Returns
@@ -881,7 +880,6 @@ with TAB1:
             sales_col = returns_col = disc_col = tin_col = tout_col = None  # không dùng ở schema này
 
         else:
-            # Separate numeric columns — 5 ô song song
             b1, b2, b3, b4, b5 = right.columns([1,1,1,1,1])
             sales_col   = _pick(b1, "Sales",             "cfg_sales")
             returns_col = _pick(b2, "Returns (opt)",     "cfg_ret")
@@ -890,48 +888,65 @@ with TAB1:
             tout_col    = _pick(b5, "Transfer-out (opt)","cfg_tout")
             amt_col = type_col = adj_col = None  # không dùng ở schema này
 
-    # ============================ 1) CẤU HÌNH HIỂN THỊ (rút gọn) ============================
+    # ============================ 1) CẤU HÌNH HIỂN THỊ (rút gọn + Lọc theo Năm) ============================
     st.markdown("### 🧭 Cấu hình hiển thị")
-    c1, c2, c3, c4 = st.columns([1,1,1.6,1.1])
-    period_raw = c1.segmented_control("Period", ["Month","Quarter","Year"])
-    compare    = c2.segmented_control("Compare", ["Prev","YoY"])
-    dim_col    = c3.selectbox("📊 Dimension (X cho 'Đóng góp')", ["—"] + (list(df.columns) if not df.empty else []), index=0)
-    topn       = c4.slider("Top-N", 3, 50, 10)
-
+    # Hàng A: Period / Compare / Year
+    a1, a2, a3, a4 = st.columns([1,1,1,1])
+    period_raw = a1.segmented_control("Period", ["Month","Quarter","Year"])
+    compare    = a2.segmented_control("Compare", ["Prev","YoY"])
+    # Year list
+    if time_col and not df.empty:
+        years = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        year_labels = ["All"] + [str(y) for y in years]
+        default_idx = 0 if not years else len(year_labels)-1  # mặc định "All" nếu thích, hoặc đổi thành năm mới nhất: len-1
+        year_pick = a3.selectbox("Year scope", year_labels, index=default_idx)
+    else:
+        year_pick = "All"
     period = _norm_period_value(period_raw)
     rule   = RULE_MAP[period]
+    # Hàng B: Dimension / Top-N
+    b1, b2 = st.columns([2,1])
+    dim_col = b1.selectbox("📊 Dimension (X cho 'Đóng góp')", ["—"] + (list(df.columns) if not df.empty else []), index=0)
+    topn    = b2.slider("Top-N", 3, 50, 10)
 
-    # ============================ 2) SERIES GIÁ TRỊ THEO SCHEMA ============================
-    n = len(df)
-    zero = lambda: pd.Series(0.0, index=df.index) if n else pd.Series(dtype=float)
+    # ---------- Áp dụng YEAR FILTER cho mọi tính toán phía dưới ----------
+    have_time = (time_col is not None and not df.empty)
+    s_time_all = pd.to_datetime(df[time_col], errors="coerce") if have_time else pd.Series(dtype="datetime64[ns]")
+    if have_time and year_pick != "All":
+        mask_year = s_time_all.dt.year == int(year_pick)
+    else:
+        mask_year = pd.Series(True, index=df.index) if len(df) else pd.Series(dtype=bool)
+
+    df_view = df.loc[mask_year].copy() if len(df) else df
+    s_time  = s_time_all.loc[mask_year] if len(s_time_all) else s_time_all
+
+    # ============================ 2) SERIES GIÁ TRỊ THEO SCHEMA (trên df_view) ============================
+    n = len(df_view)
+    zero = lambda: pd.Series(0.0, index=df_view.index) if n else pd.Series(dtype=float)
     sales_s = returns_s = disc_s = tin_s = tout_s = zero()
 
-    have_time = (time_col is not None and not df.empty)
-    s_time = pd.to_datetime(df[time_col], errors="coerce") if have_time else pd.Series(dtype="datetime64[ns]")
-
-    if not df.empty:
+    if not df_view.empty:
         try:
             if schema == "Amount + Type (2-type cols)":
                 have_cols = (amt_col is not None) and (type_col is not None) and (adj_col is not None)
                 if have_cols:
-                    amt = pd.to_numeric(df[amt_col], errors="coerce").fillna(0.0)
-                    txn = df[type_col].astype(str)
-                    adj = df[adj_col].astype(str)
+                    amt = pd.to_numeric(df_view[amt_col], errors="coerce").fillna(0.0)
+                    txn = df_view[type_col].astype(str)
+                    adj = df_view[adj_col].astype(str)
 
-                    def _isin(s, vals):
+                    def _isin(s, vals): 
                         return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
 
                     m_tin, m_tout, m_returns = _isin(txn, val_tin), _isin(txn, val_tout), _isin(txn, val_returns)
                     m_adj_sales, m_adj_disc  = _isin(adj, val_adj_sales), _isin(adj, val_adj_disc)
 
-                    sales_s   = amt.where(m_adj_sales, 0.0)   # doanh thu (adj=sales)
-                    disc_s    = amt.where(m_adj_disc,  0.0)   # chiết khấu (thường âm)
+                    sales_s   = amt.where(m_adj_sales, 0.0)
+                    disc_s    = amt.where(m_adj_disc,  0.0)
                     tin_s     = amt.where(m_tin,  0.0)
                     tout_s    = amt.where(m_tout, 0.0)
                     returns_s = amt.where(m_returns, 0.0)
             else:
-                def _num(col):
-                    return pd.to_numeric(df[col], errors="coerce").fillna(0.0) if col else zero()
+                def _num(col): return pd.to_numeric(df_view[col], errors="coerce").fillna(0.0) if col else zero()
                 sales_s, returns_s, disc_s, tin_s, tout_s = (
                     _num(sales_col), _num(returns_col), _num(disc_col), _num(tin_col), _num(tout_col)
                 )
@@ -940,15 +955,15 @@ with TAB1:
 
     # Net = Sales + Transfer(in/out) − |Returns| − |Discount|
     transfer_s   = tin_s.abs() + tout_s.abs()
-    sales_pos    = sales_s.abs()      # dùng dương để so sánh %
+    sales_pos    = sales_s.abs()          # dương để so %
     discount_abs = disc_s.abs()
     returns_abs  = returns_s.abs()
     net_s        = sales_s + transfer_s - returns_abs - discount_abs
 
-    # ============================ 3) KPI — gọn & cân đối (bỏ 'Discount% last quarter') ============================
-    orders_total = (df[order_col].nunique() if (not df.empty and order_col in df.columns) else (len(df) if not df.empty else 0))
-    prod_total   = (df.loc[(sales_pos + transfer_s) > 0, prod_col].nunique()
-                    if (not df.empty and prod_col in df.columns) else np.nan)
+    # ============================ 3) KPI — gọn & cân đối ============================
+    orders_total = (df_view[order_col].nunique() if (not df_view.empty and order_col in df_view.columns) else (len(df_view) if not df_view.empty else 0))
+    prod_total   = (df_view.loc[(sales_pos + transfer_s) > 0, prod_col].nunique()
+                    if (not df_view.empty and prod_col in df_view.columns) else np.nan)
 
     sales_total_pos    = float(sales_pos.sum()) if n else np.nan
     transfer_total_pos = float(transfer_s.sum()) if n else np.nan
@@ -957,44 +972,41 @@ with TAB1:
     pct_transfer = (transfer_total_pos/pos_total*100.0) if (pos_total and pos_total>0) else np.nan
     net_total    = float(net_s.sum()) if n else 0.0
 
-    # Discount% = Σ|Discount| / Σ|Sales| — tính trung bình tháng (mean của các % tháng)
+    # Discount% — GIỐNG EXCEL: %tháng = -Σ(Discount_tháng)/Σ(Sales_tháng)*100
     disc_pct_month_avg = np.nan
     disc_pct_year      = np.nan
+    disc_month_tbl     = pd.DataFrame()
 
     if have_time and n:
-        # Group theo tháng (dùng Adj mapping → sales_pos & discount_abs)
         m_idx  = s_time.dt.to_period("M").dt.start_time
-        mon_df = pd.DataFrame({"m": m_idx, "sales": sales_pos, "disc": discount_abs})
+        mon_df = pd.DataFrame({"m": m_idx, "sales": sales_s, "disc": disc_s})
         mon    = mon_df.groupby("m").sum(numeric_only=True)
         mon    = mon[mon["sales"] > 0]
-
         if not mon.empty:
-            mon["pct"]  = mon["disc"] / mon["sales"]            # tỉ lệ của từng tháng
-            mon["year"] = mon.index.year
+            mon["Discount%"] = (-mon["disc"] / mon["sales"]) * 100.0
+            disc_month_tbl = mon[["sales","disc","Discount%"]].rename(columns={"sales":"Sales","disc":"Discount"})
+            # Nếu user chọn "All", tính theo năm gần nhất có đủ 12 tháng; nếu chọn 1 năm thì dùng năm đó
+            yr_series = mon.index.year
+            target_year = int(year_pick) if (year_pick != "All") else int(yr_series.max())
+            mon_target = mon[yr_series == target_year]
+            # TB theo tháng của năm mục tiêu (có bao nhiêu tháng thì lấy bấy nhiêu)
+            if not mon_target.empty:
+                disc_pct_month_avg = mon_target["Discount%"].mean()
+                disc_pct_year      = (-mon_target["disc"].sum() / mon_target["sales"].sum() * 100.0) if mon_target["sales"].sum() > 0 else np.nan
 
-            # Năm đầy đủ gần nhất (đủ 12 tháng)
-            month_counts = mon.groupby("year")["sales"].size()
-            full_years   = month_counts[month_counts >= 12].index.tolist()
-            if full_years:
-                ly = max(full_years)
-                mon_ly = mon[mon["year"] == ly]
-                disc_pct_month_avg = mon_ly["pct"].mean()       # trung bình % theo tháng (đúng yêu cầu)
-                disc_pct_year      = (mon_ly["disc"].sum() / mon_ly["sales"].sum()) if mon_ly["sales"].sum() > 0 else np.nan
-
-    # KPI — Row 1 (4 thẻ)
+    # KPI — Row 1
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Net Sales", f"{net_total:,.0f}")
     k2.metric("Orders", f"{orders_total:,.0f}")
     k3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
     k4.metric("%Sales (of Sales+Transfer)", f"{pct_sales:.1f}%" if not np.isnan(pct_sales) else "—")
-    # KPI — Row 2 (3 thẻ, đã BỎ 'Discount% (last quarter)')
+    # KPI — Row 2
     k5, k6, k7 = st.columns(3)
     k5.metric("%Transfer (of Sales+Transfer)", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
-    k6.metric("Discount% avg monthly (last full year)", f"{(disc_pct_month_avg*100):.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
-    k7.metric("Discount% (last full year)", f"{(disc_pct_year*100):.1f}%" if not np.isnan(disc_pct_year) else "—")
+    k6.metric("Discount% avg monthly", f"{disc_pct_month_avg:.1f}%" if not np.isnan(disc_pct_month_avg) else "—")
+    k7.metric("Discount% (year-to-date)", f"{disc_pct_year:.1f}%" if not np.isnan(disc_pct_year) else "—")
 
-    # ============================ 4) XU HƯỚNG — Bar (Sales) + Line (%Δ) ============================
-    # Bar = Sales theo Period; Line = %Δ so với baseline (Prev/YoY), line màu vàng, vẽ sau để nằm trước
+    # ============================ 4) XU HƯỚNG — Bar (Sales) + Line (%Δ) + Bảng Discount theo tháng ============================
     if have_time and n:
         idx_p = s_time.dt.to_period(PERIOD_MAP[rule]).dt.start_time
         ser_sales = (pd.DataFrame({"p": idx_p, "v": sales_s})
@@ -1005,31 +1017,52 @@ with TAB1:
         base = ser_sales.shift(1) if compare == "Prev" else ser_sales.shift(YOY_LAG[rule])
         growth = (ser_sales - base) / base.replace(0, np.nan)
 
-        fig = go.Figure()
-        fig.add_bar(
-            x=ser_sales.index, y=ser_sales.values, name="Sales",
-            text=[f"{v:,.0f}" for v in ser_sales.values], textposition="outside", hoverinfo="skip"
-        )
-        fig.add_scatter(
-            x=growth.index, y=growth.values*100, name="%Δ",
-            mode="lines+markers+text",
-            text=[f"{(v*100):.1f}%" if pd.notna(v) else "" for v in growth.values],
-            textposition="top center",
-            line=dict(color="#F2C811", width=3), marker=dict(size=6),
-            hoverinfo="skip", yaxis="y2"
-        )
-        fig.update_layout(
-            barmode="overlay",
-            xaxis_title=period,
-            yaxis=dict(title="Sales"),
-            yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False),
-            margin=dict(l=10, r=10, t=10, b=10),
-            hovermode=False, showlegend=True, height=420
-        )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Bar = doanh số theo Period; Line = %Δ so với baseline (Prev/YoY)")
+        chart_col, table_col = st.columns([0.72, 0.28])
+        with chart_col:
+            fig = go.Figure()
+            fig.add_bar(
+                x=ser_sales.index, y=ser_sales.values, name="Sales",
+                text=[f"{v:,.0f}" for v in ser_sales.values], textposition="outside", hoverinfo="skip"
+            )
+            fig.add_scatter(
+                x=growth.index, y=growth.values*100, name="%Δ",
+                mode="lines+markers+text",
+                text=[f"{(v*100):.1f}%" if pd.notna(v) else "" for v in growth.values],
+                textposition="top center",
+                line=dict(color="#F2C811", width=3), marker=dict(size=6),
+                hoverinfo="skip", yaxis="y2"
+            )
+            fig.update_layout(
+                barmode="overlay",
+                xaxis_title=period,
+                yaxis=dict(title="Sales"),
+                yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False),
+                margin=dict(l=10, r=10, t=10, b=10),
+                hovermode=False, showlegend=True, height=460
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.caption("Bar = doanh số theo Period; Line = %Δ so với baseline (Prev/YoY)")
+
+        with table_col:
+            st.markdown("#### 🔎 Discount theo tháng")
+            if not disc_month_tbl.empty:
+                # lọc theo năm được chọn (nếu All → năm mới nhất trong disc_month_tbl)
+                dm = disc_month_tbl.copy()
+                if year_pick != "All":
+                    dm = dm[dm.index.year == int(year_pick)]
+                else:
+                    if len(dm): dm = dm[dm.index.year == dm.index.year.max()]
+                n_show = st.slider("Số tháng hiển thị", 6, 24, min(12, len(dm)), key="disc_tbl_rows")
+                show_tbl = dm.tail(n_show).copy()
+                show_tbl.index = show_tbl.index.strftime("%b %Y")
+                show_tbl["Sales"]     = show_tbl["Sales"].map(lambda x: f"{x:,.0f}")
+                show_tbl["Discount"]  = show_tbl["Discount"].map(lambda x: f"{x:,.0f}")
+                show_tbl["Discount%"] = show_tbl["Discount%"].map(lambda x: f"{x:.1f}%")
+                st.dataframe(show_tbl, use_container_width=True, height=420, hide_index=False)
+            else:
+                st.info("Chưa đủ dữ liệu để tính bảng Discount theo tháng.")
     else:
-        st.info("Chọn Time và các cột giá trị để xem biểu đồ xu hướng.")
+        st.info("Chọn Time và các cột giá trị để xem biểu đồ xu hướng và bảng Discount theo tháng.")
 
     # ============================ 5) ĐÓNG GÓP THEO NHÓM (Top-N & Pie, filter tại đây) ============================
     st.markdown("### 🧱 Đóng góp theo nhóm")
@@ -1047,21 +1080,21 @@ with TAB1:
     base_y = pd.to_numeric(_y_series(measure), errors="coerce").fillna(0.0)
 
     # Filter Dimension (đưa xuống đây, bỏ Count unique)
-    if (dim_col is not None) and (dim_col != "—") and (dim_col in df.columns):
-        dim_vals = df[dim_col].astype(str).fillna("(NA)")
+    if (dim_col is not None) and (dim_col != "—") and (dim_col in df_view.columns):
+        dim_vals = df_view[dim_col].astype(str).fillna("(NA)")
         g_all_for_filter = (pd.DataFrame({"dim": dim_vals, "val": base_y})
                             .groupby("dim", dropna=False)["val"].sum().sort_values(ascending=False))
         options = list(g_all_for_filter.index)
         picked  = st.multiselect("Filter values (áp dụng cho Top-N & Pie)", options=options, default=options)
-        mask_dim = dim_vals.isin(picked) if picked else pd.Series(True, index=df.index)
+        mask_dim = dim_vals.isin(picked) if picked else pd.Series(True, index=df_view.index)
     else:
-        mask_dim = pd.Series(True, index=df.index) if n else pd.Series(dtype=bool)
+        mask_dim = pd.Series(True, index=df_view.index) if n else pd.Series(dtype=bool)
 
     with cL:
-        if (dim_col is None) or (dim_col == "—") or (dim_col not in df.columns):
+        if (dim_col is None) or (dim_col == "—") or (dim_col not in df_view.columns):
             st.info("Chọn Dimension để xem Top-N.")
         else:
-            g = (pd.DataFrame({"dim": df[dim_col].astype(str), "val": base_y})
+            g = (pd.DataFrame({"dim": df_view[dim_col].astype(str), "val": base_y})
                    .loc[mask_dim]
                    .groupby("dim", dropna=False)["val"]
                    .sum()
@@ -1086,10 +1119,10 @@ with TAB1:
             st.plotly_chart(fig_top, use_container_width=True, config={"displayModeBar": False})
 
     with cR:
-        if (dim_col is None) or (dim_col == "—") or (dim_col not in df.columns):
+        if (dim_col is None) or (dim_col == "—") or (dim_col not in df_view.columns):
             st.info("Chọn Dimension để xem tỉ trọng.")
         else:
-            g_all = (pd.DataFrame({"dim": df[dim_col].astype(str), "val": base_y})
+            g_all = (pd.DataFrame({"dim": df_view[dim_col].astype(str), "val": base_y})
                        .loc[mask_dim]
                        .groupby("dim", dropna=False)["val"]
                        .sum()
@@ -1120,14 +1153,14 @@ with TAB1:
     st.markdown("### 🗺️ Phân bổ theo Vùng/Kênh")
     if n:
         rc_y = net_s
-        if (region_col is not None) and (region_col in df.columns):
-            if (channel_col is not None) and (channel_col in df.columns):
+        if (region_col is not None) and (region_col in df_view.columns):
+            if (channel_col is not None) and (channel_col in df_view.columns):
                 topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 5)
-                ch_sum = (pd.DataFrame({"ch": df[channel_col].astype(str), "v": rc_y})
+                ch_sum = (pd.DataFrame({"ch": df_view[channel_col].astype(str), "v": rc_y})
                           .groupby("ch")["v"].sum().sort_values(ascending=False))
                 keep_channels = set(ch_sum.head(topn_ch).index)
-                ch = df[channel_col].astype(str).where(df[channel_col].astype(str).isin(keep_channels), other="Other")
-                g = (pd.DataFrame({"Region": df[region_col].astype(str), "Channel": ch, "v": rc_y})
+                ch = df_view[channel_col].astype(str).where(df_view[channel_col].astype(str).isin(keep_channels), other="Other")
+                g = (pd.DataFrame({"Region": df_view[region_col].astype(str), "Channel": ch, "v": rc_y})
                      .groupby(["Region","Channel"])["v"].sum().reset_index())
                 piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
                 piv = piv.loc[piv.sum(axis=1).sort_values().index]
@@ -1138,7 +1171,7 @@ with TAB1:
                                      margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=460)
                 st.plotly_chart(fig_rc, use_container_width=True, config={"displayModeBar": False})
             else:
-                reg = (pd.DataFrame({"Region": df[region_col].astype(str), "v": rc_y})
+                reg = (pd.DataFrame({"Region": df_view[region_col].astype(str), "v": rc_y})
                        .groupby("Region")["v"].sum().sort_values(ascending=True))
                 fig_r = go.Figure()
                 fig_r.add_bar(x=reg.values, y=reg.index, orientation="h",
@@ -1161,34 +1194,48 @@ with TAB1:
         if isinstance(x,(int,float,np.integer,np.floating)): return f"{x:,.0f}"
         return str(x)
 
-    if have_time and n:
-        idx_p = s_time.dt.to_period(PERIOD_MAP[rule]).dt.start_time
+    if (not df_view.empty) and (time_col in df_view.columns):
+        s_time_tbl = pd.to_datetime(df_view[time_col], errors="coerce")
     else:
-        idx_p = pd.Series(pd.NaT, index=df.index) if n else pd.Series(dtype="datetime64[ns]")
+        s_time_tbl = pd.Series(dtype="datetime64[ns]")
 
     if tbl_mode == "Theo kỳ":
-        if n and have_time:
-            gg = pd.DataFrame({"p": idx_p, "v": net_s})
-            agg = gg.groupby("p", dropna=False)["v"].agg(count="count", sum="sum", mean="mean", median="median").reset_index()
-            tot = agg["sum"].sum()
-            agg["share"] = np.where(tot!=0, agg["sum"]/tot, np.nan)
-            if rule=="MS":   agg["Nhóm"] = agg["p"].dt.to_period("M").astype(str)
-            elif rule=="QS": agg["Nhóm"] = agg["p"].dt.to_period("Q").astype(str)
-            else:            agg["Nhóm"] = agg["p"].dt.year.astype(str)
-            tbl = agg[["Nhóm"]].copy()
-            tbl["Số dòng"]    = agg["count"].astype(int)
-            tbl["Tổng"]       = agg["sum"].map(_fmt)
-            tbl["Trung bình"] = agg["mean"].map(_fmt)
-            tbl["Trung vị"]   = agg["median"].map(_fmt)
-            tbl["Tỷ trọng"]   = (agg["share"]*100).round(2).map(lambda v: f"{v:.2f}%" if pd.notna(v) else "—")
-            _to_num = pd.to_numeric(tbl["Tổng"].str.replace(",",""), errors="coerce")
-            tbl = tbl.iloc[_to_num.sort_values(ascending=False).index]
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
+        # Luôn hiển thị THEO THÁNG trong 1 NĂM (theo Year scope ở trên).
+        if len(s_time_tbl):
+            all_years = sorted(s_time_tbl.dt.year.dropna().unique())
+            # Chọn năm mục tiêu theo Year scope; nếu "All" -> năm mới nhất trong df_view
+            target_year = int(year_pick) if (year_pick != "All" and year_pick is not None) else int(all_years[-1])
+            mask_y = s_time_tbl.dt.year == target_year
+            df_y   = df_view.loc[mask_y].copy()
+
+            if not df_y.empty:
+                mon = pd.DataFrame({
+                    "m": pd.to_datetime(df_y[time_col], errors="coerce").dt.to_period("M").dt.start_time,
+                    "v": net_s.loc[mask_y].values if len(net_s)==len(df_view) else 0.0
+                })
+                agg = mon.groupby("m")["v"].agg(count="count", sum="sum", mean="mean", median="median").reset_index()
+                tot = agg["sum"].sum()
+                agg["share"] = np.where(tot!=0, agg["sum"]/tot, np.nan)
+                agg["Nhóm"]  = agg["m"].dt.strftime("%b %Y")
+                tbl = agg[["Nhóm"]].copy()
+                tbl["Số dòng"]    = agg["count"].astype(int)
+                tbl["Tổng"]       = agg["sum"].map(_fmt)
+                tbl["Trung bình"] = agg["mean"].map(_fmt)
+                tbl["Trung vị"]   = agg["median"].map(_fmt)
+                tbl["Tỷ trọng"]   = (agg["share"]*100).round(2).map(lambda v: f"{v:.2f}%" if pd.notna(v) else "—")
+                # Sắp xếp theo thời gian trong năm
+                tbl.index = agg["m"]
+                tbl = tbl.sort_index()
+                st.markdown(f"*Năm đang xem: **{target_year}***")
+                st.dataframe(tbl.reset_index(drop=True), use_container_width=True, hide_index=True)
+            else:
+                st.info("Không có dữ liệu cho năm đã chọn.")
         else:
-            st.info("Cần chọn Time để xem bảng theo kỳ.")
+            st.info("Cần cột Time để xem bảng theo kỳ.")
     else:
-        if n and (dim_col is not None) and (dim_col != "—") and (dim_col in df.columns):
-            gg = pd.DataFrame({"dim": df[dim_col].astype(str), "v": net_s})
+        # Theo dimension — cũng tôn trọng Year scope (df_view đã được lọc theo năm)
+        if (dim_col is not None) and (dim_col != "—") and (dim_col in df_view.columns) and (len(df_view)):
+            gg = pd.DataFrame({"dim": df_view[dim_col].astype(str), "v": net_s})
             agg = gg.groupby("dim", dropna=False)["v"].agg(count="count", sum="sum", mean="mean", median="median").reset_index().rename(columns={"dim":"Nhóm"})
             tot = agg["sum"].sum()
             agg["share"] = np.where(tot!=0, agg["sum"]/tot, np.nan)
@@ -1198,11 +1245,14 @@ with TAB1:
             tbl["Trung bình"] = agg["mean"].map(_fmt)
             tbl["Trung vị"]   = agg["median"].map(_fmt)
             tbl["Tỷ trọng"]   = (agg["share"]*100).round(2).map(lambda v: f"{v:.2f}%" if pd.notna(v) else "—")
+            # sắp xếp theo tổng giảm dần
             _to_num = pd.to_numeric(tbl["Tổng"].str.replace(",",""), errors="coerce")
             tbl = tbl.iloc[_to_num.sort_values(ascending=False).index]
             st.dataframe(tbl, use_container_width=True, hide_index=True)
         else:
             st.info("Chọn Dimension để xem bảng theo dimension.")
+# ================================= END TAB 1 =========================================================
+
             
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
