@@ -841,7 +841,7 @@ with TAB1:
 
         # Hàng 2 — Chỉ dùng **Amount + Type (2-type cols)** (đã bỏ 'Separate numeric columns')
         left, right = st.columns([1, 3])
-        left.markdown("#### Schema: **Sales amount + Type columns**")
+        left.markdown("**Sales amount + Mapping columns**")
         a1, a2, a3 = right.columns([1,1,1])
         amt_col  = _pick(a1, "💰 Sales Amount",   "cfg_amt")
         type_col = _pick(a2, "🏷️ Mapping 1", "cfg_txn_type")   # Sales/Purchase/T-in/T-out/Returns
@@ -860,8 +860,8 @@ with TAB1:
 
         with st.expander("Mapping 2 - (Sales / Discount)", expanded=False):
             a1_, a2_ = st.columns(2)
-            val_adj_sales = a1_.multiselect("Adj = Sales",    uniq_adj, key="map_adj_sales")
-            val_adj_disc  = a2_.multiselect("Adj = Discount", uniq_adj, key="map_adj_disc")
+            val_adj_sales = a1_.multiselect("Select Sales type",    uniq_adj, key="map_adj_sales")
+            val_adj_disc  = a2_.multiselect("Select Discount type", uniq_adj, key="map_adj_disc")
 
     # ====================== 1) CẤU HÌNH HIỂN THỊ (rút gọn + Year scope) ======================
     st.markdown("### 🧭 Overview Information")
