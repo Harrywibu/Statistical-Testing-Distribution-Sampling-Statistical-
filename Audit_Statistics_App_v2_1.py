@@ -1115,58 +1115,104 @@ with TAB1:
                 fig_pie.update_layout(margin=dict(l=10,r=10,t=10,b=10), showlegend=False, height=460)
                 st.plotly_chart(fig_pie, use_container_width=True, config={"displayModeBar": False})
 
-    # ====================== 6) PHÂN BỔ THEO VÙNG/KÊNH (+ hiển thị % tỉ trọng) ======================
-    st.markdown("### 🗺️ Distribution by Region/Channel")
+    # =================== Distribution by Region/Channel — UPDATED (add Measure + Filter) ===================
+    st.markdown("### 🗺️ Phân bổ theo Vùng/Kênh")
+    
     if n:
-        rc_y = net_s
+        # ---- Measure selector
+        dist_meas = st.radio(
+            "Measure",
+            ["Net Sales", "Sales", "Transfer", "Returns", "Discount"],
+            horizontal=True,
+            key="dist_meas",
+        )
+    
+        def _dist_series(name):
+            if name == "Net Sales": return net_s
+            if name == "Sales":     return sales_s
+            if name == "Transfer":  return (tin_s.abs() + tout_s.abs())
+            if name == "Returns":   return returns_s
+            if name == "Discount":  return disc_s
+            return net_s
+    
+        m_ser_all = pd.to_numeric(_dist_series(dist_meas), errors="coerce").fillna(0.0)
+    
+        # ---- Filter values (Region / Channel)
+        f1, f2 = st.columns(2)
         if (region_col is not None) and (region_col in df_view.columns):
-            if (channel_col is not None) and (channel_col in df_view.columns):
-                topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 5)
-                ch_sum = (pd.DataFrame({"ch": df_view[channel_col].astype(str), "v": rc_y})
+            reg_vals = df_view[region_col].astype(str).fillna("(NA)")
+            reg_opts = sorted(reg_vals.unique().tolist())
+            sel_regs = f1.multiselect("Filter Region", reg_opts, default=reg_opts, key="dist_reg")
+        else:
+            sel_regs = None
+    
+        channel_ok = (channel_col is not None) and (channel_col in df_view.columns)
+        if channel_ok:
+            ch_vals = df_view[channel_col].astype(str).fillna("(NA)")
+            ch_opts = sorted(ch_vals.unique().tolist())
+            sel_chs = f2.multiselect("Filter Channel", ch_opts, default=ch_opts, key="dist_ch")
+        else:
+            sel_chs = None
+    
+        mask = pd.Series(True, index=df_view.index)
+        if sel_regs is not None:
+            mask &= df_view[region_col].astype(str).fillna("(NA)").isin(sel_regs)
+        if sel_chs is not None:
+            mask &= df_view[channel_col].astype(str).fillna("(NA)").isin(sel_chs)
+    
+        df_d = df_view.loc[mask].copy()
+        m_ser = m_ser_all.loc[mask] if len(m_ser_all) == len(df_view) else pd.Series(0.0, index=df_d.index)
+    
+        if (region_col is None) or (region_col not in df_d.columns) or df_d.empty:
+            st.info("Chọn **Region** để xem phân bổ.")
+        else:
+            if channel_ok:
+                topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6, key="dist_topn_ch")
+                ch_sum = (pd.DataFrame({"ch": df_d[channel_col].astype(str), "v": m_ser})
                           .groupby("ch")["v"].sum().sort_values(ascending=False))
                 keep_channels = set(ch_sum.head(topn_ch).index)
-                ch = df_view[channel_col].astype(str).where(df_view[channel_col].astype(str).isin(keep_channels), other="Other")
-                g = (pd.DataFrame({"Region": df_view[region_col].astype(str), "Channel": ch, "v": rc_y})
-                     .groupby(["Region","Channel"])["v"].sum().reset_index())
+                ch = df_d[channel_col].astype(str).where(
+                    df_d[channel_col].astype(str).isin(keep_channels), other="Other"
+                )
+                g = (pd.DataFrame({"Region": df_d[region_col].astype(str), "Channel": ch, "v": m_ser})
+                     .groupby(["Region", "Channel"])["v"].sum().reset_index())
                 piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
-                # Thêm % share theo hàng (Region)
+    
+                # % theo hàng (Region)
                 row_tot = piv.sum(axis=1).replace(0, np.nan)
                 share   = piv.div(row_tot, axis=0) * 100.0
-
-                # Sắp theo tổng
+    
+                # sort theo tổng
                 piv = piv.loc[row_tot.sort_values().index]
                 share = share.loc[piv.index]
-
+    
                 fig_rc = go.Figure()
                 for col in piv.columns:
                     fig_rc.add_bar(
-                        x=piv.index, y=piv[col].values, name=str(col), hoverinfo="skip",
+                        x=piv.index, y=piv[col].values, name=str(col),
                         text=[f"{v:.1f}%" if not np.isnan(v) else "" for v in share[col].values],
-                        textposition="inside"
+                        textposition="inside", hoverinfo="skip",
                     )
                 fig_rc.update_layout(
-                    barmode="stack",
-                    xaxis_title="Region",
-                    yaxis_title="Net Sales",
-                    margin=dict(l=10,r=10,t=10,b=10),
-                    hovermode=False, showlegend=True, height=460
+                    barmode="stack", xaxis_title="Region", yaxis_title=dist_meas,
+                    margin=dict(l=10, r=10, t=10, b=10), hovermode=False, showlegend=True, height=460
                 )
                 st.plotly_chart(fig_rc, use_container_width=True, config={"displayModeBar": False})
             else:
-                reg = (pd.DataFrame({"Region": df_view[region_col].astype(str), "v": rc_y})
+                reg = (pd.DataFrame({"Region": df_d[region_col].astype(str), "v": m_ser})
                        .groupby("Region")["v"].sum().sort_values(ascending=True))
                 tot = reg.sum()
                 fig_r = go.Figure()
                 fig_r.add_bar(
                     x=reg.values, y=reg.index, orientation="h",
                     text=[f"{v:,.0f} • {(v/tot*100 if tot>0 else 0):.1f}%" for v in reg.values],
-                    textposition="outside", hoverinfo="skip", name="Net Sales"
+                    textposition="outside", hoverinfo="skip", name=dist_meas,
                 )
-                fig_r.update_layout(xaxis_title="Net Sales", yaxis_title="Region",
-                                    margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=False, height=440)
+                fig_r.update_layout(
+                    xaxis_title=dist_meas, yaxis_title="Region",
+                    margin=dict(l=10, r=10, t=10, b=10), hovermode=False, showlegend=False, height=440
+                )
                 st.plotly_chart(fig_r, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.info("Chọn **Region** để xem phân bổ theo vùng. (Có thể thêm Channel để xem stacked)")
     else:
         st.info("Chưa có dữ liệu để vẽ phân bổ.")
 
