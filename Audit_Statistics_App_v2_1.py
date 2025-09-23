@@ -825,35 +825,37 @@ with TAB1:
         return None if v == "—" else v
         
     def build_series_from_mapping(df_src, amt_col, map_a, map_b):
-    if df_src is None or df_src.empty or amt_col is None:
-        idx = df_src.index if df_src is not None else pd.RangeIndex(0)
-        z = pd.Series(0.0, index=idx)
-        return z, z, z, z, z
-
-    amt = pd.to_numeric(df_src[amt_col], errors="coerce").fillna(0.0)
-
-    # Nếu có đủ mapping A+B
-    if map_a is not None and map_b is not None and map_a in df_src.columns and map_b in df_src.columns:
-        A = df_src[map_a].astype(str)
-        B = df_src[map_b].astype(str)
-        def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
-
-        m_recv  = _isin(A, st.session_state.get("mv_a_tin", []))    # Transfer received
-        m_sent  = _isin(A, st.session_state.get("mv_a_tout", []))   # Transfer sent
-        m_ret   = _isin(A, st.session_state.get("mv_a_ret", []))
-        m_b_s   = _isin(B, st.session_state.get("mv_b_sales", []))
-        m_b_d   = _isin(B, st.session_state.get("mv_b_disc",  []))
-
-        sales    = amt.where(m_b_s, 0.0)
-        discount = amt.where(m_b_d, 0.0)
-        t_recv   = amt.where(m_recv, 0.0)
-        t_sent   = amt.where(m_sent, 0.0)
-        returns  = amt.where(m_ret, 0.0)
-        return sales, discount, t_recv, t_sent, returns
-
-    # Không có mapping -> tất cả coi là Sales
-    z = pd.Series(0.0, index=df_src.index)
-    return amt, z, z, z, z
+        """Trả về 5 Series đã chuẩn hóa: sales, discount, transfer_received, transfer_sent, returns.
+           Hỗ trợ trường hợp: chỉ có amt_col (không mapping) -> xem tất cả là sales."""
+        if df_src is None or df_src.empty or amt_col is None:
+            idx = df_src.index if df_src is not None else pd.RangeIndex(0)
+            z = pd.Series(0.0, index=idx)
+            return z, z, z, z, z
+    
+        amt = pd.to_numeric(df_src[amt_col], errors="coerce").fillna(0.0)
+    
+        # Nếu có đủ mapping A+B
+        if map_a is not None and map_b is not None and map_a in df_src.columns and map_b in df_src.columns:
+            A = df_src[map_a].astype(str)
+            B = df_src[map_b].astype(str)
+            def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
+    
+            m_recv  = _isin(A, st.session_state.get("mv_a_tin", []))    # Transfer received
+            m_sent  = _isin(A, st.session_state.get("mv_a_tout", []))   # Transfer sent
+            m_ret   = _isin(A, st.session_state.get("mv_a_ret", []))
+            m_b_s   = _isin(B, st.session_state.get("mv_b_sales", []))
+            m_b_d   = _isin(B, st.session_state.get("mv_b_disc",  []))
+    
+            sales    = amt.where(m_b_s, 0.0)
+            discount = amt.where(m_b_d, 0.0)
+            t_recv   = amt.where(m_recv, 0.0)
+            t_sent   = amt.where(m_sent, 0.0)
+            returns  = amt.where(m_ret, 0.0)
+            return sales, discount, t_recv, t_sent, returns
+    
+        # Không có mapping -> tất cả coi là Sales
+        z = pd.Series(0.0, index=df_src.index)
+        return amt, z, z, z, z
 
 
 
