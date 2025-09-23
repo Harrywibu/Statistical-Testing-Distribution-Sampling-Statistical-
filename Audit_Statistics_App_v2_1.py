@@ -821,10 +821,9 @@ with TAB1:
             st.selectbox(label, ["—"], index=0, key=key, disabled=True)
             return None
         v = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
+        
         return None if v == "—" else v
     def build_series_from_mapping(df_src, amt_col, map_a, map_b):
-    """Trả về 5 Series đã chuẩn hóa: sales, discount, transfer_received, transfer_sent, returns.
-       Hỗ trợ trường hợp: chỉ có amt_col (không mapping) -> xem tất cả là sales."""
     if df_src is None or df_src.empty or amt_col is None:
         idx = df_src.index if df_src is not None else pd.RangeIndex(0)
         z = pd.Series(0.0, index=idx)
