@@ -823,6 +823,7 @@ with TAB1:
         v = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
         
         return None if v == "—" else v
+        
     def build_series_from_mapping(df_src, amt_col, map_a, map_b):
     if df_src is None or df_src.empty or amt_col is None:
         idx = df_src.index if df_src is not None else pd.RangeIndex(0)
@@ -853,6 +854,7 @@ with TAB1:
     # Không có mapping -> tất cả coi là Sales
     z = pd.Series(0.0, index=df_src.index)
     return amt, z, z, z, z
+
 
 
     def _norm_period_value(p):
