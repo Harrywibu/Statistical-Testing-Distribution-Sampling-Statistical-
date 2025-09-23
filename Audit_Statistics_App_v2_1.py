@@ -1262,28 +1262,47 @@ with TAB1:
         mask_tbl = (t_all.dt.year == tbl_year)
         df_tbl = df.loc[mask_tbl].copy()
     
-        # --- Tính Net theo schema 'Amount + Type' đã cấu hình ---
-        def _ser_zero(idx): return pd.Series(0.0, index=idx)
-    
-        if df_tbl.empty or amt_col is None:
-            st.info("Thiếu hoặc không có dữ liệu cho phạm vi đã chọn.")
-            sales_s = disc_s = t_recv_s = t_sent_s = returns_s = pd.Series(0.0, index=df_tbl.index if not df_tbl.empty else pd.RangeIndex(0))
-        else:
-            sales_s, disc_s, t_recv_s, t_sent_s, returns_s = build_series_from_mapping(df_tbl, amt_col, map_a, map_b)
+        # ----- BEGIN PATCH: build masks từ Mapping A/B, không dùng txn/adj -----
+        amt = pd.to_numeric(df_tbl[amt_col], errors="coerce").fillna(0.0)
+        
+        # Lấy cột mapping A/B nếu có; nếu không thì tạo Series rỗng tương thích index
+        A = df_tbl[map_a].astype(str) if (map_a and map_a in df_tbl.columns) else pd.Series("", index=df_tbl.index)
+        B = df_tbl[map_b].astype(str) if (map_b and map_b in df_tbl.columns) else pd.Series("", index=df_tbl.index)
+        
+        def _isin(s, vals):
+            # an toàn khi vals rỗng hoặc s không phải Series hợp lệ
+            if not isinstance(s, pd.Series) or s.empty or not vals:
+                return pd.Series(False, index=df_tbl.index)
+            return s.isin(set(map(str, vals)))
+        
+        # Lấy tập giá trị đã chọn trong UI (giữ nguyên key cũ để tương thích)
+        val_tin       = st.session_state.get("mv_a_tin",   [])  # Transfer received
+        val_tout      = st.session_state.get("mv_a_tout",  [])  # Transfer sent
+        val_returns   = st.session_state.get("mv_a_ret",   [])
+        val_adj_sales = st.session_state.get("mv_b_sales", [])
+        val_adj_disc  = st.session_state.get("mv_b_disc",  [])
+        
+        # Mask theo Mapping A (transaction) và Mapping B (sales/discount)
+        m_recv  = _isin(A, val_tin)        # Transfer received
+        m_sent  = _isin(A, val_tout)       # Transfer sent
+        m_ret   = _isin(A, val_returns)
+        m_b_s   = _isin(B, val_adj_sales)  # Sales (B)
+        m_b_d   = _isin(B, val_adj_disc)   # Discount (B)
+        
+        # Series kết quả
+        sales_s   = amt.where(m_b_s, 0.0)
+        disc_s    = amt.where(m_b_d, 0.0)
+        t_recv_s  = amt.where(m_recv, 0.0)
+        t_sent_s  = amt.where(m_sent, 0.0)
+        returns_s = amt.where(m_ret,  0.0)
+        
+        # Nếu không có bất kỳ mapping nào → mặc định xem tất cả là Sales để chạy được overview nhanh
+        if (map_a is None or map_a not in df_tbl.columns) and (map_b is None or map_b not in df_tbl.columns):
+            sales_s   = amt
+            disc_s    = pd.Series(0.0, index=df_tbl.index)
+            t_recv_s  = pd.Series(0.0, index=df_tbl.index)
+            t_sent_s  = pd.Series(0.0, index=df_tbl.index)
 
-            def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
-    
-            m_tin, m_tout, m_ret = _isin(txn, val_tin), _isin(txn, val_tout), _isin(txn, val_returns)
-            m_adj_sales, m_adj_disc = _isin(adj, val_adj_sales), _isin(adj, val_adj_disc)
-    
-            sales_s   = amt.where(m_adj_sales, 0.0)
-            disc_s    = amt.where(m_adj_disc,  0.0)
-            tin_s     = amt.where(m_tin,  0.0)
-            tout_s    = amt.where(m_tout, 0.0)
-            returns_s = amt.where(m_ret,  0.0)
-    
-            net_s_tbl = sales_s + (tin_s.abs() + tout_s.abs()) - returns_s.abs() - disc_s.abs()
-    
             # ---- Tổng hợp theo THÁNG trong năm đã chọn + tỷ trọng theo năm đó ----
             mon = pd.DataFrame({
                 "m": pd.to_datetime(df_tbl[time_col], errors="coerce").dt.to_period("M").dt.start_time,
