@@ -1246,86 +1246,83 @@ with TAB1:
                               uniformtext_minsize=12, uniformtext_mode="show")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-   # ====================== 🧾 BẢNG TỔNG HỢP (Year scope riêng, độc lập) ======================
-    st.markdown("### 🧾 Overall Information")
+# ====================== BẢNG TỔNG HỢP (Summary table) ======================
+    st.markdown("### 🧾 Bảng tổng hợp")
     
-    if (df is None) or df.empty or (time_col is None):
-        st.info("Cần dữ liệu & cột Time để hiển thị bảng.")
+    if time_col is None or df.empty:
+        st.info("Cần chọn cột thời gian (Time) và có dữ liệu để xem bảng tổng hợp.")
     else:
-        # Year scope riêng cho Bảng tổng hợp (không phụ thuộc 'Year scope' của phần hiển thị)
-        years_all = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
-        tbl_year = st.selectbox("Year (table scope)", [str(y) for y in years_all], index=len(years_all)-1, key="tbl_year")
-        tbl_year = int(tbl_year)
+        # Year (table scope) riêng cho bảng
+        years_all_tbl = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        year_tbl = st.selectbox("Year (table scope)", [str(y) for y in years_all_tbl], index=len(years_all_tbl)-1, key="tbl_scope_year")
     
-        # Lọc theo năm cho *bảng* (chỉ 1 năm)
-        t_all = pd.to_datetime(df[time_col], errors="coerce")
-        mask_tbl = (t_all.dt.year == tbl_year)
-        df_tbl = df.loc[mask_tbl].copy()
+        # ---- Lọc theo năm bảng
+        t_all  = pd.to_datetime(df[time_col], errors="coerce")
+        mask_y = (t_all.dt.year == int(year_tbl))
+        df_tbl = df.loc[mask_y].copy()
+        t_tbl  = t_all.loc[mask_y]
     
-        # ----- BEGIN PATCH: build masks từ Mapping A/B, không dùng txn/adj -----
-        amt = pd.to_numeric(df_tbl[amt_col], errors="coerce").fillna(0.0)
-        
-        # Lấy cột mapping A/B nếu có; nếu không thì tạo Series rỗng tương thích index
-        A = df_tbl[map_a].astype(str) if (map_a and map_a in df_tbl.columns) else pd.Series("", index=df_tbl.index)
-        B = df_tbl[map_b].astype(str) if (map_b and map_b in df_tbl.columns) else pd.Series("", index=df_tbl.index)
-        
-        def _isin(s, vals):
-            # an toàn khi vals rỗng hoặc s không phải Series hợp lệ
-            if not isinstance(s, pd.Series) or s.empty or not vals:
-                return pd.Series(False, index=df_tbl.index)
-            return s.isin(set(map(str, vals)))
-        
-        # Lấy tập giá trị đã chọn trong UI (giữ nguyên key cũ để tương thích)
-        val_tin       = st.session_state.get("mv_a_tin",   [])  # Transfer received
-        val_tout      = st.session_state.get("mv_a_tout",  [])  # Transfer sent
-        val_returns   = st.session_state.get("mv_a_ret",   [])
-        val_adj_sales = st.session_state.get("mv_b_sales", [])
-        val_adj_disc  = st.session_state.get("mv_b_disc",  [])
-        
-        # Mask theo Mapping A (transaction) và Mapping B (sales/discount)
-        m_recv  = _isin(A, val_tin)        # Transfer received
-        m_sent  = _isin(A, val_tout)       # Transfer sent
-        m_ret   = _isin(A, val_returns)
-        m_b_s   = _isin(B, val_adj_sales)  # Sales (B)
-        m_b_d   = _isin(B, val_adj_disc)   # Discount (B)
-        
-        # Series kết quả
-        sales_s   = amt.where(m_b_s, 0.0)
-        disc_s    = amt.where(m_b_d, 0.0)
-        t_recv_s  = amt.where(m_recv, 0.0)
-        t_sent_s  = amt.where(m_sent, 0.0)
-        returns_s = amt.where(m_ret,  0.0)
-        
-        # Nếu không có bất kỳ mapping nào → mặc định xem tất cả là Sales để chạy được overview nhanh
-        if (map_a is None or map_a not in df_tbl.columns) and (map_b is None or map_b not in df_tbl.columns):
-            sales_s   = amt
-            disc_s    = pd.Series(0.0, index=df_tbl.index)
-            t_recv_s  = pd.Series(0.0, index=df_tbl.index)
-            t_sent_s  = pd.Series(0.0, index=df_tbl.index)
-
-            # ---- Tổng hợp theo THÁNG trong năm đã chọn + tỷ trọng theo năm đó ----
+        # ---- Hàm build series cục bộ (không phụ thuộc biến bên ngoài)
+        def _build_series_from_mapping(df_src, amt_col, map_a, map_b):
+            if df_src is None or df_src.empty or amt_col is None:
+                idx = df_src.index if df_src is not None else pd.RangeIndex(0)
+                z = pd.Series(0.0, index=idx)
+                return z, z, z, z, z
+            amt = pd.to_numeric(df_src[amt_col], errors="coerce").fillna(0.0)
+    
+            if (map_a is not None and map_a in df_src.columns) and (map_b is not None and map_b in df_src.columns):
+                A = df_src[map_a].astype(str)
+                B = df_src[map_b].astype(str)
+                def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
+    
+                m_recv = _isin(A, st.session_state.get("mv_a_tin",  []))  # Transfer received
+                m_sent = _isin(A, st.session_state.get("mv_a_tout", []))  # Transfer sent
+                m_ret  = _isin(A, st.session_state.get("mv_a_ret",  []))
+                m_bs   = _isin(B, st.session_state.get("mv_b_sales", [])) # Sales (B)
+                m_bd   = _isin(B, st.session_state.get("mv_b_disc",  [])) # Discount (B)
+    
+                sales    = amt.where(m_bs, 0.0)
+                discount = amt.where(m_bd,  0.0)
+                t_recv   = amt.where(m_recv, 0.0)
+                t_sent   = amt.where(m_sent, 0.0)
+                returns  = amt.where(m_ret,  0.0)
+                return sales, discount, t_recv, t_sent, returns
+    
+            # Không mapping → xem tất cả là Sales
+            z = pd.Series(0.0, index=df_src.index)
+            return amt, z, z, z, z
+    
+        # ---- Tính series cho bảng (LOCAL) → net_local
+        s_sales, s_disc, s_recv, s_sent, s_ret = _build_series_from_mapping(df_tbl, amt_col, map_a, map_b)
+        s_trans   = s_recv.abs() + s_sent.abs()
+        s_net     = s_sales + s_trans - s_ret.abs() - s_disc.abs()     # <-- net_local dùng cho bảng
+    
+        if df_tbl.empty:
+            st.info("Không có dữ liệu trong năm được chọn.")
+        else:
+            # ---- Tổng hợp theo THÁNG trong năm đã chọn + tỷ trọng tổng
             mon = pd.DataFrame({
-                "m": pd.to_datetime(df_tbl[time_col], errors="coerce").dt.to_period("M").dt.start_time,
-                "v": net_s_tbl
+                "m": pd.to_datetime(t_tbl, errors="coerce").dt.to_period("M").dt.start_time,
+                "v": s_net
             }).groupby("m", dropna=False)["v"].agg(count="count", sum="sum", mean="mean", median="median").reset_index()
     
-            total_year = mon["sum"].sum()
+            total_year = float(mon["sum"].sum())
             mon["share"] = np.where(total_year != 0, mon["sum"]/total_year, np.nan)
-            mon["Nhóm"]  = mon["m"].dt.strftime("%b %Y")
     
-            tbl = mon[["Nhóm"]].copy()
-            tbl["Số dòng"]    = mon["count"].astype(int)
-            tbl["Tổng"]       = mon["sum"].map(lambda x: f"{x:,.0f}")
-            tbl["Trung bình"] = mon["mean"].map(lambda x: f"{x:,.0f}")
-            tbl["Trung vị"]   = mon["median"].map(lambda x: f"{x:,.0f}")
-            tbl["Tỷ trọng"]   = (mon["share"]*100).round(2).map(lambda v: f"{v:.2f}%" if pd.notna(v) else "—")
+            # Định dạng hiển thị
+            out = pd.DataFrame({"Kỳ": mon["m"].dt.strftime("%b %Y")})
+            out["Số dòng"]    = mon["count"].astype(int)
+            out["Tổng"]       = mon["sum"].map(lambda x: f"{x:,.0f}")
+            out["Trung bình"] = mon["mean"].map(lambda x: f"{x:,.0f}")
+            out["Trung vị"]   = mon["median"].map(lambda x: f"{x:,.0f}")
+            out["Tỷ trọng"]   = mon["share"].map(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "—")
     
-            # Sắp theo thời gian trong năm
-            tbl.index = mon["m"]
-            tbl = tbl.sort_index().reset_index(drop=True)
+            # Sắp theo thời gian (hoặc theo tổng giảm dần; tùy bạn)
+            out = out.iloc[np.argsort(mon["m"].values)]  # theo thời gian
+            # Nếu muốn theo tổng giảm dần:
+            # out = out.iloc[(-mon["sum"].values).argsort()]
     
-            st.markdown(f"*Năm đang xem (bảng):* **{tbl_year}**")
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
+            st.dataframe(out, use_container_width=True, hide_index=True)
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
