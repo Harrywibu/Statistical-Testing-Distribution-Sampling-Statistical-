@@ -744,7 +744,7 @@ def evaluate_rules(ctx: Dict[str,Any], scope: Optional[str]=None) -> pd.DataFram
     return df
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality (FULL)', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) ANOVA & Nonparametric', '6) Regression', '7) Flags & Risk/Export'])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) ANOVA & Nonparametric', '6) Regression', '7) Flags & Risk/Export'])
 # ---- TAB 0: Data Quality (FULL) ----
 with TAB0:
     st.subheader('🧪 Data Quality')
@@ -822,6 +822,39 @@ with TAB1:
             return None
         v = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key)
         return None if v == "—" else v
+    def build_series_from_mapping(df_src, amt_col, map_a, map_b):
+    """Trả về 5 Series đã chuẩn hóa: sales, discount, transfer_received, transfer_sent, returns.
+       Hỗ trợ trường hợp: chỉ có amt_col (không mapping) -> xem tất cả là sales."""
+    if df_src is None or df_src.empty or amt_col is None:
+        idx = df_src.index if df_src is not None else pd.RangeIndex(0)
+        z = pd.Series(0.0, index=idx)
+        return z, z, z, z, z
+
+    amt = pd.to_numeric(df_src[amt_col], errors="coerce").fillna(0.0)
+
+    # Nếu có đủ mapping A+B
+    if map_a is not None and map_b is not None and map_a in df_src.columns and map_b in df_src.columns:
+        A = df_src[map_a].astype(str)
+        B = df_src[map_b].astype(str)
+        def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
+
+        m_recv  = _isin(A, st.session_state.get("mv_a_tin", []))    # Transfer received
+        m_sent  = _isin(A, st.session_state.get("mv_a_tout", []))   # Transfer sent
+        m_ret   = _isin(A, st.session_state.get("mv_a_ret", []))
+        m_b_s   = _isin(B, st.session_state.get("mv_b_sales", []))
+        m_b_d   = _isin(B, st.session_state.get("mv_b_disc",  []))
+
+        sales    = amt.where(m_b_s, 0.0)
+        discount = amt.where(m_b_d, 0.0)
+        t_recv   = amt.where(m_recv, 0.0)
+        t_sent   = amt.where(m_sent, 0.0)
+        returns  = amt.where(m_ret, 0.0)
+        return sales, discount, t_recv, t_sent, returns
+
+    # Không có mapping -> tất cả coi là Sales
+    z = pd.Series(0.0, index=df_src.index)
+    return amt, z, z, z, z
+
 
     def _norm_period_value(p):
         if p is None: return "Month"
@@ -835,10 +868,9 @@ with TAB1:
     P2   = {"MS":"M","QS":"Q","YS":"Y"}
     YOY  = {"MS":12,"QS":4,"YS":1}
 
-    # ====================== 0) IMPORT INPUT DATA (Required) — 2 HÀNG GỌN ======================
+    # --- Import Input Data (Required) ---
     st.markdown("### ⚙️ Import Input Data - (Required)")
     with st.container(border=True):
-        # Hàng 1: Time & IDs & Dimensions
         c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
         time_col    = _pick(c1, "🕒 Time",         "ov_time")
         order_col   = _pick(c2, "🧾 Order/Doc",    "ov_order")
@@ -846,24 +878,52 @@ with TAB1:
         prod_col    = _pick(c4, "📦 Product",      "ov_prod")
         region_col  = _pick(c5, "🌍 Region (opt)",  "ov_region")
         channel_col = _pick(c6, "🛒 Channel (opt)", "ov_channel")
-
-        # Hàng 2: Amount + 2 cột mapping (nếu có)
+    
         r1, r2, r3 = st.columns([1,1,1])
-        amt_col  = _pick(r1, "💰 Sales Amount", "ov_amt")
-        map_a    = _pick(r2, "🏷️ Mapping A",   "ov_map_a")  # dùng cho Sales/Purchase/Transfer/Returns
-        map_b    = _pick(r3, "🏷️ Mapping B",   "ov_map_b")  # dùng cho Sales/Discount
-
+        amt_col = r1.selectbox(
+            "💰 Sales Amount",
+            ["—"] + (list(df.columns) if not df.empty else []),
+            index=0, key="ov_amt",
+            help="Cột số tiền. Có thể chỉ chọn cột này (không cần mapping) để xem Overview tổng."
+        )
+        amt_col = None if amt_col == "—" else amt_col
+    
+        map_a = r2.selectbox(
+            "🏷️ Mapping A (transaction) (?)",
+            ["—"] + (list(df.columns) if not df.empty else []),
+            index=0, key="ov_map_a",
+            help="Dùng để phân loại **nghiệp vụ**: Sales / Purchase / Transfer received / Transfer sent / Returns."
+        )
+        map_a = None if map_a == "—" else map_a
+    
+        map_b = r3.selectbox(
+            "🏷️ Mapping B (sales vs. discount) (?)",
+            ["—"] + (list(df.columns) if not df.empty else []),
+            index=0, key="ov_map_b",
+            help="Dùng để phân loại **giá trị**: Sales / Discount.\n\n"
+                 "⚠️ Nên **khác cột** với Mapping A để tránh đếm trùng."
+        )
+        map_b = None if map_b == "—" else map_b
+    
+        if map_a and map_b and map_a == map_b:
+            st.warning("Mapping A và Mapping B đang dùng **cùng một cột**. Hãy chọn 2 cột khác nhau để tránh trùng lặp.")
+    
+        # Lấy unique cho multi-select
         uniq_a = list(pd.Series(df[map_a].astype(str).unique()).sort_values()) if (not df.empty and map_a) else []
         uniq_b = list(pd.Series(df[map_b].astype(str).unique()).sort_values()) if (not df.empty and map_b) else []
-
-        with st.expander("Mapping (Sales / Purchase / Transfer-in / Transfer-out / Returns + Sales / Discount)", expanded=False):
+    
+        with st.expander("Mapping (A+B) — Transaction + Sales/Discount", expanded=False):
             tl, tr = st.columns([2,1.4])
+    
+            # A: transaction
             a1,a2,a3,a4,a5 = tl.columns(5)
-            mv_sales   = a1.multiselect("Sales (A)",        uniq_a, key="mv_a_sales")
-            mv_purch   = a2.multiselect("Purchase (A)",     uniq_a, key="mv_a_purch")
-            mv_tin     = a3.multiselect("Transfer-in (A)",  uniq_a, key="mv_a_tin")
-            mv_tout    = a4.multiselect("Transfer-out (A)", uniq_a, key="mv_a_tout")
-            mv_ret     = a5.multiselect("Returns (A)",      uniq_a, key="mv_a_ret")
+            mv_a_sales = a1.multiselect("Sales (A)", uniq_a, key="mv_a_sales")
+            mv_a_purch = a2.multiselect("Purchase (A)", uniq_a, key="mv_a_purch")
+            mv_a_recv  = a3.multiselect("Transfer received (A)", uniq_a, key="mv_a_tin")   # đổi tên
+            mv_a_sent  = a4.multiselect("Transfer sent (A)",     uniq_a, key="mv_a_tout")  # đổi tên
+            mv_a_ret   = a5.multiselect("Returns (A)", uniq_a, key="mv_a_ret")
+    
+            # B: sales/discount
             b1,b2 = tr.columns(2)
             mv_b_sales = b1.multiselect("Sales (B)",    uniq_b, key="mv_b_sales")
             mv_b_disc  = b2.multiselect("Discount (B)", uniq_b, key="mv_b_disc")
@@ -1202,13 +1262,12 @@ with TAB1:
         # --- Tính Net theo schema 'Amount + Type' đã cấu hình ---
         def _ser_zero(idx): return pd.Series(0.0, index=idx)
     
-        if df_tbl.empty or any(x is None for x in [amt_col, type_col, adj_col]):
-            st.info("Thiếu hoặc không có dữ liệu cho năm đã chọn.")
+        if df_tbl.empty or amt_col is None:
+            st.info("Thiếu hoặc không có dữ liệu cho phạm vi đã chọn.")
+            sales_s = disc_s = t_recv_s = t_sent_s = returns_s = pd.Series(0.0, index=df_tbl.index if not df_tbl.empty else pd.RangeIndex(0))
         else:
-            amt = pd.to_numeric(df_tbl[amt_col], errors="coerce").fillna(0.0)
-            txn = df_tbl[type_col].astype(str)
-            adj = df_tbl[adj_col].astype(str)
-    
+            sales_s, disc_s, t_recv_s, t_sent_s, returns_s = build_series_from_mapping(df_tbl, amt_col, map_a, map_b)
+
             def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
     
             m_tin, m_tout, m_ret = _isin(txn, val_tin), _isin(txn, val_tout), _isin(txn, val_returns)
