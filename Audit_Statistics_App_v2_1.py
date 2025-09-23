@@ -152,16 +152,31 @@ for k, v in DEFAULTS.items():
     SS.setdefault(k, v)
 
 # ------------------------------- Small Utilities ------------------------------
+SS = st.session_state
+if not isinstance(SS.get('_plt_seq'), int):
+    SS['_plt_seq'] = 0
 def file_sha12(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()[:12]
 
 def st_plotly(fig, **kwargs):
-    if '_plt_seq' not in SS: SS['_plt_seq'] = 0
-    SS['_plt_seq'] += 1
+    # Đảm bảo bộ đếm luôn là int
+    seq = SS.get('_plt_seq')
+    if not isinstance(seq, int):
+        seq = 0
+    seq += 1
+    SS['_plt_seq'] = seq
+
     kwargs.setdefault('use_container_width', True)
     kwargs.setdefault('config', {'displaylogo': False})
-    kwargs.setdefault('key', f'plt_{SS["_plt_seq"]}')
-    return st.plotly_chart(fig, **kwargs)
+    kwargs.setdefault('key', f'plt_{seq}')
+
+    # Nếu plotly sẵn sàng thì vẽ; nếu không, thông báo nhẹ nhàng
+    try:
+        return st.plotly_chart(fig, **kwargs)
+    except Exception as e:
+        st.warning(f"Không render được Plotly chart: {e}")
+        # (Tuỳ chọn) có thể thêm fallback matplotlib ở đây nếu bạn muốn
+        return None
 
 @st.cache_data(ttl=900, show_spinner=False, max_entries=64)
 def corr_cached(df: pd.DataFrame, cols: List[str], method: str = 'pearson') -> pd.DataFrame:
