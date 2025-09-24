@@ -848,21 +848,25 @@ with TAB1:
         channel_col = _pick(c6, "🛒 Channel (opt)", "ov_channel",
                             help_="Kênh bán (tuỳ chọn) cho **Distribution**.")
 
-        # Hàng 2 — Revenue + Amount(volume) + Price
-        r1, r2, r3 = st.columns([1,1,1])
+        # Hàng 2 — Revenue + Amount(volume) + Price + Weight
+        r1, r2, r3, r4 = st.columns([1,1,1,1])
         rev_col = _pick(r1, "💰 Revenue (KH ngoài)", "ov_rev",
-                        help_="Doanh thu **bán cho khách ngoài**. "
-                              "TẤT CẢ biểu đồ/bảng sẽ dùng cột này (nếu có Mapping B → chỉ lấy **Sales(B)**).")
+                        help_="Doanh thu **bán cho khách ngoài**. TẤT CẢ biểu đồ/bảng sẽ dùng cột này "
+                              "(nếu có Mapping B → chỉ lấy **Sales(B)**).")
         vol_col = _pick(r2, "📦 Amount (volume: qty/weight)", "ov_amt",
-                        help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)** và làm **trọng số** cho Avg Price.")
+                        help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)**.")
+        price_col = _pick(r3, "🏷️ Price (đơn giá bán ngoài)", "ov_price",
+                          help_="Đơn giá bán **cho khách ngoài**. (Không bắt buộc trong công thức Avg Price mới).")
+        weight_col = _pick(r4, "⚖️ Weight (denominator cho Avg Price)", "ov_weight",
+                           help_="**Weight** cho công thức Avg Price = ΣRevenue_external / ΣWeight_external. "
+                                 "Bỏ qua các dòng weight ≤ 0.")
 
         # Hàng 3 — Mapping A/B
-        r4, r5 = st.columns([1,1])
-        map_a = _pick(r3, "🏷️ Mapping A — Transaction", "ov_map_a",
-                      help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: "
-                            "**Sales (External)** & **Transfer (Internal)**. "
-                            "Dùng để tính tỷ trọng theo **Amount (volume)**.")
-        map_b = _pick(r4, "🏷️ Mapping B — Value Type", "ov_map_b",
+        r5, r6 = st.columns([1,1])
+        map_a = _pick(r5, "🏷️ Mapping A — Transaction", "ov_map_a",
+                      help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: **Sales (External)** & **Transfer (Internal)**. "
+                            "Dùng để tính tỷ trọng theo **Amount (volume)** & lọc external cho Avg Price.")
+        map_b = _pick(r6, "🏷️ Mapping B — Value Type", "ov_map_b",
                       help_="Phân loại **giá trị**: **Sales (B)** / **Discount (B)**. "
                             "Dùng tính **Discount%** (Excel style) và lọc Revenue để vẽ biểu đồ/bảng.")
         if map_a and map_b and map_a == map_b:
@@ -912,6 +916,7 @@ with TAB1:
     rev   = pd.to_numeric(dfv[rev_col],   errors="coerce").fillna(0.0)
     vol   = pd.to_numeric(dfv[vol_col],   errors="coerce").fillna(0.0) if vol_col   else pd.Series(0.0, index=dfv.index)
     price = pd.to_numeric(dfv[price_col], errors="coerce")              if price_col else pd.Series(np.nan, index=dfv.index)
+    wgt   = pd.to_numeric(dfv[weight_col],errors="coerce").fillna(0.0)  if weight_col else pd.Series(0.0, index=dfv.index)
 
     # ---------- Mapping A: Sales vs Transfer (robust) ----------
     def _norm_ser(s: pd.Series) -> pd.Series:
@@ -1035,7 +1040,7 @@ with TAB1:
             else:
                 st.info("Chưa đủ dữ liệu để tính bảng Discount theo tháng.")
 
-    # ====================== 6) Top Contribution — theo Revenue ======================
+    # ====================== 5) Top Contribution — theo Revenue ======================
     st.markdown("### 🧱 Top Contribution")
     tc1, tc2, tc3 = st.columns([2,1,1])
     dim_col = tc1.selectbox("📊 Dimension (X)", ["—"] + list(df.columns), index=0)
@@ -1107,6 +1112,84 @@ with TAB1:
                 fig_p.update_layout(margin=dict(l=10,r=10,t=10,b=10), showlegend=False, height=440)
                 st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
 
+    # ====================== 6) 💹 Avg Price (ΣRevenue_external / ΣWeight_external) vs Revenue ======================
+    st.markdown("### 💹 Avg Price vs Revenue")
+    if time_col and weight_col:
+        years_p = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        y_p = st.selectbox("Year scope (Price chart)", [str(y) for y in years_p], index=len(years_p)-1, key="price_year")
+
+        # Filter theo Product (All)
+        prod_vals = df[prod_col].astype(str).unique().tolist() if (prod_col and prod_col in df.columns) else []
+        sel_prod = st.multiselect("Filter Product", ["(All)"] + sorted(prod_vals), default="(All)")
+
+        mask_y = (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_p))
+        mask_p = pd.Series(True, index=df.index)
+        if prod_col and sel_prod and "(All)" not in sel_prod:
+            mask_p &= df[prod_col].astype(str).isin(sel_prod)
+        mask_scope = mask_y & mask_p
+
+        dfx = df.loc[mask_scope].copy()
+        if dfx.empty:
+            st.info("Không có dữ liệu trong năm/bộ lọc đã chọn.")
+        else:
+            # External sales mask (Mapping A)
+            if map_a and map_a in dfx.columns:
+                A_norm = dfx[map_a].astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.lower()
+                tok_s  = set(pd.Series(SS.get("mv_a_sales", [])).astype(str)
+                             .str.strip().str.replace(r"\s+", " ", regex=True).str.lower())
+                m_sales_only = A_norm.isin(tok_s) if tok_s else pd.Series(True, index=dfx.index)
+            else:
+                m_sales_only = pd.Series(True, index=dfx.index)
+
+            # Numeric fields
+            rev_x = pd.to_numeric(dfx[rev_col],   errors="coerce").fillna(0.0)
+            wgt_x = pd.to_numeric(dfx[weight_col],errors="coerce").fillna(0.0)
+
+            # Aggregations theo tháng
+            t_price = pd.to_datetime(dfx[time_col], errors="coerce")
+            grp = t_price.dt.to_period("M").dt.start_time
+
+            # Bar: tổng Revenue (external)
+            rev_bar = rev_x.where(m_sales_only, 0.0).groupby(grp).sum()
+
+            # Line: Avg Price = ΣRevenue_external / ΣWeight_external, bỏ weight <=0
+            rev_w = rev_x.where(m_sales_only & (wgt_x > 0), 0.0).groupby(grp).sum()
+            wgt_w = wgt_x.where(m_sales_only & (wgt_x > 0), 0.0).groupby(grp).sum()
+            avg_price = np.where(wgt_w>0, rev_w/wgt_w, np.nan)
+
+            monthly = pd.DataFrame({"rev": rev_bar, "avg_price": avg_price}).sort_index()
+
+            cL, cR = st.columns([0.72, 0.28])
+            with cL:
+                figp = go.Figure()
+                figp.add_bar(x=monthly.index, y=monthly["rev"], name="Revenue",
+                             text=[f"{v:,.0f}" for v in monthly["rev"]], textposition="outside", hoverinfo="skip")
+                figp.add_scatter(x=monthly.index, y=monthly["avg_price"], yaxis="y2",
+                                 mode="lines+markers+text", name="Avg Price",
+                                 text=[f"{v:,.0f}" if pd.notna(v) else "" for v in monthly["avg_price"]],
+                                 textposition="top center", line=dict(color="#F2C811", width=3), marker=dict(size=6),
+                                 hoverinfo="skip")
+                figp.update_layout(
+                    xaxis_title="Month",
+                    yaxis=dict(title="Revenue"),
+                    yaxis2=dict(title="Avg Price (ΣRevenue_external / ΣWeight_external)",
+                                overlaying="y", side="right", showgrid=False),
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    hovermode=False, showlegend=True, height=440
+                )
+                st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
+                st.caption("Bar = Revenue (external sales). Line = Avg Price = ΣRevenue_external / ΣWeight_external (bỏ weight ≤ 0).")
+
+            with cR:
+                tbl = monthly.copy()
+                tbl.index = tbl.index.strftime("%b %Y")
+                tbl.rename(columns={"rev":"Revenue","avg_price":"Avg Price"}, inplace=True)
+                tbl["Revenue"]   = tbl["Revenue"].map(lambda x: f"{x:,.0f}")
+                tbl["Avg Price"] = tbl["Avg Price"].map(lambda x: "—" if pd.isna(x) else f"{x:,.0f}")
+                st.dataframe(tbl, use_container_width=True, height=440)
+    else:
+        st.info("Cần chọn **Time** và **Weight** để xem Avg Price vs Revenue.")
+
     # ====================== 7) Distribution by Region / Channel — theo Revenue ======================
     st.markdown("### 🗺️ Distribution by Region / Channel")
     if time_col:
@@ -1118,6 +1201,16 @@ with TAB1:
     if time_col and y_dist!="All":
         mask_dist &= (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_dist))
     dfd = df.loc[mask_dist].copy()
+
+    def _revenue_for(dframe):
+        if rev_col not in dframe.columns: return pd.Series(0.0, index=dframe.index)
+        r = pd.to_numeric(dframe[rev_col], errors="coerce").fillna(0.0)
+        if map_b and map_b in dframe.columns:
+            B = dframe[map_b].astype(str)
+            m = B.isin(set(map(str, SS.get("mv_b_sales", []))))
+            return r.where(m, 0.0)
+        return r
+
     s_revenue_dist = _revenue_for(dfd)
 
     if not region_col or region_col not in dfd.columns:
@@ -1148,31 +1241,48 @@ with TAB1:
                       .groupby("ch")["v"].sum().sort_values(ascending=False))
             keep = set(ch_sum.head(topn_ch).index)
             ch = ddf[channel_col].astype(str).where(ddf[channel_col].astype(str).isin(keep), other="Other")
+
             g = (pd.DataFrame({"Region": ddf[region_col].astype(str), "Channel": ch, "v": mser})
                  .groupby(["Region","Channel"])["v"].sum().reset_index())
             piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
+
             row_tot = piv.sum(axis=1).replace(0, np.nan)
             share   = piv.div(row_tot, axis=0) * 100.0
             piv     = piv.loc[row_tot.sort_values().index]; share = share.loc[piv.index]
+
             fig = go.Figure()
+            thr = 8.0  # % nhỏ hơn ngưỡng này sẽ đẩy label ra ngoài
             for col in piv.columns:
-                fig.add_bar(x=piv.index, y=piv[col].values, name=str(col),
-                            text=[f"{v:.1f}%" if not np.isnan(v) else "" for v in share[col].values],
-                            textposition="inside", hoverinfo="skip")
-            fig.update_layout(barmode="stack", xaxis_title="Region", yaxis_title="Revenue",
-                              margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440,
-                              uniformtext_minsize=12, uniformtext_mode="show")
+                vals = piv[col].values
+                pct  = share[col].values
+                text = [f"{v:.1f}%" if not np.isnan(v) else "" for v in pct]
+                # vị trí label theo từng điểm
+                pos  = ["inside" if (isinstance(p, (int,float)) and p >= thr) else "outside" for p in pct]
+                fig.add_bar(x=piv.index, y=vals, name=str(col),
+                            text=text, textposition=pos, textfont=dict(size=11),
+                            hoverinfo="skip", cliponaxis=False)
+
+            fig.update_layout(
+                barmode="stack", xaxis_title="Region", yaxis_title="Revenue",
+                margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=460,
+                uniformtext_minsize=11, uniformtext_mode="show"
+            )
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
         else:
             reg = (pd.DataFrame({"Region": ddf[region_col].astype(str), "v": mser})
                    .groupby("Region")["v"].sum().sort_values(ascending=True))
             tot = reg.sum()
+            pct = (reg/tot*100.0) if tot>0 else reg*0
+            pos = ["inside" if p>=8 else "outside" for p in pct.values]
+            txt = [f"{p:.1f}%" for p in pct.values]
             fig = go.Figure()
             fig.add_bar(x=reg.values, y=reg.index, orientation="h",
-                        text=[f"{v:,.0f} • {(v/tot*100 if tot>0 else 0):.1f}%" for v in reg.values],
-                        textposition="outside", hoverinfo="skip", name="Revenue")
+                        text=txt, textposition=pos, textfont=dict(size=11),
+                        hoverinfo="skip", name="Revenue", cliponaxis=False)
             fig.update_layout(xaxis_title="Revenue", yaxis_title="Region",
-                              margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=False, height=440)
+                              margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=False, height=460,
+                              uniformtext_minsize=11, uniformtext_mode="show")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     # ====================== 8) Summary table — theo Revenue ======================
