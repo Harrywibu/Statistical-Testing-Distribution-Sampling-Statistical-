@@ -862,10 +862,10 @@ with TAB1:
 
         # Hàng 3 — Mapping A/B
         r4, r5 = st.columns([1,1])
-        map_a = _pick(r5, "🏷️ Mapping A — Transaction", "ov_map_a",
+        map_a = _pick(r4, "🏷️ Mapping A — Transaction", "ov_map_a",
                       help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: **Sales (External)** & **Transfer (Internal)**. "
                             "Dùng để tính tỷ trọng theo **Amount (volume)** & lọc external cho Avg Price.")
-        map_b = _pick(r6, "🏷️ Mapping B — Value Type", "ov_map_b",
+        map_b = _pick(r5, "🏷️ Mapping B — Value Type", "ov_map_b",
                       help_="Phân loại **giá trị**: **Sales (B)** / **Discount (B)**. "
                             "Dùng tính **Discount%** (Excel style) và lọc Revenue để vẽ biểu đồ/bảng.")
         if map_a and map_b and map_a == map_b:
