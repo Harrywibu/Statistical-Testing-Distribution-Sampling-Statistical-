@@ -1,162 +1,150 @@
-## 🚀 Cách chạy
-```bash
-pip install -r requirements.txt
-streamlit run Audit_Statistics_App_v2_1.py
+# Sales Analytics App — Quick Tour (Sales-first)
+
+> **Mục tiêu:** Dễ dùng – gọn – áp vào **bối cảnh sales**.  
+> Bạn sẽ đi từ **nhập dữ liệu** → **đọc bức tranh** → **đào sâu** → **kết luận & xuất**.
+
+---
+
+## 1) Flow làm việc (tổng quan)
+
+```mermaid
+flowchart TD
+  A[Import Input Data — (Required)
+Time, ID, Dimensions, Revenue, Amount, Weight,
+Mapping A (Sales vs Transfer), Mapping B (Sales vs Discount)] --> B[Display
+Period = Month/Quarter/Year
+Compare = Prev/YoY
+Year scope]
+  B --> C[Overview
+KPI • Trend Bar+Line • Top Contribution •
+Distribution Region/Channel • Avg Price vs Revenue • Summary table]
+  C --> D[Distribution / Profiling
+(Hist/Box • Top-N • Resample)]
+  D --> E[Correlation & Trend (Test)
+(Pearson/Spearman/Kendall • Cramér's V • η+ANOVA • Mann–Kendall)]
+  E --> F[Statistics Test
+(ANOVA & Nonparametric: Independent/Repeated)]
+  F --> G[Regression
+(Linear/Logistic • kết luận ngắn)]
+  C --> H[Benford
+(Expected% vs Observed% • Drill-down 5%)]
+  E --> H
+  H --> I[Flags / Export
+(Tổng hợp • xuất báo cáo)]
 ```
-> Yêu cầu: Python 3.9–3.12. `requirements.txt` bao gồm `plotly`, `kaleido`, `scipy`, `statsmodels`, `scikit-learn`, `python-docx`, `PyMuPDF`, `openpyxl`, `pyarrow/fastparquet`.
-
-# 📒 Sales Analytics Application — Hướng dẫn vận hành **có minh hoạ**
-
-> Tài liệu này tổng hợp **toàn bộ luồng làm việc**, **tính năng/chức năng** từng tab, **cách sử dụng** và **ví dụ thực tế** trong phân tích bán hàng.  
-> Mỗi bước có **ảnh minh hoạ** từ ứng dụng để bạn thao tác nhanh.
 
 ---
 
-## Mục lục
-1. [Luồng làm việc A→Z](#luồng-làm-việc-az)
-2. [Import & Data Quality](#import--data-quality)
-3. [Overview — Sales Activities](#overview--sales-activities)
-4. [Top Contribution & Distribution by Region/Channel](#top-contribution--distribution-by-regionchannel)
-5. [Profiling / Distribution](#profiling--distribution)
-6. [Benford](#benford)
-7. [Statistics Test — ANOVA & Nonparametric](#statistics-test--anova--nonparametric)
-8. [Regression (Linear/Logistic)](#regression-linearlogistic)
-9. [Tips big‑data & tổ chức dữ liệu](#tips-bigdata--tổ-chức-dữ-liệu)
-10. [Ví dụ thực tế: từ dữ liệu → quyết định](#ví-dụ-thực-tế-từ-dữ-liệu--quyết-định)
+## 2) Checklist khởi động nhanh
+
+1. **Import Input Data — (Required)**  
+   - **Time** (datetime), **Order/Doc**, **Customer**, **Product**, **Region** (opt), **Channel** (opt)  
+   - **Revenue** (KH ngoài), **Amount** (volume), **Weight** (để tính Avg Price)  
+   - **Mapping A — Transaction**: *Sales (External)* vs *Transfer (Internal)* (tỷ trọng theo **Amount**)  
+   - **Mapping B — Value Type**: *Sales (B)* vs *Discount (B)* (tính **Discount%** & lọc **Revenue** cho chart/bảng)  
+   - ⚠️ **A và B dùng cột khác nhau** để tránh trùng logic.
+2. **Display:** Period (M/Q/Y), Compare (Prev/YoY), Year scope.
+3. **Overview:** Đọc KPI & Trend → Top-N → Distribution → (nếu có Weight) Avg Price vs Revenue → bảng tháng.
+4. Cần soi kỹ: **Distribution / Profiling** → **Correlation & Trend** → **Statistics Test** → **Regression**.
+5. Rà rủi ro: **Benford** → **Flags/Export**.
 
 ---
 
-## Luồng làm việc A→Z
-1) **Import** dữ liệu → 2) **Map & cấu hình** trong **Overview** → 3) **Đọc KPI + Trend** → 4) **Đóng góp & Phân bổ** → 5) **Bảng tổng hợp**  
-6) **Khám phá sâu**: Profiling → Correlation/Trend → ANOVA/Nonparametric → Regression → Benford → **Flags/Export**.
+## 3) Công thức cốt lõi (rút gọn)
+
+- **%Sales (A)** = Σ|Amount| của **Sales(External)** / Σ|Amount| (**Sales + Transfer**) × 100  
+- **%Transfer (A)** = Σ|Amount| của **Transfer(Internal)** / Σ|Amount| (**Sales + Transfer**) × 100  
+- **Discount% (B)** = Σ|Discount(B)| / Σ|Sales(B)| × 100  
+  - **Avg monthly (năm)** = trung bình Discount% theo tháng (chỉ tháng có Sales>0)  
+  - **Year** = (-ΣDiscB_year / ΣSalesB_year) × 100 (đủ 12 tháng hoặc YTD theo scope)
+- **Avg Price (external)** = ΣRevenue_external / ΣWeight_external (bỏ weight ≤ 0)  
+- **Growth % (Line)** = (Current − Baseline) / Baseline × 100, Baseline = **Prev** hoặc **YoY**  
+- Chart/bảng doanh thu sử dụng **Revenue (Sales B nếu có)** để tránh nhiễu bởi Discount.
 
 ---
 
-## Import & Data Quality
+## 4) Tour thực chiến theo tab (Khi nào dùng → Thao tác → Đọc kết quả → Ví dụ)
 
-**Upload file** (CSV/XLSX/Parquet), chọn sheet và header, lọc cột nếu cần, rồi **Load full data**.
-
-**Màn hình upload & preview:**  
-![](sandbox:/mnt/data/63f146ad-fa64-4f70-8426-82ad3eecf4ca.png)
-
-**Chọn sheet, header & skip rows (XLSX):**  
-![](sandbox:/mnt/data/6b55e120-af77-41f3-b3cd-de5d4bac0026.png)
-
-**Khi cần chỉnh thêm:**  
-![](sandbox:/mnt/data/27360b3c-ff19-431d-b7bf-ccb2823af966.png)
-
-> 🔎 **Lưu ý dữ liệu tối thiểu**: `Time (datetime)`, `Amount (numeric)`, `Txn type (Sales/Purchase/Transfer-in/out/Returns)`, `Adj type (Sales/Discount)`. Khuyến nghị thêm: Order/Doc, Customer, Product, Region, Channel.
+### 4.1 Overview (Sales Activities)
+**Khi nào dùng:** Xem “bức tranh” theo **tháng/quý/năm**, ai/đâu/kênh nào đóng góp, xu hướng nhanh.  
+**Thao tác:** Chọn Period/Compare/Year → đọc **KPI** (Revenue, Orders, Total product, **%Sales(A)**, **%Transfer(A)**, **Discount% (avg/YTD)**) → **Trend** (Bar=Revenue, Line=%Δ vàng) → **Top-N** (Dimension) → **Distribution Region/Channel** → **Avg Price vs Revenue** (nếu có Weight) → **Summary table**.  
+**Đọc kết quả:** Xu hướng tăng ổn định? Discount% vượt ngưỡng lịch sử? Ai đóng góp nhiều nhất? Giá bình quân đi cùng hay ngược doanh thu?  
+**Ví dụ:** Q4 tăng 18% YoY, Avg Price giảm → tăng trưởng đến từ volume/khuyến mãi → kiểm mix sản phẩm & chính sách discount.
 
 ---
 
-## Overview — Sales Activities
-
-**Khu vực cấu hình (bắt buộc + hiển thị)**, KPI 2×4, biểu đồ xu hướng (Bar + %Δ YoY/Prev), Discount theo tháng và Bảng tổng hợp.
-
-**Cấu hình gọn 2 hàng + Mapping Txn/Adj:**  
-![](sandbox:/mnt/data/b8d15ea7-d521-42e4-87fa-62f091040226.png)
-
-> 🧭 **Display config**: `Period` (M/Q/Y), `Compare` (Prev/YoY), `Year scope` (áp cho biểu đồ và bảng).  
-> 🟨 **Line vàng** luôn là **%Δ so với baseline**; **Bar** là doanh số theo Period.  
-> 📌 **Discount%** tính theo **giá trị dương**: \u03A3|Discount| / \u03A3|Sales|; có **avg monthly** và **year‑to‑date**.
+### 4.2 Distribution / Profiling
+**Khi nào dùng:** Sanity-check dữ liệu, hình dạng phân phối, long-tail/outlier, seasonality.  
+**Thao tác:**  
+- **Numeric:** Histogram + Box (log scale nếu lệch).  
+- **Categorical:** **Top-N** bar, gộp Others.  
+- **Datetime:** Resample theo **M/Q/Y**.  
+**Đọc kết quả:** Numeric lệch → ưu tiên median/nonparametric; Categorical tập trung (Pareto) hay phân tán; Datetime có mùa vụ?  
+**Ví dụ:** 10 SKU top chiếm 78% → dồn hàng/marketing nhóm này; Kênh Online biến động cao → san phẳng khuyến mãi.
 
 ---
 
-## Top Contribution & Distribution by Region/Channel
-
-**Đóng góp theo nhóm (Pareto & Pie)** + **Phân bổ theo Vùng/Kênh** (giá trị & % share).
-
-**Top Contribution (chọn Dimension X, Top‑N, lọc giá trị):**  
-![](sandbox:/mnt/data/b2eefbab-c4f2-46cc-b85e-0cd174a8882f.png)
-
-> 💡 Dùng **Filter values** để bỏ nhóm không quan tâm; Top‑N giúp tập trung 20–80 (Pareto).
-
-**Phân bổ theo Vùng/Kênh (Measure: Net/Sales/Transfer/Returns/Discount):**  
-> Nếu có `Channel` → biểu đồ **stacked** Region×Channel (kèm **%**). Không có → **horizontal bar** theo Region.
-(Ảnh minh hoạ lấy từ khu vực Overview sau khi chọn Measure.)
+### 4.3 Correlation & Trend (Test)
+**Khi nào dùng:** Kiểm **mối liên hệ** giữa biến, **xu hướng** theo thời gian.  
+**Thao tác:** Chọn X–Y → test auto/đề xuất phù hợp:  
+- Numeric–Numeric: **Pearson / Spearman / Kendall**  
+- Cat–Cat: **Cramér’s V**  
+- Cat–Num: **η** + **ANOVA p**  
+- Time: **Mann–Kendall**  
+Dùng **Top-N** cho cat lớn; **Fast/Max rows** cho dữ liệu to.  
+**Đọc kết quả:** `|r|≈0.1/0.3/0.5` → yếu/vừa/mạnh; η gần 1 = khác biệt giữa nhóm lớn; Mann–Kendall tau>0 tăng, tau<0 giảm (p<0.05).  
+**Ví dụ:** Discount% ↔ Growth (Spearman ρ=0.32, p=0.01) → chiết khấu giúp đẩy tăng trưởng ngắn hạn; theo dõi hoàn hàng/lợi nhuận.
 
 ---
 
-## Profiling / Distribution
-
-**Khảo sát phân phối** cho numeric/categorical/datetime, phát hiện outlier và đuôi dài.
-
-**Chọn cột & số bin:**  
-![](sandbox:/mnt/data/bafb59e7-41bb-4433-bd4d-85b465a60457.png)
-
-**Thống kê nhanh & Rule insights:**  
-![](sandbox:/mnt/data/620e5152-9213-4edf-9380-52b0c266c5cc.png)
-
-> 📎 Gợi ý: Numeric lệch mạnh → khi hồi quy cân nhắc `log1p(Y)`. Categorical đuôi dài → gộp “Other”.
+### 4.4 Statistics Test (ANOVA & Nonparametric)
+**Khi nào dùng:** So sánh **trung bình/median** giữa **nhóm** (independent/repeated).  
+**Thao tác nhanh:**  
+- **Independent**: 2 nhóm → **Welch t-test** (mặc định) / Mann–Whitney; ≥3 nhóm → **One-way ANOVA** / **Welch ANOVA** / Kruskal–Wallis; 2 yếu tố → **Two-way ANOVA**; có covariate → **ANCOVA**.  
+- **Repeated**: 2 điều kiện → **Paired t** / **Wilcoxon**; ≥3 điều kiện → **RM-ANOVA** / **Friedman**.  
+**Đọc kết quả:** **p<0.05** = khác biệt có ý nghĩa; xem **hiệu ứng** (η²/d/r) để đánh giá **mức độ thực tế**.  
+**Ví dụ:** AOV theo Channel (≥3) — Welch ANOVA p<0.01 → Channel C vượt trội → ưu tiên ngân sách upsell ở C.
 
 ---
 
-## Benford
-
-**Kiểm tra bất thường phân phối chữ số đầu** cho cột amount.
-
-**Chọn amount 1D/2D & chạy:**  
-![](sandbox:/mnt/data/be583d22-7168-48e7-926f-0ca1f55d7421.png)
-
-**Bảng chất lượng & chênh lệch digit:**  
-![](sandbox:/mnt/data/f52713dc-28c9-4b09-92db-df7b4e1b0033.png)
-
-> 🧯 Không phải mọi dữ liệu đều phù hợp Benford (giá cố định, ngưỡng trần/sàn…). Dùng để **gợi ý điều tra**.\
-> Hãy **drill-down** theo chi nhánh/nhân viên/ca nếu thấy lệch lớn.
+### 4.5 Regression
+**Khi nào dùng:** **Giải thích** (biến nào ảnh hưởng) hoặc **dự báo**.  
+**Thao tác:**  
+- **Linear** (Y numeric): đọc **β**, **R²**, **RMSE**; kiểm multicollinearity.  
+- **Logistic** (Y nhị phân): đọc **AUC**, **Precision/Recall**, **odds ratio**.  
+- Bật **Fast / Max rows** với dữ liệu lớn.  
+**Ví dụ:** Logistic: Y=Return (1/0), X=Channel/Discount band/Region → OR(Channel=Marketplace)=1.6 → rủi ro hoàn cao hơn 60% → siết chính sách kênh.
 
 ---
 
-## Statistics Test — ANOVA & Nonparametric
-
-**Parametric (ANOVA):** khi muốn so **trung bình** giữa nhóm, dữ liệu tương đối chuẩn.  
-**Nonparametric:** so **median** khi dữ liệu lệch, outlier nhiều hoặc phương sai khác nhau.
-
-**ANOVA — Independent (between) & Two‑way:**  
-![](sandbox:/mnt/data/3c2f4a38-6f32-45b7-b66f-a308e1d314e4.png)
-
-**Nonparametric — Independent:**  
-![](sandbox:/mnt/data/b0c14592-f714-4242-839d-017b7c335bd6.png)
-
-> ✅ Bật **95% CI** & **pairwise (Holm)** để biết cặp nào khác nhau.  
-> ⚡ Dữ liệu lớn: dùng **Top‑N group**, **Max rows (fit)**, **Fast**.
+### 4.6 Benford
+**Khi nào dùng:** Soi bất thường chữ số đầu (fraud/ghi nhận sai).  
+**Thao tác:** Chọn measure (thường **Revenue**), xem **Expected% vs Observed%** + **Diff%**; drill-down **|Diff%| ≥ 5%**.  
+**Ví dụ:** Digit “1” vượt 7% so với kỳ vọng → drill giao dịch bucket liên quan.
 
 ---
 
-## Regression (Linear/Logistic)
-
-### Linear Regression — định lượng tác động & dự báo
-![](sandbox:/mnt/data/017bd76e-6985-4359-bdce-7e7fd12ba1f2.png)
-
-> 🔧 **Advanced**: `Standardize X`, `Impute NA`, chọn `Penalty` (OLS/Ridge/Lasso), `CV folds`, `Max rows (fit)`, `Chart sample`, cân nhắc `log1p(Y)` nếu Y lệch.
-
-### Logistic Regression — phân loại 0/1 (Transfer, Return, v.v.)
-![](sandbox:/mnt/data/8607c03d-2aed-4561-b693-d0e4cb8581a9.png)
-
-> 🎯 Chọn **Positive class** đúng mục tiêu; bật `class_weight='balanced'` khi lệch lớp; chỉnh **ngưỡng** theo F1/ROC/PR.
+### 4.7 Flags / Export
+**Khi nào dùng:** Gom kết quả quan trọng, chốt insight & xuất gửi quản lý.  
+**Thao tác:** Chọn các mục muốn đưa vào **Flags**, **Export** (bảng + nhận xét ngắn).
 
 ---
 
-## Tips big‑data & tổ chức dữ liệu
-
-- **Giảm chiều**: chỉ giữ cột cần, tránh đưa ID/Reference thô vào model.  
-- **Giảm hàng**: đặt `Max rows (fit)` (200–300k), bật **Fast**, giảm `Chart sample`.  
-- **Chuẩn hoá**: `Txn type` & `Adj type` dùng danh mục thống nhất; `Time` theo ngày `YYYY‑MM‑DD`.  
-- **Discount%** luôn tính theo giá trị dương để so sánh với **Sales** (không vượt ngưỡng vô lý).
-
----
-
-## Ví dụ thực tế: từ dữ liệu → quyết định
-
-**Bài toán**: Báo cáo Q2/2024, tối ưu kênh & kiểm soát chiết khấu.
-1) Import 2024–H1 2025, map `Time`, `Amount`, `Txn type`, `Adj type`, `Region`, `Channel`, `Product`.
-2) Overview: `Period=Quarter`, `Compare=YoY`, `Year scope=2024`.  
-   - KPI: Net Sales ↑8% YoY, Discount% YTD ≈ 9.4%.
-3) Contribution: Top‑N cho thấy **SKU A, C** chiếm 43%.  
-4) Region/Channel: Miền Nam – Online ↑ tỷ trọng 4 điểm %.  
-5) ANOVA: Y=Sales/đơn; X=Channel → p<0.01; pairwise: **Online > Partner**.  
-6) Regression (Linear): X gồm `Discount band`, `Lead time`, `Region`, `Channel`… → `Discount band` âm mạnh; `Lead time` tăng làm giảm doanh số.  
-7) Quyết định: ưu tiên digital cho Online miền Nam; khống chế discount >10%; tối ưu SLA.
+## 5) Mẹo dữ liệu lớn
+- Dùng **Top-N** (5–20) cho categorical; gộp “Others”.  
+- Resample **M/Q/Y** trước, rồi mới drill-down chi tiết.  
+- Dữ liệu lệch/outlier → **Spearman/Kruskal** thay vì Pearson/ANOVA.  
+- So sánh nhóm independent → ưu tiên **Welch** (an toàn size/variance khác nhau).
 
 ---
 
+## 6) FAQ ngắn
+- **Khác nhau giữa Mapping A & B?**  
+  - **A (Transaction):** tách **Sales (External)** / **Transfer (Internal)** theo **Amount**; lọc external cho **Avg Price**.  
+  - **B (Value Type):** tách **Sales** / **Discount** theo **Revenue** để tính **Discount%** & vẽ chart/bảng.  
+- **Discount âm có làm sai tỷ lệ?** — Không. Dùng giá trị **tuyệt đối**: Σ|Discount| / Σ|Sales| × 100.
+- **Avg Price có cần Price (đơn giá)?** — Không bắt buộc: dùng **Revenue_external / Weight_external**.
 
+---
+
+*Chúc bạn ra insight nhanh, ngắn gọn, có thể hành động ngay.*
