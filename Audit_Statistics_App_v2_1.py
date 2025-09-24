@@ -1102,11 +1102,21 @@ with TAB1:
                                  textposition="top center", line=dict(color="#F2C811", width=3), marker=dict(size=6),
                                  hoverinfo="skip")
                 figp.update_layout(
-                    xaxis_title="Month", yaxis=dict(title="Revenue"),
-                    yaxis2=dict(title="Avg Price (weighted by volume)"),
-                    yaxis2_update=dict(overlaying="y", side="right", showgrid=False),
-                    margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440
+                    xaxis_title="Month",
+                    yaxis=dict(title="Revenue"),
+                    # Đưa các thuộc tính vào thẳng yaxis2 (không dùng yaxis2_update)
+                    yaxis2=dict(
+                        title="Avg Price (weighted by volume)",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False
+                    ),
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    hovermode=False,
+                    showlegend=True,
+                    height=440
                 )
+
                 st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
                 st.caption("Bar = Revenue (external sales). Line = Avg Price (weighted by **Amount**; bỏ qua Price 0/NaN/DIV#0).")
 
