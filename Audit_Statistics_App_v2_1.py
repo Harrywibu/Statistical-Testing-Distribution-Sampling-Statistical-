@@ -855,17 +855,14 @@ with TAB1:
                               "TẤT CẢ biểu đồ/bảng sẽ dùng cột này (nếu có Mapping B → chỉ lấy **Sales(B)**).")
         vol_col = _pick(r2, "📦 Amount (volume: qty/weight)", "ov_amt",
                         help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)** và làm **trọng số** cho Avg Price.")
-        price_col = _pick(r3, "🏷️ Price (đơn giá bán ngoài)", "ov_price",
-                          help_="Đơn giá bán **cho khách ngoài**. "
-                                "Phần **Avg Price** sẽ **bỏ qua** các dòng Price **=0/NaN/'DIV#0'** khi tính trung bình.")
 
         # Hàng 3 — Mapping A/B
         r4, r5 = st.columns([1,1])
-        map_a = _pick(r4, "🏷️ Mapping A — Transaction", "ov_map_a",
+        map_a = _pick(r3, "🏷️ Mapping A — Transaction", "ov_map_a",
                       help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: "
                             "**Sales (External)** & **Transfer (Internal)**. "
                             "Dùng để tính tỷ trọng theo **Amount (volume)**.")
-        map_b = _pick(r5, "🏷️ Mapping B — Value Type", "ov_map_b",
+        map_b = _pick(r4, "🏷️ Mapping B — Value Type", "ov_map_b",
                       help_="Phân loại **giá trị**: **Sales (B)** / **Discount (B)**. "
                             "Dùng tính **Discount%** (Excel style) và lọc Revenue để vẽ biểu đồ/bảng.")
         if map_a and map_b and map_a == map_b:
@@ -1037,98 +1034,6 @@ with TAB1:
                 st.dataframe(show, use_container_width=True, height=420)
             else:
                 st.info("Chưa đủ dữ liệu để tính bảng Discount theo tháng.")
-
-    # ====================== 5) 💹 Avg Price (weighted by volume) vs Revenue ======================
-    st.markdown("### 💹 Avg Price vs Revenue")
-    if time_col and price_col:
-        years_p = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
-        y_p = st.selectbox("Year scope (Price chart)", [str(y) for y in years_p], index=len(years_p)-1, key="price_year")
-
-        # Filter theo Product (All)
-        prod_vals = df[prod_col].astype(str).unique().tolist() if (prod_col and prod_col in df.columns) else []
-        sel_prod = st.multiselect("Filter Product", ["(All)"] + sorted(prod_vals), default="(All)")
-
-        mask_y = (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_p))
-        mask_p = pd.Series(True, index=df.index)
-        if prod_col and sel_prod and "(All)" not in sel_prod:
-            mask_p &= df[prod_col].astype(str).isin(sel_prod)
-        mask_price_scope = mask_y & mask_p
-
-        dfx = df.loc[mask_price_scope].copy()
-        if dfx.empty:
-            st.info("Không có dữ liệu trong năm/bộ lọc đã chọn.")
-        else:
-            # External sales mask (Mapping A)
-            if map_a and map_a in dfx.columns:
-                A_norm = dfx[map_a].astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.lower()
-                tok_s  = set(pd.Series(SS.get("mv_a_sales", [])).astype(str)
-                             .str.strip().str.replace(r"\s+", " ", regex=True).str.lower())
-                m_sales_only = A_norm.isin(tok_s) if tok_s else pd.Series(True, index=dfx.index)
-            else:
-                m_sales_only = pd.Series(True, index=dfx.index)
-
-            # Numeric fields
-            rev_x   = pd.to_numeric(dfx[rev_col],   errors="coerce").fillna(0.0)
-            vol_x   = pd.to_numeric(dfx[vol_col],   errors="coerce").fillna(0.0) if vol_col in dfx else pd.Series(0.0, index=dfx.index)
-            price_x = pd.to_numeric(dfx[price_col], errors="coerce")  # NaN nếu 'DIV#0', 'N/A', text...
-
-            # Valid price rows: price > 0 (bỏ NaN/0/DIV#0)
-            valid_price = price_x > 0
-
-            # Aggregations
-            t_price = pd.to_datetime(dfx[time_col], errors="coerce")
-            grp = t_price.dt.to_period("M").dt.start_time
-
-            # Revenue bar = tổng Revenue (external sales, không yêu cầu price valid)
-            rev_bar = rev_x.where(m_sales_only, 0.0).groupby(grp).sum()
-
-            # Weighted Avg Price = sum(Revenue) / sum(Volume) nhưng CHỈ trên hàng có price hợp lệ
-            rev_w = rev_x.where(m_sales_only & valid_price, 0.0).groupby(grp).sum()
-            vol_w = vol_x.where(m_sales_only & valid_price, 0.0).groupby(grp).sum()
-            mean_price = price_x.where(m_sales_only & valid_price).groupby(grp).mean()
-            avg_price = np.where(vol_w>0, rev_w/vol_w, mean_price)
-
-            monthly = pd.DataFrame({"rev": rev_bar, "avg_price": avg_price}).sort_index()
-
-            # Plot (Bar Revenue + Line Avg Price)
-            cL, cR = st.columns([0.72, 0.28])
-            with cL:
-                figp = go.Figure()
-                figp.add_bar(x=monthly.index, y=monthly["rev"], name="Revenue",
-                             text=[f"{v:,.0f}" for v in monthly["rev"]], textposition="outside", hoverinfo="skip")
-                figp.add_scatter(x=monthly.index, y=monthly["avg_price"], yaxis="y2",
-                                 mode="lines+markers+text", name="Avg Price",
-                                 text=[f"{v:,.0f}" if pd.notna(v) else "" for v in monthly["avg_price"]],
-                                 textposition="top center", line=dict(color="#F2C811", width=3), marker=dict(size=6),
-                                 hoverinfo="skip")
-                figp.update_layout(
-                    xaxis_title="Month",
-                    yaxis=dict(title="Revenue"),
-                    # Đưa các thuộc tính vào thẳng yaxis2 (không dùng yaxis2_update)
-                    yaxis2=dict(
-                        title="Avg Price (weighted by volume)",
-                        overlaying="y",
-                        side="right",
-                        showgrid=False
-                    ),
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    hovermode=False,
-                    showlegend=True,
-                    height=440
-                )
-
-                st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
-                st.caption("Bar = Revenue (external sales). Line = Avg Price (weighted by **Amount**; bỏ qua Price 0/NaN/DIV#0).")
-
-            with cR:
-                tbl = monthly.copy()
-                tbl.index = tbl.index.strftime("%b %Y")
-                tbl.rename(columns={"rev":"Revenue","avg_price":"Avg Price"}, inplace=True)
-                tbl["Revenue"]   = tbl["Revenue"].map(lambda x: f"{x:,.0f}")
-                tbl["Avg Price"] = tbl["Avg Price"].map(lambda x: "—" if pd.isna(x) else f"{x:,.0f}")
-                st.dataframe(tbl, use_container_width=True, height=440)
-    else:
-        st.info("Cần chọn **Time** và **Price** để xem Avg Price vs Revenue.")
 
     # ====================== 6) Top Contribution — theo Revenue ======================
     st.markdown("### 🧱 Top Contribution")
