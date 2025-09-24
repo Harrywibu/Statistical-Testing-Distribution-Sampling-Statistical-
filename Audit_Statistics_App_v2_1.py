@@ -842,30 +842,29 @@ with TAB1:
         cust_col    = _pick(c3, "👤 Customer", "ov_cust",
                             help_="Mã/nhóm khách hàng (tuỳ chọn).")
         prod_col    = _pick(c4, "📦 Product", "ov_prod",
-                            help_="Mã/nhóm sản phẩm (dùng filter phần **Price**).")
+                            help_="Mã/nhóm sản phẩm (dùng filter phần **Avg Price**).")
         region_col  = _pick(c5, "🌍 Region (opt)", "ov_region",
                             help_="Vùng/khu vực (tuỳ chọn) cho **Distribution by Region/Channel**.")
         channel_col = _pick(c6, "🛒 Channel (opt)", "ov_channel",
                             help_="Kênh bán (tuỳ chọn) cho **Distribution**.")
 
-        # Hàng 2 — Revenue + Amount(volume) + Price + Weight
+        # Hàng 2 — Revenue + Amount(volume) + Weight
         r1, r2, r3 = st.columns([1,1,1])
         rev_col = _pick(r1, "💰 Revenue (KH ngoài)", "ov_rev",
                         help_="Doanh thu **bán cho khách ngoài**. TẤT CẢ biểu đồ/bảng sẽ dùng cột này "
                               "(nếu có Mapping B → chỉ lấy **Sales(B)**).")
         vol_col = _pick(r2, "📦 Amount (volume: qty/weight)", "ov_amt",
                         help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)**.")
-
         weight_col = _pick(r3, "⚖️ Weight (denominator cho Avg Price)", "ov_weight",
                            help_="**Weight** cho công thức Avg Price = ΣRevenue_external / ΣWeight_external. "
                                  "Bỏ qua các dòng weight ≤ 0.")
 
         # Hàng 3 — Mapping A/B
-        r4, r5 = st.columns([1,1])
-        map_a = _pick(r4, "🏷️ Mapping A — Transaction", "ov_map_a",
+        r5, r6 = st.columns([1,1])
+        map_a = _pick(r5, "🏷️ Mapping A — Transaction", "ov_map_a",
                       help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: **Sales (External)** & **Transfer (Internal)**. "
                             "Dùng để tính tỷ trọng theo **Amount (volume)** & lọc external cho Avg Price.")
-        map_b = _pick(r5, "🏷️ Mapping B — Value Type", "ov_map_b",
+        map_b = _pick(r6, "🏷️ Mapping B — Value Type", "ov_map_b",
                       help_="Phân loại **giá trị**: **Sales (B)** / **Discount (B)**. "
                             "Dùng tính **Discount%** (Excel style) và lọc Revenue để vẽ biểu đồ/bảng.")
         if map_a and map_b and map_a == map_b:
@@ -912,10 +911,9 @@ with TAB1:
         st.info("Không có dữ liệu trong phạm vi đã chọn."); st.stop()
 
     # dữ liệu nền
-    rev   = pd.to_numeric(dfv[rev_col],   errors="coerce").fillna(0.0)
-    vol   = pd.to_numeric(dfv[vol_col],   errors="coerce").fillna(0.0) if vol_col   else pd.Series(0.0, index=dfv.index)
-    price = pd.to_numeric(dfv[price_col], errors="coerce")              if price_col else pd.Series(np.nan, index=dfv.index)
-    wgt   = pd.to_numeric(dfv[weight_col],errors="coerce").fillna(0.0)  if weight_col else pd.Series(0.0, index=dfv.index)
+    rev = pd.to_numeric(dfv[rev_col], errors="coerce").fillna(0.0)
+    vol = pd.to_numeric(dfv[vol_col], errors="coerce").fillna(0.0) if vol_col else pd.Series(0.0, index=dfv.index)
+    wgt = pd.to_numeric(dfv[weight_col], errors="coerce").fillna(0.0) if weight_col else pd.Series(0.0, index=dfv.index)
 
     # ---------- Mapping A: Sales vs Transfer (robust) ----------
     def _norm_ser(s: pd.Series) -> pd.Series:
@@ -1151,7 +1149,7 @@ with TAB1:
             # Bar: tổng Revenue (external)
             rev_bar = rev_x.where(m_sales_only, 0.0).groupby(grp).sum()
 
-            # Line: Avg Price = ΣRevenue_external / ΣWeight_external, bỏ weight <=0
+            # Line: Avg Price = ΣRevenue_external / ΣWeight_external, bỏ weight ≤0
             rev_w = rev_x.where(m_sales_only & (wgt_x > 0), 0.0).groupby(grp).sum()
             wgt_w = wgt_x.where(m_sales_only & (wgt_x > 0), 0.0).groupby(grp).sum()
             avg_price = np.where(wgt_w>0, rev_w/wgt_w, np.nan)
@@ -1171,13 +1169,13 @@ with TAB1:
                 figp.update_layout(
                     xaxis_title="Month",
                     yaxis=dict(title="Revenue"),
-                    yaxis2=dict(title="Avg Price",
+                    yaxis2=dict(title="Avg Price (ΣRevenue_external / ΣWeight_external)",
                                 overlaying="y", side="right", showgrid=False),
                     margin=dict(l=10, r=10, t=10, b=10),
                     hovermode=False, showlegend=True, height=440
                 )
                 st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
-                st.caption("Bar = Revenue . Line = Avg Price = ΣRevenue/ ΣWeight (bỏ weight ≤ 0).")
+                st.caption("Bar = Revenue (external sales). Line = Avg Price = ΣRevenue_external / ΣWeight_external (bỏ weight ≤ 0).")
 
             with cR:
                 tbl = monthly.copy()
@@ -1255,7 +1253,6 @@ with TAB1:
                 vals = piv[col].values
                 pct  = share[col].values
                 text = [f"{v:.1f}%" if not np.isnan(v) else "" for v in pct]
-                # vị trí label theo từng điểm
                 pos  = ["inside" if (isinstance(p, (int,float)) and p >= thr) else "outside" for p in pct]
                 fig.add_bar(x=piv.index, y=vals, name=str(col),
                             text=text, textposition=pos, textfont=dict(size=11),
@@ -1321,7 +1318,6 @@ with TAB1:
             st.dataframe(out, use_container_width=True, hide_index=True)
     else:
         st.info("Cần chọn cột Time để xem bảng.")
-
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
