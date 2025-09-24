@@ -845,7 +845,7 @@ with TAB1:
         # Hàng 2 — Revenue + Amount(volume) + Price + Mapping A/B
         r1, r2, r3 = st.columns([1,1,1])
         rev_col   = _pick(
-            r1, "💰 Revenue (KH ngoài)", "ov_rev",
+            r1, "💰 Revenue ", "ov_rev",
             help_="Doanh thu bán cho KH ngoài (sẽ dùng cho tất cả chart/bảng)."
         )
         vol_col   = _pick(
@@ -853,7 +853,7 @@ with TAB1:
             help_="Khối lượng (quantity/weight). Dùng để tính %Sales(A)/%Transfer(A)."
         )
         price_col = _pick(
-            r3, "🏷️ Price (đơn giá bán ngoài)", "ov_price",
+            r3, "🏷️ Price", "ov_price",
             help_="Đơn giá bán cho KH ngoài (để tính Avg Price)."
         )
 
@@ -990,7 +990,7 @@ with TAB1:
     revenue_total = float(revenue_for_charts.sum())
 
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-    r1c1.metric("Revenue (for charts)", f"{revenue_total:,.0f}")
+    r1c1.metric("Revenue", f"{revenue_total:,.0f}")
     r1c2.metric("Orders", f"{orders_total:,.0f}")
     r1c3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
     r1c4.metric("%Sales (A) by Volume", f"{pct_salesA:.1f}%" if not np.isnan(pct_salesA) else "—")
@@ -1031,7 +1031,7 @@ with TAB1:
 
         # ========= Bảng Discount theo tháng (B) =========
         with rc:
-            st.markdown("#### 🔎 Monthly Discount (B)")
+            st.markdown("#### 🔎 Monthly Discount")
             dm = (pd.DataFrame({"m": tv.dt.to_period("M").dt.start_time,
                                 "SalesB": salesB_rev, "DiscB": discB_rev})
                     .groupby("m", dropna=False).sum(numeric_only=True))
