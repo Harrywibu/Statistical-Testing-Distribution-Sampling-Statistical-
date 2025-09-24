@@ -803,19 +803,18 @@ with TAB0:
         except Exception as e:
             st.error(f'Lỗi Data Quality: {e}')
 
-# ================================ TAB 1 — OVERVIEW (Sales Activities) ================================
+# ================================= TAB 1 — OVERVIEW (Sales Activities) =================================
 with TAB1:
     import numpy as np, pandas as pd
     import plotly.graph_objects as go
 
     st.subheader("📈 Overview — Sales Activities")
 
-    # ---------- Guard & aliases ----------
     df = SS.get("df")
     if df is None or df.empty:
         st.info("Hãy nạp dữ liệu trước."); st.stop()
 
-    # ---------- Small helpers ----------
+    # ---------- helpers ----------
     def _pick(col, label, key, help_=None):
         v = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key, help=help_)
         return None if v == "—" else v
@@ -831,56 +830,49 @@ with TAB1:
     P2   = {"MS":"M","QS":"Q","YS":"Y"}
     YOY  = {"MS":12,"QS":4,"YS":1}
 
-    # ---------- Import Input Data (Required): gọn trong 2 hàng ----------
+    # ====================== 0) Import Input Data — (Required): gọn trong 2 hàng ======================
     st.markdown("### ⚙️ Import Input Data — (Required)")
     with st.container(border=True):
-        # Hàng 1: cột ID/Dimension cơ bản
-        r1c1, r1c2, r1c3, r1c4, r1c5, r1c6 = st.columns([1,1,1,1,1,1])
-        time_col    = _pick(r1c1, "🕒 Time",         "ov_time")
-        order_col   = _pick(r1c2, "🧾 Order/Doc",    "ov_order")
-        cust_col    = _pick(r1c3, "👤 Customer",     "ov_cust")
-        prod_col    = _pick(r1c4, "📦 Product",      "ov_prod")
-        region_col  = _pick(r1c5, "🌍 Region (opt)",  "ov_region")
-        channel_col = _pick(r1c6, "🛒 Channel (opt)", "ov_channel")
+        # Hàng 1 — ID/Dimension
+        c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
+        time_col    = _pick(c1, "🕒 Time",         "ov_time")
+        order_col   = _pick(c2, "🧾 Order/Doc",    "ov_order")
+        cust_col    = _pick(c3, "👤 Customer",     "ov_cust")
+        prod_col    = _pick(c4, "📦 Product",      "ov_prod")
+        region_col  = _pick(c5, "🌍 Region (opt)",  "ov_region")
+        channel_col = _pick(c6, "🛒 Channel (opt)", "ov_channel")
 
-        # Hàng 2: Amount + Mapping A + Mapping B
-        r2c1, r2c2, r2c3 = st.columns([1,1,1])
-
+        # Hàng 2 — Amount + Mapping A + Mapping B
+        r1, r2, r3 = st.columns([1,1,1])
         amt_col = _pick(
-            r2c1, "💰 Amount", "ov_amt",
-            help_="Cột tiền (bắt buộc). Nếu không chọn mapping, toàn bộ xem là Sales để hiển thị nhanh."
+            r1, "💰 Amount", "ov_amt",
+            help_="Cột tiền / doanh số. Mọi biểu đồ & bảng sẽ dùng cột này (nếu có Mapping B → dùng Sales(B))."
         )
-
         map_a = _pick(
-            r2c2, "🏷️ Mapping A — Transaction (?)", "ov_map_a",
-            help_="Phân loại **nghiệp vụ**: Sales(A) / Purchase(A) / Transfer received(A) / Transfer sent(A) / Returns(A)."
+            r2, "🏷️ Mapping A — Transaction (?)", "ov_map_a",
+            help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: Sales (External) & Transfer (Internal)."
         )
         map_b = _pick(
-            r2c3, "🏷️ Mapping B — Value Type (?)", "ov_map_b",
-            help_="Phân loại **giá trị**: Sales(B) / Discount(B). Nên **khác cột** với Mapping A để tránh đếm trùng."
+            r3, "🏷️ Mapping B — Value Type (?)", "ov_map_b",
+            help_="Phân loại **giá trị**: Sales (B) / Discount (B). Dùng để tính Discount%."
         )
-
         if map_a and map_b and map_a == map_b:
-            st.warning("Mapping A và Mapping B đang dùng **cùng một cột**. Hãy chọn 2 cột khác nhau để tránh trùng lặp.")
+            st.warning("Mapping A và Mapping B đang dùng **cùng cột**. Hãy chọn 2 cột khác nhau.")
 
         uniq_a = sorted(df[map_a].astype(str).unique().tolist()) if map_a else []
         uniq_b = sorted(df[map_b].astype(str).unique().tolist()) if map_b else []
 
-        with st.expander("Mapping chi tiết (A + B)", expanded=False):
-            # A: transaction (có thêm Sales(A) theo yêu cầu)
-            a1, a2, a3, a4, a5 = st.columns(5)
-            mv_a_sales = a1.multiselect("Sales (A)", uniq_a, key="mv_a_sales")
-            mv_a_purch = a2.multiselect("Purchase (A)", uniq_a, key="mv_a_purch")
-            mv_a_recv  = a3.multiselect("Transfer received (A)", uniq_a, key="mv_a_tin")
-            mv_a_sent  = a4.multiselect("Transfer sent (A)",     uniq_a, key="mv_a_tout")
-            mv_a_ret   = a5.multiselect("Returns (A)", uniq_a, key="mv_a_ret")
-
-            # B: sales/discount
+        with st.expander("Mapping chi tiết", expanded=False):
+            # A: chỉ 2 nhóm
+            a1, a2 = st.columns(2)
+            mv_a_sales = a1.multiselect("Sales (External) — A",   uniq_a, key="mv_a_sales")
+            mv_a_trans = a2.multiselect("Transfer (Internal) — A", uniq_a, key="mv_a_transfer")
+            # B: Sales / Discount
             b1, b2 = st.columns(2)
             mv_b_sales = b1.multiselect("Sales (B)",    uniq_b, key="mv_b_sales")
             mv_b_disc  = b2.multiselect("Discount (B)", uniq_b, key="mv_b_disc")
 
-    # ---------- Display config (Period/Compare + Scope Year cho KPI/Trend) ----------
+    # ====================== 1) Display (Period/Compare + Scope Year cho KPI/Trend) ======================
     st.markdown("### 🧭 Display")
     d1, d2, d3 = st.columns([1,1,1])
     period_raw = d1.segmented_control("Period", ["Month","Quarter","Year"])
@@ -894,138 +886,136 @@ with TAB1:
     else:
         year_scope = "All"
 
-    # ---------- Build working view (mask theo Scope Year cho KPI/Trend) ----------
-    t_all = pd.to_datetime(df[time_col], errors="coerce") if time_col else pd.Series(pd.NaT, index=df.index)
-    mask_scope = (t_all.dt.year == int(year_scope)) if (time_col and year_scope!="All") else pd.Series(True, index=df.index)
-    dfv = df.loc[mask_scope].copy()
-    tv  = t_all.loc[mask_scope] if time_col else pd.Series(pd.NaT, index=dfv.index)
+    # ====================== 2) Lọc scope & build series ======================
+    if not amt_col or amt_col not in df.columns:
+        st.info("Cần chọn **Amount** để xem Overview."); st.stop()
 
-    # ---------- Series chính theo Amount + Mapping A/B ----------
-    n = len(dfv)
-    if not amt_col or amt_col not in dfv.columns or n == 0:
-        st.info("Chọn **Amount** để xem Overview."); st.stop()
+    t_all = pd.to_datetime(df[time_col], errors="coerce") if time_col else pd.Series(pd.NaT, index=df.index)
+    mask = (t_all.dt.year == int(year_scope)) if (time_col and year_scope!="All") else pd.Series(True, index=df.index)
+    dfv = df.loc[mask].copy()
+    tv  = t_all.loc[mask] if time_col else pd.Series(pd.NaT, index=dfv.index)
+    if dfv.empty:
+        st.info("Không có dữ liệu trong phạm vi đã chọn."); st.stop()
 
     amt = pd.to_numeric(dfv[amt_col], errors="coerce").fillna(0.0)
 
-    # A — nghiệp vụ (độc lập với B)
+    # A — Sales vs Transfer (2 nhóm)
     if map_a and map_a in dfv.columns:
         A = dfv[map_a].astype(str)
         isinA = lambda vals: (A.isin(set(map(str, vals)))) if vals else pd.Series(False, index=A.index)
-        salesA_s   = amt.where(isinA(SS.get("mv_a_sales", [])), 0.0)    # theo yêu cầu thêm Sales(A)
-        recvA_s    = amt.where(isinA(SS.get("mv_a_tin",   [])), 0.0)
-        sentA_s    = amt.where(isinA(SS.get("mv_a_tout",  [])), 0.0)
-        returnA_s  = amt.where(isinA(SS.get("mv_a_ret",   [])), 0.0)
-        transferA_s = recvA_s.abs() + sentA_s.abs()
+        salesA_s    = amt.where(isinA(SS.get("mv_a_sales", [])),   0.0)
+        transferA_s = amt.where(isinA(SS.get("mv_a_transfer", [])), 0.0)
     else:
         salesA_s = pd.Series(0.0, index=dfv.index)
         transferA_s = pd.Series(0.0, index=dfv.index)
-        returnA_s = pd.Series(0.0, index=dfv.index)
 
-    # B — giá trị (dùng cho Discount%)
+    # KPI %Sales(A) & %Transfer(A)
+    sA = float(salesA_s.abs().sum())
+    tA = float(transferA_s.abs().sum())
+    baseA = sA + tA
+    pct_salesA    = (sA/baseA*100) if baseA>0 else np.nan
+    pct_transferA = (tA/baseA*100) if baseA>0 else np.nan
+
+    # B — Sales/Discount để tính Discount%
     if map_b and map_b in dfv.columns:
         B = dfv[map_b].astype(str)
         isinB = lambda vals: (B.isin(set(map(str, vals)))) if vals else pd.Series(False, index=B.index)
         salesB_s = amt.where(isinB(SS.get("mv_b_sales", [])), 0.0)
-        discB_s  = amt.where(isinB(SS.get("mv_b_disc",  [])), 0.0)
+        discB_s  = amt.where(isinB(SS.get("mv_b_disc",  [])),  0.0)
     else:
-        salesB_s = amt.copy()  # fallback: xem toàn bộ là Sales(B) để hiển thị
+        salesB_s = amt.copy()  # fallback hiển thị
         discB_s  = pd.Series(0.0, index=dfv.index)
 
-    # Net để hiển thị (chart/bảng): theo yêu cầu, dùng tiền Amount & mapping khi có
-    net_show = salesB_s + transferA_s - returnA_s.abs() - discB_s.abs()
-
-    # ---------- KPI 2×4 ----------
-    # %Sales, %Transfer dựa **Mapping A**
-    sA_tot = float(salesA_s.abs().sum())
-    tA_tot = float(transferA_s.sum())
-    baseA  = sA_tot + tA_tot
-    pct_sales    = (sA_tot/baseA*100) if baseA>0 else np.nan
-    pct_transfer = (tA_tot/baseA*100) if baseA>0 else np.nan
-
-    # Discount% theo **Mapping B**: Excel style
+    # ======= Discount% theo B (Excel style) =======
     disc_avg_month = np.nan
     disc_year_pct  = np.nan
-    if time_col and n>0:
+    if time_col:
         mon = (pd.DataFrame({
             "m": tv.dt.to_period("M").dt.start_time,
-            "salesB": salesB_s, "discB": discB_s
+            "SalesB": salesB_s, "DiscB": discB_s
         }).groupby("m").sum(numeric_only=True))
-        mon = mon[mon["salesB"] != 0]
+        mon = mon[mon["SalesB"] != 0]
         if not mon.empty:
-            mon["Discount%"] = (-mon["discB"] / mon["salesB"]) * 100.0
-            kpi_year = (int(year_scope) if (year_scope!="All") else int(mon.index.year.max()))
-            mon_y = mon[mon.index.year == kpi_year]
+            mon["Discount%"] = (-mon["DiscB"]/mon["SalesB"])*100.0
+            yr = int(year_scope) if (year_scope!="All") else int(mon.index.year.max())
+            mon_y = mon[mon.index.year==yr]
             if not mon_y.empty:
                 disc_avg_month = float(mon_y["Discount%"].mean())
-                disc_year_pct  = float((-mon_y["discB"].sum() / mon_y["salesB"].sum()) * 100.0)
+                disc_year_pct  = float((-mon_y["DiscB"].sum()/mon_y["SalesB"].sum())*100.0)
 
-    orders = (dfv[order_col].nunique() if (order_col and order_col in dfv.columns) else len(dfv))
-    prod_n = (dfv.loc[(salesB_s + transferA_s) > 0, prod_col].nunique()
-              if (prod_col and prod_col in dfv.columns) else np.nan)
-    net_tot = float(net_show.sum())
+    # ======= Measure cho mọi chart/bảng: Amount input (ưu tiên Sales(B) để không lẫn discount) =======
+    amount_for_charts = (salesB_s if (map_b and map_b in dfv.columns) else amt)
+
+    # ====================== 3) KPI (2×4, gọn cân đối) ======================
+    orders_total = (dfv[order_col].nunique() if (order_col and order_col in dfv.columns) else len(dfv))
+    prod_total   = (dfv.loc[amount_for_charts>0, prod_col].nunique()
+                    if (prod_col and prod_col in dfv.columns) else np.nan)
+    sales_amount_total = float(amount_for_charts.sum())
 
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-    r1c1.metric("Net Sales", f"{net_tot:,.0f}")
-    r1c2.metric("Orders", f"{orders:,.0f}")
-    r1c3.metric("Total product", f"{prod_n:,.0f}" if not np.isnan(prod_n) else "—")
-    r1c4.metric("%Sales (A)", f"{pct_sales:.1f}%" if not np.isnan(pct_sales) else "—")
+    r1c1.metric("Sales amount (for charts)", f"{sales_amount_total:,.0f}")
+    r1c2.metric("Orders", f"{orders_total:,.0f}")
+    r1c3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
+    r1c4.metric("%Sales (A)", f"{pct_salesA:.1f}%" if not np.isnan(pct_salesA) else "—")
 
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-    r2c1.metric("%Transfer (A)", f"{pct_transfer:.1f}%" if not np.isnan(pct_transfer) else "—")
+    r2c1.metric("%Transfer (A)", f"{pct_transferA:.1f}%" if not np.isnan(pct_transferA) else "—")
     r2c2.metric("Discount% avg monthly (B)", f"{disc_avg_month:.1f}%" if not np.isnan(disc_avg_month) else "—")
     r2c3.metric("Discount% (year-to-date, B)", f"{disc_year_pct:.1f}%" if not np.isnan(disc_year_pct) else "—")
     r2c4.metric("Scope year", year_scope)
 
-    # ---------- Trend: Bar = Sales (tiền); Line = %Δ (Prev/YoY) ----------
+    # ====================== 4) Trend — Bar Amount + Line %Δ ======================
     if time_col:
-        idx_period = tv.dt.to_period(P2[rule]).dt.start_time
-        # series hiển thị sales theo tiền: ưu tiên Sales(B) → Sales(A) → Amount
-        sales_for_trend = salesB_s if (map_b and map_b in dfv.columns) else (salesA_s if (map_a and map_a in dfv.columns) else amt)
-        ser = pd.DataFrame({"p": idx_period, "v": sales_for_trend}).groupby("p")["v"].sum().asfreq(rule).fillna(0.0)
-        base = ser.shift(1) if compare=="Prev" else ser.shift(YOY[rule])
-        growth = (ser-base) / base.replace(0, np.nan)
+        idx_p = tv.dt.to_period(P2[RULE[period]]).dt.start_time
+        ser   = (pd.DataFrame({"p": idx_p, "v": amount_for_charts})
+                   .groupby("p", dropna=False)["v"].sum()
+                   .asfreq(RULE[period]).fillna(0.0))
+        base  = ser.shift(1) if compare=="Prev" else ser.shift(YOY[RULE[period]])
+        growth = (ser - base) / base.replace(0, np.nan)
 
         lc, rc = st.columns([0.72, 0.28])
         with lc:
             fig = go.Figure()
-            fig.add_bar(x=ser.index, y=ser.values, name="Sales",
+            fig.add_bar(x=ser.index, y=ser.values, name="Amount",
                         text=[f"{v:,.0f}" for v in ser.values], textposition="outside", hoverinfo="skip")
-            fig.add_scatter(x=growth.index, y=growth.values*100, yaxis="y2",
-                            mode="lines+markers+text", name="%Δ",
+            fig.add_scatter(x=growth.index, y=growth.values*100, yaxis="y2", name="%Δ",
+                            mode="lines+markers+text",
                             text=[f"{(v*100):.1f}%" if pd.notna(v) else "" for v in growth.values],
                             textposition="top center",
                             line=dict(color="#F2C811", width=3), marker=dict(size=6), hoverinfo="skip")
             fig.update_layout(
                 barmode="overlay",
-                xaxis_title=period, yaxis=dict(title="Sales"),
+                xaxis_title=period, yaxis=dict(title="Amount"),
                 yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False),
                 margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440
             )
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-            st.caption("Bar = doanh số theo Period; Line = %Δ so với baseline (Prev/YoY)")
+            st.caption("Bar = Amount theo Period; Line = %Δ so với baseline (Prev/YoY)")
 
         with rc:
             st.markdown("#### 🔎 Monthly Discount (B)")
-            dm = (pd.DataFrame({
-                "m": tv.dt.to_period("M").dt.start_time,
-                "Sales": salesB_s, "Discount": discB_s
-            }).groupby("m").sum(numeric_only=True))
-            if dm.empty:
-                st.info("Chưa đủ dữ liệu Discount (B).")
-            else:
-                dm["Discount%"] = (-dm["Discount"]/dm["Sales"])*100.0
-                yr = st.selectbox("Year (table)", sorted(dm.index.year.unique()), index=len(dm.index.year.unique())-1)
+            dm = (pd.DataFrame({"m": tv.dt.to_period("M").dt.start_time,
+                                "SalesB": salesB_s, "DiscB": discB_s})
+                    .groupby("m", dropna=False).sum(numeric_only=True))
+            if not dm.empty:
+                dm["Discount%"] = (-dm["DiscB"]/dm["SalesB"])*100.0
+                y_opts = sorted(dm.index.year.unique())
+                yr = st.selectbox("Year (table)", y_opts, index=len(y_opts)-1, key="ov_disc_tbl_year")
                 show = dm[dm.index.year == int(yr)].copy()
                 show.index = show.index.strftime("%b %Y")
-                for c in ("Sales","Discount"): show[c] = show[c].map(lambda x: f"{x:,.0f}")
+                show["SalesB"]    = show["SalesB"].map(lambda x: f"{x:,.0f}")
+                show["DiscB"]     = show["DiscB"].map(lambda x: f"{x:,.0f}")
                 show["Discount%"] = show["Discount%"].map(lambda x: f"{x:.1f}%")
                 st.dataframe(show, use_container_width=True, height=420)
+            else:
+                st.info("Chưa đủ dữ liệu để tính bảng Discount theo tháng.")
 
-    # ---------- Top Contribution (Year scope riêng) ----------
+    # ====================== 5) Top Contribution — theo Amount input ======================
     st.markdown("### 🧱 Top Contribution")
     tc1, tc2, tc3 = st.columns([2,1,1])
-    dim_col = tc1.selectbox("📊 Dimension (X)", ["—"]+list(df.columns), index=0)
+    dim_col = tc1.selectbox("📊 Dimension (X)", ["—"] + list(df.columns), index=0)
     topN    = tc2.slider("Top-N", 3, 50, 10)
+    # Year scope riêng
     if time_col:
         y_all = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
         y_top = tc3.selectbox("Year scope (Top Contribution)", ["All"]+[str(y) for y in y_all], index=len(y_all))
@@ -1035,63 +1025,45 @@ with TAB1:
     mask_top = pd.Series(True, index=df.index)
     if time_col and y_top!="All":
         mask_top &= (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_top))
-    dft = df.loc[mask_top].copy()
+    df_top = df.loc[mask_top].copy()
 
-    # Measure hiển thị: theo tiền Amount/mapping (không dùng Sales(A)/Sales(B) cho hiển thị)
-    meas = st.radio("Measure", ["Net Sales","Sales","Transfer","Returns","Discount"], horizontal=True, key="top_meas")
-    # build nhanh series theo dft (không phụ thuộc scope KPI)
-    def _series_for(dframe, name):
-        a = pd.to_numeric(dframe[amt_col], errors="coerce").fillna(0.0) if amt_col in dframe.columns else pd.Series(0.0, index=dframe.index)
-        if map_a and map_a in dframe.columns:
-            A = dframe[map_a].astype(str)
-            isinA = lambda vals: (A.isin(set(map(str, vals)))) if vals else pd.Series(False, index=A.index)
-            recv = a.where(isinA(SS.get("mv_a_tin",[])), 0.0)
-            sent = a.where(isinA(SS.get("mv_a_tout",[])), 0.0)
-            ret  = a.where(isinA(SS.get("mv_a_ret",[])), 0.0)
-        else:
-            recv = sent = ret = pd.Series(0.0, index=dframe.index)
-
+    # measure cho top: Amount input hoặc Sales(B) nếu có mapping B
+    def _amount_for(dframe):
+        if amt_col not in dframe.columns: return pd.Series(0.0, index=dframe.index)
+        a = pd.to_numeric(dframe[amt_col], errors="coerce").fillna(0.0)
         if map_b and map_b in dframe.columns:
             B = dframe[map_b].astype(str)
-            isinB = lambda vals: (B.isin(set(map(str, vals)))) if vals else pd.Series(False, index=B.index)
-            sB = a.where(isinB(SS.get("mv_b_sales",[])), 0.0)
-            dB = a.where(isinB(SS.get("mv_b_disc",[])),  0.0)
-        else:
-            sB = a.copy(); dB = pd.Series(0.0, index=dframe.index)
+            m = B.isin(set(map(str, SS.get("mv_b_sales", []))))
+            return a.where(m, 0.0)
+        return a
 
-        if name=="Net Sales": return sB + recv.abs() + sent.abs() - ret.abs() - dB.abs()
-        if name=="Sales":     return sB
-        if name=="Transfer":  return recv.abs() + sent.abs()
-        if name=="Returns":   return ret
-        if name=="Discount":  return dB
-        return sB
-
-    ser_top = _series_for(dft, meas)
+    base_top = _amount_for(df_top)
 
     cL, cR = st.columns(2)
-    if (not dim_col) or (dim_col=="—") or (dim_col not in dft.columns):
+    if (not dim_col) or (dim_col=="—") or (dim_col not in df_top.columns):
         st.info("Chọn Dimension để xem Top-N.")
     else:
-        dim_vals = dft[dim_col].astype(str).fillna("(NA)")
-        g_all = pd.DataFrame({"d":dim_vals, "v":ser_top}).groupby("d", dropna=False)["v"].sum().sort_values(ascending=False)
+        dim_vals = df_top[dim_col].astype(str).fillna("(NA)")
+        g_all = (pd.DataFrame({"d": dim_vals, "v": base_top})
+                   .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
         picked = st.multiselect("Filter values", list(g_all.index), default=list(g_all.index), key="top_filter")
-        mask_dim = dim_vals.isin(picked) if picked else pd.Series(True, index=dft.index)
+        mask_dim = dim_vals.isin(picked) if picked else pd.Series(True, index=df_top.index)
 
         with cL:
-            g = (pd.DataFrame({"d": dim_vals, "v": ser_top}).loc[mask_dim]
-                 .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
+            g = (pd.DataFrame({"d": dim_vals, "v": base_top}).loc[mask_dim]
+                   .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
             g_top = g.head(topN)
             total = max(g.sum(), 1e-12)
             cum   = (g_top.cumsum()/total)*100
             fig_t = go.Figure()
             fig_t.add_bar(x=g_top.index, y=g_top.values,
-                          text=[f"{v:,.0f}" for v in g_top.values], textposition="outside",
-                          hoverinfo="skip", name=meas)
-            fig_t.add_scatter(x=g_top.index, y=cum.values, yaxis="y2", name="Cumulative %",
-                              mode="lines+markers+text",
+                          text=[f"{v:,.0f}" for v in g_top.values],
+                          textposition="outside", hoverinfo="skip", name="Amount")
+            fig_t.add_scatter(x=g_top.index, y=cum.values, name="Cumulative %",
+                              mode="lines+markers+text", yaxis="y2",
                               text=[f"{v:.1f}%" for v in cum.values],
                               textposition="top center", line=dict(color="#A0A0A0"))
-            fig_t.update_layout(xaxis_title=dim_col, yaxis_title=meas,
+            fig_t.update_layout(xaxis_title=dim_col, yaxis_title="Amount",
                                 yaxis2=dict(title="Cumulative %", overlaying="y", side="right", showgrid=False),
                                 margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440)
             st.plotly_chart(fig_t, use_container_width=True, config={"displayModeBar": False})
@@ -1112,48 +1084,18 @@ with TAB1:
                 fig_p.update_layout(margin=dict(l=10,r=10,t=10,b=10), showlegend=False, height=440)
                 st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
 
-    # ---------- Distribution by Region / Channel (Year scope riêng) ----------
+    # ====================== 6) Distribution by Region / Channel — theo Amount input ======================
     st.markdown("### 🗺️ Distribution by Region / Channel")
     if time_col:
         yd_all = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
         y_dist = st.selectbox("Year scope (Distribution)", ["All"]+[str(y) for y in yd_all], index=len(yd_all))
     else:
         y_dist = "All"
-
     mask_dist = pd.Series(True, index=df.index)
     if time_col and y_dist!="All":
         mask_dist &= (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_dist))
     dfd = df.loc[mask_dist].copy()
-
-    meas_d = st.radio("Measure", ["Net Sales","Sales","Transfer","Returns","Discount"], horizontal=True, key="dist_meas")
-
-    # series theo dfd (tiền Amount + mapping A/B) để hiển thị
-    def _ser_dist(dframe, name):
-        a = pd.to_numeric(dframe[amt_col], errors="coerce").fillna(0.0) if amt_col in dframe.columns else pd.Series(0.0, index=dframe.index)
-        if map_a and map_a in dframe.columns:
-            A = dframe[map_a].astype(str)
-            isinA = lambda vals: (A.isin(set(map(str, vals)))) if vals else pd.Series(False, index=A.index)
-            recv = a.where(isinA(SS.get("mv_a_tin",[])), 0.0)
-            sent = a.where(isinA(SS.get("mv_a_tout",[])), 0.0)
-            ret  = a.where(isinA(SS.get("mv_a_ret",[])), 0.0)
-        else:
-            recv = sent = ret = pd.Series(0.0, index=dframe.index)
-        if map_b and map_b in dframe.columns:
-            B = dframe[map_b].astype(str)
-            isinB = lambda vals: (B.isin(set(map(str, vals)))) if vals else pd.Series(False, index=B.index)
-            sB = a.where(isinB(SS.get("mv_b_sales",[])), 0.0)
-            dB = a.where(isinB(SS.get("mv_b_disc",[])),  0.0)
-        else:
-            sB = a.copy(); dB = pd.Series(0.0, index=dframe.index)
-
-        if name=="Net Sales": return sB + recv.abs() + sent.abs() - ret.abs() - dB.abs()
-        if name=="Sales":     return sB
-        if name=="Transfer":  return recv.abs() + sent.abs()
-        if name=="Returns":   return ret
-        if name=="Discount":  return dB
-        return sB
-
-    s_map = _ser_dist(dfd, meas_d)
+    s_amount_dist = _amount_for(dfd)
 
     if not region_col or region_col not in dfd.columns:
         st.info("Chọn **Region** để xem phân bổ.")
@@ -1170,12 +1112,12 @@ with TAB1:
         else:
             sel_chs = None
 
-        mask = reg_vals.isin(sel_regs) if sel_regs else pd.Series(True, index=dfd.index)
+        maskf = reg_vals.isin(sel_regs) if sel_regs else pd.Series(True, index=dfd.index)
         if ch_ok and sel_chs:
-            mask &= dfd[channel_col].astype(str).fillna("(NA)").isin(sel_chs)
+            maskf &= dfd[channel_col].astype(str).fillna("(NA)").isin(sel_chs)
 
-        ddf  = dfd.loc[mask].copy()
-        mser = s_map.loc[mask] if len(s_map)==len(dfd) else pd.Series(0.0, index=ddf.index)
+        ddf  = dfd.loc[maskf].copy()
+        mser = s_amount_dist.loc[maskf]
 
         if ch_ok:
             topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6)
@@ -1194,7 +1136,7 @@ with TAB1:
                 fig.add_bar(x=piv.index, y=piv[col].values, name=str(col),
                             text=[f"{v:.1f}%" if not np.isnan(v) else "" for v in share[col].values],
                             textposition="inside", hoverinfo="skip")
-            fig.update_layout(barmode="stack", xaxis_title="Region", yaxis_title=meas_d,
+            fig.update_layout(barmode="stack", xaxis_title="Region", yaxis_title="Amount",
                               margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440,
                               uniformtext_minsize=12, uniformtext_mode="show")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -1205,88 +1147,49 @@ with TAB1:
             fig = go.Figure()
             fig.add_bar(x=reg.values, y=reg.index, orientation="h",
                         text=[f"{v:,.0f} • {(v/tot*100 if tot>0 else 0):.1f}%" for v in reg.values],
-                        textposition="outside", hoverinfo="skip", name=meas_d)
-            fig.update_layout(xaxis_title=meas_d, yaxis_title="Region",
+                        textposition="outside", hoverinfo="skip", name="Amount")
+            fig.update_layout(xaxis_title="Amount", yaxis_title="Region",
                               margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=False, height=440)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-# ====================== BẢNG TỔNG HỢP (Summary table) ======================
-    st.markdown("### 🧾 Bảng tổng hợp")
-    
-    if time_col is None or df.empty:
-        st.info("Cần chọn cột thời gian (Time) và có dữ liệu để xem bảng tổng hợp.")
-    else:
-        # Year (table scope) riêng cho bảng
-        years_all_tbl = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
-        year_tbl = st.selectbox("Year (table scope)", [str(y) for y in years_all_tbl], index=len(years_all_tbl)-1, key="tbl_scope_year")
-    
-        # ---- Lọc theo năm bảng
-        t_all  = pd.to_datetime(df[time_col], errors="coerce")
-        mask_y = (t_all.dt.year == int(year_tbl))
-        df_tbl = df.loc[mask_y].copy()
-        t_tbl  = t_all.loc[mask_y]
-    
-        # ---- Hàm build series cục bộ (không phụ thuộc biến bên ngoài)
-        def _build_series_from_mapping(df_src, amt_col, map_a, map_b):
-            if df_src is None or df_src.empty or amt_col is None:
-                idx = df_src.index if df_src is not None else pd.RangeIndex(0)
-                z = pd.Series(0.0, index=idx)
-                return z, z, z, z, z
-            amt = pd.to_numeric(df_src[amt_col], errors="coerce").fillna(0.0)
-    
-            if (map_a is not None and map_a in df_src.columns) and (map_b is not None and map_b in df_src.columns):
-                A = df_src[map_a].astype(str)
-                B = df_src[map_b].astype(str)
-                def _isin(s, vals): return s.isin(set(map(str, vals))) if vals else pd.Series(False, index=s.index)
-    
-                m_recv = _isin(A, st.session_state.get("mv_a_tin",  []))  # Transfer received
-                m_sent = _isin(A, st.session_state.get("mv_a_tout", []))  # Transfer sent
-                m_ret  = _isin(A, st.session_state.get("mv_a_ret",  []))
-                m_bs   = _isin(B, st.session_state.get("mv_b_sales", [])) # Sales (B)
-                m_bd   = _isin(B, st.session_state.get("mv_b_disc",  [])) # Discount (B)
-    
-                sales    = amt.where(m_bs, 0.0)
-                discount = amt.where(m_bd,  0.0)
-                t_recv   = amt.where(m_recv, 0.0)
-                t_sent   = amt.where(m_sent, 0.0)
-                returns  = amt.where(m_ret,  0.0)
-                return sales, discount, t_recv, t_sent, returns
-    
-            # Không mapping → xem tất cả là Sales
-            z = pd.Series(0.0, index=df_src.index)
-            return amt, z, z, z, z
-    
-        # ---- Tính series cho bảng (LOCAL) → net_local
-        s_sales, s_disc, s_recv, s_sent, s_ret = _build_series_from_mapping(df_tbl, amt_col, map_a, map_b)
-        s_trans   = s_recv.abs() + s_sent.abs()
-        s_net     = s_sales + s_trans - s_ret.abs() - s_disc.abs()     # <-- net_local dùng cho bảng
-    
+    # ====================== 7) Summary table — theo Amount input ======================
+    st.markdown("### 🧾 Summary table")
+    if time_col:
+        years_tbl = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        year_tbl = st.selectbox("Year (table scope)", [str(y) for y in years_tbl], index=len(years_tbl)-1, key="tbl_scope_year")
+        t_all_tbl  = pd.to_datetime(df[time_col], errors="coerce")
+        mask_tbl_y = (t_all_tbl.dt.year == int(year_tbl))
+        df_tbl = df.loc[mask_tbl_y].copy()
+        t_tbl  = t_all_tbl.loc[mask_tbl_y]
         if df_tbl.empty:
             st.info("Không có dữ liệu trong năm được chọn.")
         else:
-            # ---- Tổng hợp theo THÁNG trong năm đã chọn + tỷ trọng tổng
-            mon = pd.DataFrame({
-                "m": pd.to_datetime(t_tbl, errors="coerce").dt.to_period("M").dt.start_time,
-                "v": s_net
-            }).groupby("m", dropna=False)["v"].agg(count="count", sum="sum", mean="mean", median="median").reset_index()
-    
+            # Amount cho bảng (ưu tiên Sales(B))
+            if amt_col in df_tbl.columns:
+                if map_b and map_b in df_tbl.columns:
+                    B = df_tbl[map_b].astype(str)
+                    m = B.isin(set(map(str, SS.get("mv_b_sales", []))))
+                    s_amount_tbl = pd.to_numeric(df_tbl[amt_col], errors="coerce").fillna(0.0).where(m, 0.0)
+                else:
+                    s_amount_tbl = pd.to_numeric(df_tbl[amt_col], errors="coerce").fillna(0.0)
+            else:
+                s_amount_tbl = pd.Series(0.0, index=df_tbl.index)
+
+            mon = (pd.DataFrame({"m": t_tbl.dt.to_period("M").dt.start_time, "v": s_amount_tbl})
+                     .groupby("m", dropna=False)["v"]
+                     .agg(count="count", sum="sum", mean="mean", median="median").reset_index())
             total_year = float(mon["sum"].sum())
-            mon["share"] = np.where(total_year != 0, mon["sum"]/total_year, np.nan)
-    
-            # Định dạng hiển thị
+            mon["share"] = np.where(total_year!=0, mon["sum"]/total_year, np.nan)
             out = pd.DataFrame({"Kỳ": mon["m"].dt.strftime("%b %Y")})
             out["Số dòng"]    = mon["count"].astype(int)
             out["Tổng"]       = mon["sum"].map(lambda x: f"{x:,.0f}")
             out["Trung bình"] = mon["mean"].map(lambda x: f"{x:,.0f}")
             out["Trung vị"]   = mon["median"].map(lambda x: f"{x:,.0f}")
             out["Tỷ trọng"]   = mon["share"].map(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "—")
-    
-            # Sắp theo thời gian (hoặc theo tổng giảm dần; tùy bạn)
-            out = out.iloc[np.argsort(mon["m"].values)]  # theo thời gian
-            # Nếu muốn theo tổng giảm dần:
-            # out = out.iloc[(-mon["sum"].values).argsort()]
-    
+            out = out.iloc[np.argsort(mon["m"].values)]
             st.dataframe(out, use_container_width=True, hide_index=True)
+    else:
+        st.info("Cần chọn cột Time để xem bảng.")
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
