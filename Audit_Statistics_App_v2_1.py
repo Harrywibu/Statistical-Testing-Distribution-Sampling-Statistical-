@@ -849,20 +849,19 @@ with TAB1:
                             help_="Kênh bán (tuỳ chọn) cho **Distribution**.")
 
         # Hàng 2 — Revenue + Amount(volume) + Price + Weight
-        r1, r2, r3, r4 = st.columns([1,1,1,1])
+        r1, r2, r3 = st.columns([1,1,1])
         rev_col = _pick(r1, "💰 Revenue (KH ngoài)", "ov_rev",
                         help_="Doanh thu **bán cho khách ngoài**. TẤT CẢ biểu đồ/bảng sẽ dùng cột này "
                               "(nếu có Mapping B → chỉ lấy **Sales(B)**).")
         vol_col = _pick(r2, "📦 Amount (volume: qty/weight)", "ov_amt",
                         help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)**.")
-        price_col = _pick(r3, "🏷️ Price (đơn giá bán ngoài)", "ov_price",
-                          help_="Đơn giá bán **cho khách ngoài**. (Không bắt buộc trong công thức Avg Price mới).")
-        weight_col = _pick(r4, "⚖️ Weight (denominator cho Avg Price)", "ov_weight",
+
+        weight_col = _pick(r3, "⚖️ Weight (denominator cho Avg Price)", "ov_weight",
                            help_="**Weight** cho công thức Avg Price = ΣRevenue_external / ΣWeight_external. "
                                  "Bỏ qua các dòng weight ≤ 0.")
 
         # Hàng 3 — Mapping A/B
-        r5, r6 = st.columns([1,1])
+        r4, r5 = st.columns([1,1])
         map_a = _pick(r5, "🏷️ Mapping A — Transaction", "ov_map_a",
                       help_="Phân loại **nghiệp vụ** chỉ gồm 2 nhóm: **Sales (External)** & **Transfer (Internal)**. "
                             "Dùng để tính tỷ trọng theo **Amount (volume)** & lọc external cho Avg Price.")
@@ -1172,13 +1171,13 @@ with TAB1:
                 figp.update_layout(
                     xaxis_title="Month",
                     yaxis=dict(title="Revenue"),
-                    yaxis2=dict(title="Avg Price (ΣRevenue_external / ΣWeight_external)",
+                    yaxis2=dict(title="Avg Price",
                                 overlaying="y", side="right", showgrid=False),
                     margin=dict(l=10, r=10, t=10, b=10),
                     hovermode=False, showlegend=True, height=440
                 )
                 st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
-                st.caption("Bar = Revenue (external sales). Line = Avg Price = ΣRevenue_external / ΣWeight_external (bỏ weight ≤ 0).")
+                st.caption("Bar = Revenue . Line = Avg Price = ΣRevenue/ ΣWeight (bỏ weight ≤ 0).")
 
             with cR:
                 tbl = monthly.copy()
