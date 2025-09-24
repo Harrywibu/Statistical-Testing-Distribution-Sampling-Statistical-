@@ -1021,7 +1021,7 @@ with TAB1:
 
         # ========= Bảng Discount theo tháng (B) =========
         with rc:
-            st.markdown("#### 🔎 Monthly Discount ")
+            st.markdown("#### 🔎 Monthly Discount (B)")
             dm = (pd.DataFrame({"m": tv.dt.to_period("M").dt.start_time,
                                 "SalesB": salesB_rev, "DiscB": discB_rev})
                     .groupby("m", dropna=False).sum(numeric_only=True))
@@ -1036,7 +1036,267 @@ with TAB1:
                 show["Discount%"] = show["Discount%"].map(lambda x: f"{x:.1f}%")
                 st.dataframe(show, use_container_width=True, height=420)
             else:
-                st.info("Chưa đủ dữ liệu để tính bảng")
+                st.info("Chưa đủ dữ liệu để tính bảng Discount theo tháng.")
+
+    # ====================== 5) 💹 Avg Price (weighted by volume) vs Revenue ======================
+    st.markdown("### 💹 Avg Price vs Revenue")
+    if time_col and price_col:
+        years_p = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        y_p = st.selectbox("Year scope (Price chart)", [str(y) for y in years_p], index=len(years_p)-1, key="price_year")
+
+        # Filter theo Product (All)
+        prod_vals = df[prod_col].astype(str).unique().tolist() if (prod_col and prod_col in df.columns) else []
+        sel_prod = st.multiselect("Filter Product", ["(All)"] + sorted(prod_vals), default="(All)")
+
+        mask_y = (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_p))
+        mask_p = pd.Series(True, index=df.index)
+        if prod_col and sel_prod and "(All)" not in sel_prod:
+            mask_p &= df[prod_col].astype(str).isin(sel_prod)
+        mask_price_scope = mask_y & mask_p
+
+        dfx = df.loc[mask_price_scope].copy()
+        if dfx.empty:
+            st.info("Không có dữ liệu trong năm/bộ lọc đã chọn.")
+        else:
+            # External sales mask (Mapping A)
+            if map_a and map_a in dfx.columns:
+                A_norm = dfx[map_a].astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.lower()
+                tok_s  = set(pd.Series(SS.get("mv_a_sales", [])).astype(str)
+                             .str.strip().str.replace(r"\s+", " ", regex=True).str.lower())
+                m_sales_only = A_norm.isin(tok_s) if tok_s else pd.Series(True, index=dfx.index)
+            else:
+                m_sales_only = pd.Series(True, index=dfx.index)
+
+            # Numeric fields
+            rev_x   = pd.to_numeric(dfx[rev_col],   errors="coerce").fillna(0.0)
+            vol_x   = pd.to_numeric(dfx[vol_col],   errors="coerce").fillna(0.0) if vol_col in dfx else pd.Series(0.0, index=dfx.index)
+            price_x = pd.to_numeric(dfx[price_col], errors="coerce")  # NaN nếu 'DIV#0', 'N/A', text...
+
+            # Valid price rows: price > 0 (bỏ NaN/0/DIV#0)
+            valid_price = price_x > 0
+
+            # Aggregations
+            t_price = pd.to_datetime(dfx[time_col], errors="coerce")
+            grp = t_price.dt.to_period("M").dt.start_time
+
+            # Revenue bar = tổng Revenue (external sales, không yêu cầu price valid)
+            rev_bar = rev_x.where(m_sales_only, 0.0).groupby(grp).sum()
+
+            # Weighted Avg Price = sum(Revenue) / sum(Volume) nhưng CHỈ trên hàng có price hợp lệ
+            rev_w = rev_x.where(m_sales_only & valid_price, 0.0).groupby(grp).sum()
+            vol_w = vol_x.where(m_sales_only & valid_price, 0.0).groupby(grp).sum()
+            mean_price = price_x.where(m_sales_only & valid_price).groupby(grp).mean()
+            avg_price = np.where(vol_w>0, rev_w/vol_w, mean_price)
+
+            monthly = pd.DataFrame({"rev": rev_bar, "avg_price": avg_price}).sort_index()
+
+            # Plot (Bar Revenue + Line Avg Price)
+            cL, cR = st.columns([0.72, 0.28])
+            with cL:
+                figp = go.Figure()
+                figp.add_bar(x=monthly.index, y=monthly["rev"], name="Revenue",
+                             text=[f"{v:,.0f}" for v in monthly["rev"]], textposition="outside", hoverinfo="skip")
+                figp.add_scatter(x=monthly.index, y=monthly["avg_price"], yaxis="y2",
+                                 mode="lines+markers+text", name="Avg Price",
+                                 text=[f"{v:,.0f}" if pd.notna(v) else "" for v in monthly["avg_price"]],
+                                 textposition="top center", line=dict(color="#F2C811", width=3), marker=dict(size=6),
+                                 hoverinfo="skip")
+                figp.update_layout(
+                    xaxis_title="Month", yaxis=dict(title="Revenue"),
+                    yaxis2=dict(title="Avg Price (weighted by volume)"),
+                    yaxis2_update=dict(overlaying="y", side="right", showgrid=False),
+                    margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440
+                )
+                st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
+                st.caption("Bar = Revenue (external sales). Line = Avg Price (weighted by **Amount**; bỏ qua Price 0/NaN/DIV#0).")
+
+            with cR:
+                tbl = monthly.copy()
+                tbl.index = tbl.index.strftime("%b %Y")
+                tbl.rename(columns={"rev":"Revenue","avg_price":"Avg Price"}, inplace=True)
+                tbl["Revenue"]   = tbl["Revenue"].map(lambda x: f"{x:,.0f}")
+                tbl["Avg Price"] = tbl["Avg Price"].map(lambda x: "—" if pd.isna(x) else f"{x:,.0f}")
+                st.dataframe(tbl, use_container_width=True, height=440)
+    else:
+        st.info("Cần chọn **Time** và **Price** để xem Avg Price vs Revenue.")
+
+    # ====================== 6) Top Contribution — theo Revenue ======================
+    st.markdown("### 🧱 Top Contribution")
+    tc1, tc2, tc3 = st.columns([2,1,1])
+    dim_col = tc1.selectbox("📊 Dimension (X)", ["—"] + list(df.columns), index=0)
+    topN    = tc2.slider("Top-N", 3, 50, 10)
+    if time_col:
+        y_all = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        y_top = tc3.selectbox("Year scope (Top Contribution)", ["All"]+[str(y) for y in y_all], index=len(y_all))
+    else:
+        y_top = "All"
+
+    mask_top = pd.Series(True, index=df.index)
+    if time_col and y_top!="All":
+        mask_top &= (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_top))
+    df_top = df.loc[mask_top].copy()
+
+    def _revenue_for(dframe):
+        if rev_col not in dframe.columns: return pd.Series(0.0, index=dframe.index)
+        r = pd.to_numeric(dframe[rev_col], errors="coerce").fillna(0.0)
+        if map_b and map_b in dframe.columns:
+            B = dframe[map_b].astype(str)
+            m = B.isin(set(map(str, SS.get("mv_b_sales", []))))
+            return r.where(m, 0.0)
+        return r
+
+    base_top = _revenue_for(df_top)
+
+    cL, cR = st.columns(2)
+    if (not dim_col) or (dim_col=="—") or (dim_col not in df_top.columns):
+        st.info("Chọn Dimension để xem Top-N.")
+    else:
+        dim_vals = df_top[dim_col].astype(str).fillna("(NA)")
+        g_all = (pd.DataFrame({"d": dim_vals, "v": base_top})
+                   .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
+        picked = st.multiselect("Filter values", list(g_all.index), default=list(g_all.index), key="top_filter")
+        mask_dim = dim_vals.isin(picked) if picked else pd.Series(True, index=df_top.index)
+
+        with cL:
+            g = (pd.DataFrame({"d": dim_vals, "v": base_top}).loc[mask_dim]
+                   .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
+            g_top = g.head(topN)
+            total = max(g.sum(), 1e-12)
+            cum   = (g_top.cumsum()/total)*100
+            fig_t = go.Figure()
+            fig_t.add_bar(x=g_top.index, y=g_top.values,
+                          text=[f"{v:,.0f}" for v in g_top.values],
+                          textposition="outside", hoverinfo="skip", name="Revenue")
+            fig_t.add_scatter(x=g_top.index, y=cum.values, name="Cumulative %",
+                              mode="lines+markers+text", yaxis="y2",
+                              text=[f"{v:.1f}%" for v in cum.values],
+                              textposition="top center", line=dict(color="#A0A0A0"))
+            fig_t.update_layout(xaxis_title=dim_col, yaxis_title="Revenue",
+                                yaxis2=dict(title="Cumulative %", overlaying="y", side="right", showgrid=False),
+                                margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440)
+            st.plotly_chart(fig_t, use_container_width=True, config={"displayModeBar": False})
+
+        with cR:
+            pos = g_all.clip(lower=0)
+            tot_pos = float(pos.sum())
+            if tot_pos <= 0:
+                st.info("Không đủ giá trị dương để vẽ pie.")
+            else:
+                top_share = (pos/tot_pos).head(topN)
+                other = max(0.0, 1.0 - float(top_share.sum()))
+                labels = list(top_share.index) + (["Other"] if other>1e-9 else [])
+                values = list((top_share*100).round(2).values) + ([round(other*100,2)] if other>1e-9 else [])
+                fig_p = go.Figure(go.Pie(labels=labels, values=values, hole=0.35, sort=False,
+                                         text=[f"{l} {v:.1f}%" for l,v in zip(labels, values)],
+                                         textinfo="text", hoverinfo="skip"))
+                fig_p.update_layout(margin=dict(l=10,r=10,t=10,b=10), showlegend=False, height=440)
+                st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
+
+    # ====================== 7) Distribution by Region / Channel — theo Revenue ======================
+    st.markdown("### 🗺️ Distribution by Region / Channel")
+    if time_col:
+        yd_all = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        y_dist = st.selectbox("Year scope (Distribution)", ["All"]+[str(y) for y in yd_all], index=len(yd_all))
+    else:
+        y_dist = "All"
+    mask_dist = pd.Series(True, index=df.index)
+    if time_col and y_dist!="All":
+        mask_dist &= (pd.to_datetime(df[time_col], errors="coerce").dt.year == int(y_dist))
+    dfd = df.loc[mask_dist].copy()
+    s_revenue_dist = _revenue_for(dfd)
+
+    if not region_col or region_col not in dfd.columns:
+        st.info("Chọn **Region** để xem phân bổ.")
+    else:
+        filt1, filt2 = st.columns(2)
+        reg_vals = dfd[region_col].astype(str).fillna("(NA)")
+        reg_opts = sorted(reg_vals.unique().tolist())
+        sel_regs = filt1.multiselect("Filter Region", reg_opts, default=reg_opts)
+        ch_ok = (channel_col and channel_col in dfd.columns)
+        if ch_ok:
+            ch_vals = dfd[channel_col].astype(str).fillna("(NA)")
+            ch_opts = sorted(ch_vals.unique().tolist())
+            sel_chs = filt2.multiselect("Filter Channel", ch_opts, default=ch_opts)
+        else:
+            sel_chs = None
+
+        maskf = reg_vals.isin(sel_regs) if sel_regs else pd.Series(True, index=dfd.index)
+        if ch_ok and sel_chs:
+            maskf &= dfd[channel_col].astype(str).fillna("(NA)").isin(sel_chs)
+
+        ddf  = dfd.loc[maskf].copy()
+        mser = s_revenue_dist.loc[maskf]
+
+        if ch_ok:
+            topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6)
+            ch_sum = (pd.DataFrame({"ch": ddf[channel_col].astype(str), "v": mser})
+                      .groupby("ch")["v"].sum().sort_values(ascending=False))
+            keep = set(ch_sum.head(topn_ch).index)
+            ch = ddf[channel_col].astype(str).where(ddf[channel_col].astype(str).isin(keep), other="Other")
+            g = (pd.DataFrame({"Region": ddf[region_col].astype(str), "Channel": ch, "v": mser})
+                 .groupby(["Region","Channel"])["v"].sum().reset_index())
+            piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
+            row_tot = piv.sum(axis=1).replace(0, np.nan)
+            share   = piv.div(row_tot, axis=0) * 100.0
+            piv     = piv.loc[row_tot.sort_values().index]; share = share.loc[piv.index]
+            fig = go.Figure()
+            for col in piv.columns:
+                fig.add_bar(x=piv.index, y=piv[col].values, name=str(col),
+                            text=[f"{v:.1f}%" if not np.isnan(v) else "" for v in share[col].values],
+                            textposition="inside", hoverinfo="skip")
+            fig.update_layout(barmode="stack", xaxis_title="Region", yaxis_title="Revenue",
+                              margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=True, height=440,
+                              uniformtext_minsize=12, uniformtext_mode="show")
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        else:
+            reg = (pd.DataFrame({"Region": ddf[region_col].astype(str), "v": mser})
+                   .groupby("Region")["v"].sum().sort_values(ascending=True))
+            tot = reg.sum()
+            fig = go.Figure()
+            fig.add_bar(x=reg.values, y=reg.index, orientation="h",
+                        text=[f"{v:,.0f} • {(v/tot*100 if tot>0 else 0):.1f}%" for v in reg.values],
+                        textposition="outside", hoverinfo="skip", name="Revenue")
+            fig.update_layout(xaxis_title="Revenue", yaxis_title="Region",
+                              margin=dict(l=10,r=10,t=10,b=10), hovermode=False, showlegend=False, height=440)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # ====================== 8) Summary table — theo Revenue ======================
+    st.markdown("### 🧾 Summary table")
+    if time_col:
+        years_tbl = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
+        year_tbl = st.selectbox("Year (table scope)", [str(y) for y in years_tbl], index=len(years_tbl)-1, key="tbl_scope_year")
+        t_all_tbl  = pd.to_datetime(df[time_col], errors="coerce")
+        mask_tbl_y = (t_all_tbl.dt.year == int(year_tbl))
+        df_tbl = df.loc[mask_tbl_y].copy()
+        t_tbl  = t_all_tbl.loc[mask_tbl_y]
+        if df_tbl.empty:
+            st.info("Không có dữ liệu trong năm được chọn.")
+        else:
+            if rev_col in df_tbl.columns:
+                if map_b and map_b in df_tbl.columns:
+                    B = df_tbl[map_b].astype(str)
+                    m = B.isin(set(map(str, SS.get("mv_b_sales", []))))
+                    s_revenue_tbl = pd.to_numeric(df_tbl[rev_col], errors="coerce").fillna(0.0).where(m, 0.0)
+                else:
+                    s_revenue_tbl = pd.to_numeric(df_tbl[rev_col], errors="coerce").fillna(0.0)
+            else:
+                s_revenue_tbl = pd.Series(0.0, index=df_tbl.index)
+
+            mon = (pd.DataFrame({"m": t_tbl.dt.to_period("M").dt.start_time, "v": s_revenue_tbl})
+                     .groupby("m", dropna=False)["v"]
+                     .agg(count="count", sum="sum", mean="mean", median="median").reset_index())
+            total_year = float(mon["sum"].sum())
+            mon["share"] = np.where(total_year!=0, mon["sum"]/total_year, np.nan)
+            out = pd.DataFrame({"Kỳ": mon["m"].dt.strftime("%b %Y")})
+            out["Số dòng"]    = mon["count"].astype(int)
+            out["Tổng"]       = mon["sum"].map(lambda x: f"{x:,.0f}")
+            out["Trung bình"] = mon["mean"].map(lambda x: f"{x:,.0f}")
+            out["Trung vị"]   = mon["median"].map(lambda x: f"{x:,.0f}")
+            out["Tỷ trọng"]   = mon["share"].map(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "—")
+            out = out.iloc[np.argsort(mon["m"].values)]
+            st.dataframe(out, use_container_width=True, hide_index=True)
+    else:
+        st.info("Cần chọn cột Time để xem bảng.")
 
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
