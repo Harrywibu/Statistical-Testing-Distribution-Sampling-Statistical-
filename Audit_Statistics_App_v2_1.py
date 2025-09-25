@@ -843,19 +843,19 @@ with TAB1:
                             help_="Mã/nhóm khách hàng (tuỳ chọn).")
         prod_col    = _pick(c4, "📦 Product", "ov_prod",
                             help_="Mã/nhóm sản phẩm (dùng filter phần **Avg Price**).")
-        region_col  = _pick(c5, "🌍 Region (opt)", "ov_region",
-                            help_="Vùng/khu vực (tuỳ chọn) cho **Distribution by Region/Channel**.")
-        channel_col = _pick(c6, "🛒 Channel (opt)", "ov_channel",
-                            help_="Kênh bán (tuỳ chọn) cho **Distribution**.")
+        region_col  = _pick(c5, "🌍 Region", "ov_region",
+                            help_="Vùng/khu vực cho **Distribution by Region/Channel**.")
+        channel_col = _pick(c6, "🛒 Channel", "ov_channel",
+                            help_="Kênh bán cho **Distribution**.")
 
         # Hàng 2 — Revenue + Amount(volume) + Weight
         r1, r2, r3 = st.columns([1,1,1])
-        rev_col = _pick(r1, "💰 Revenue (KH ngoài)", "ov_rev",
+        rev_col = _pick(r1, "💰 Revenue", "ov_rev",
                         help_="Doanh thu **bán cho khách ngoài**. TẤT CẢ biểu đồ/bảng sẽ dùng cột này "
                               "(nếu có Mapping B → chỉ lấy **Sales(B)**).")
-        vol_col = _pick(r2, "📦 Amount (volume: qty/weight)", "ov_amt",
+        vol_col = _pick(r2, "📦 Amount (volume: qty*weight)", "ov_amt",
                         help_="Khối lượng (Qty/Weight). Dùng tính **%Sales(A)** & **%Transfer(A)**.")
-        weight_col = _pick(r3, "⚖️ Weight (denominator cho Avg Price)", "ov_weight",
+        weight_col = _pick(r3, "⚖️ Weight/Sale Weight (cho Avg Price)", "ov_weight",
                            help_="**Weight** cho công thức Avg Price = ΣRevenue_external / ΣWeight_external. "
                                  "Bỏ qua các dòng weight ≤ 0.")
 
@@ -876,9 +876,9 @@ with TAB1:
         with st.expander("Mapping chi tiết", expanded=False):
             a1, a2 = st.columns(2)
             mv_a_sales = a1.multiselect("Sales (External) — A", uniq_a, key="mv_a_sales",
-                                        help="Chọn tất cả nhãn thể hiện **bán ngoài** (Sales/External).")
+                                        help="Chọn tất cả nhãn thể hiện **bán ngoài** (External Sales).")
             mv_a_trans = a2.multiselect("Transfer (Internal) — A", uniq_a, key="mv_a_transfer",
-                                        help="Chọn tất cả nhãn thể hiện **chuyển nội bộ** (Transfer/Internal).")
+                                        help="Chọn tất cả nhãn thể hiện **chuyển nội bộ** (Internal Sales).")
             b1, b2 = st.columns(2)
             mv_b_sales = b1.multiselect("Sales (B)", uniq_b, key="mv_b_sales",
                                         help="Các nhãn giá trị được coi là **Sales**.")
@@ -1020,7 +1020,7 @@ with TAB1:
 
         # ========= Bảng Discount theo tháng (B) =========
         with rc:
-            st.markdown("#### 🔎 Monthly Discount (B)")
+            st.markdown("#### 🔎 Monthly Discount")
             dm = (pd.DataFrame({"m": tv.dt.to_period("M").dt.start_time,
                                 "SalesB": salesB_rev, "DiscB": discB_rev})
                     .groupby("m", dropna=False).sum(numeric_only=True))
@@ -1066,7 +1066,7 @@ with TAB1:
 
     cL, cR = st.columns(2)
     if (not dim_col) or (dim_col=="—") or (dim_col not in df_top.columns):
-        st.info("Chọn Dimension để xem Top-N.")
+        st.info("Chọn Select X để xem Top contribution.")
     else:
         dim_vals = df_top[dim_col].astype(str).fillna("(NA)")
         g_all = (pd.DataFrame({"d": dim_vals, "v": base_top})
@@ -1169,13 +1169,13 @@ with TAB1:
                 figp.update_layout(
                     xaxis_title="Month",
                     yaxis=dict(title="Revenue"),
-                    yaxis2=dict(title="Avg Price (ΣRevenue_external / ΣWeight_external)",
+                    yaxis2=dict(title="Avg Price",
                                 overlaying="y", side="right", showgrid=False),
                     margin=dict(l=10, r=10, t=10, b=10),
                     hovermode=False, showlegend=True, height=440
                 )
                 st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
-                st.caption("Bar = Revenue (external sales). Line = Avg Price = ΣRevenue_external / ΣWeight_external (bỏ weight ≤ 0).")
+                st.caption("Bar = Revenue. Line = Avg Price (bỏ weight ≤ 0).")
 
             with cR:
                 tbl = monthly.copy()
@@ -1233,7 +1233,7 @@ with TAB1:
         mser = s_revenue_dist.loc[maskf]
 
         if ch_ok:
-            topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6)
+            topn_ch = st.slider("Top Contribution (stacked)", 3, 20, 6)
             ch_sum = (pd.DataFrame({"ch": ddf[channel_col].astype(str), "v": mser})
                       .groupby("ch")["v"].sum().sort_values(ascending=False))
             keep = set(ch_sum.head(topn_ch).index)
