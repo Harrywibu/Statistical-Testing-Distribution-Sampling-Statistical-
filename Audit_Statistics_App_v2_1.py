@@ -1319,6 +1319,7 @@ with TAB1:
     else:
         st.info("Cần chọn cột Time để xem bảng.")
 
+
 with TAB2:
     st.subheader('🧪 Distribution & Shape')
     df = DF_FULL
