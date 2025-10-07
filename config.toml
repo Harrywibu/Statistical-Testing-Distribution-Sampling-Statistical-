@@ -13,3 +13,4 @@ enableXsrfProtection = true
 
 [runner]
 magicEnabled = false
+maxMessageSize = 300
