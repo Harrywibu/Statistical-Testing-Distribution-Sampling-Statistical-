@@ -102,54 +102,6 @@ if '_orig_dataframe' not in SS:
 if '_orig_table' not in SS:
     SS['_orig_table'] = st.table
 
-def _export_register(kind: str, payload):
-    """Ghi nhận fig/table của TAB hiện tại vào _export_registry."""
-    try:
-        tab = SS.get("_capture_tab") or "GLOBAL"
-        reg = SS.setdefault("_export_registry", {})
-        slot = reg.setdefault(tab, {"figs": [], "tables": []})
-
-        if kind == "fig":
-            try:
-                import plotly.graph_objects as go
-                if isinstance(payload, go.Figure):
-                    slot["figs"].append(payload)
-            except Exception:
-                pass
-
-        elif kind == "table":
-            import pandas as pd
-            df = None
-            if payload is None:
-                df = None
-            elif isinstance(payload, pd.DataFrame):
-                df = payload.copy()
-            else:
-                try:
-                    df = pd.DataFrame(payload)
-                except Exception:
-                    df = None
-            if df is not None:
-                slot["tables"].append(df)
-    except Exception:
-        pass
-
-def _plotly_chart_export(fig, **kwargs):
-    _export_register("fig", fig)
-    return SS['_orig_plotly_chart'](fig, **kwargs)
-
-def _dataframe_export(data=None, **kwargs):
-    _export_register("table", data)
-    return SS['_orig_dataframe'](data, **kwargs)
-
-def _table_export(data=None, **kwargs):
-    _export_register("table", data)
-    return SS['_orig_table'](data, **kwargs)
-
-# Kích hoạt proxy (idempotent)
-st.plotly_chart = _plotly_chart_export
-st.dataframe    = _dataframe_export
-st.table        = _table_export
 # ====================== PATCH END: Export Capture Proxies ======================
 
 from scipy import stats
@@ -328,12 +280,72 @@ def read_csv_fast(file_bytes: bytes, usecols=None) -> pd.DataFrame:
     return _downcast_numeric(df)
 
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
-def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None, header_row: int = 1, skip_top: int = 0, dtype_map=None) -> pd.DataFrame:
+def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None,
+                   header_row: int = 1, skip_top: int = 0, dtype_map=None) -> pd.DataFrame:
+    # --- sanitize input để tránh None gây lỗi so sánh/số học ---
+    header_row = 1 if header_row in (None, 0, '', False) else int(header_row)
+    skip_top   = 0 if skip_top   in (None, '', False)   else int(skip_top)
+
+    # --- FAST PATH: DuckDB excel extension (rất nhanh nếu sẵn có) ---
+    if 'HAS_DUCKDB' in globals() and HAS_DUCKDB:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        try:
+            tmp.write(file_bytes); tmp.flush(); tmp.close()
+            con = duckdb.connect()
+            # excel ext có thể đã có sẵn; nếu không, nhảy qua except và fallback
+            try:
+                con.execute("INSTALL excel; LOAD excel;")
+            except Exception:
+                pass
+
+            # Đọc toàn sheet về Arrow/Pandas
+            q = f"SELECT * FROM read_excel('{tmp.name}', sheet='{sheet}')"
+            try:
+                # ưu tiên lấy Arrow table nếu pyarrow sẵn để convert nhanh
+                import pyarrow as pa
+                table = con.execute(q).arrow()
+                pdf = table.to_pandas(types_mapper=pd.ArrowDtype) if hasattr(pd, 'ArrowDtype') else table.to_pandas()
+            except Exception:
+                pdf = con.execute(q).df()
+
+            # Mô phỏng hành vi header/skip như pandas.read_excel
+            header_idx = max(header_row - 1, 0)
+            # bảo vệ khi sheet trống hoặc chỉ có vài dòng
+            if len(pdf) == 0:
+                return _downcast_numeric(pdf)
+
+            pdf.columns = pdf.iloc[header_idx].astype(str).tolist()
+            start_data = header_idx + 1 + max(skip_top, 0)
+            pdf = pdf.iloc[start_data:].reset_index(drop=True)
+
+            # Chọn cột nếu usecols được truyền
+            if usecols:
+                cols_sel = [c for c in usecols if c in pdf.columns]
+                if cols_sel:
+                    pdf = pdf[cols_sel]
+
+            # Áp dtype_map nếu có
+            if dtype_map:
+                for c, t in dtype_map.items():
+                    if c in pdf.columns:
+                        with contextlib.suppress(Exception):
+                            pdf[c] = pdf[c].astype(t)
+
+            return _downcast_numeric(pdf)
+        finally:
+            with contextlib.suppress(Exception):
+                os.unlink(tmp.name)
+
+    # --- FALLBACK: pandas + openpyxl (như cũ) ---
     skiprows = list(range(header_row, header_row + skip_top)) if skip_top > 0 else None
     bio = io.BytesIO(file_bytes)
-    df = pd.read_excel(bio, sheet_name=sheet, usecols=usecols, header=header_row - 1,
-                       skiprows=skiprows, dtype=dtype_map, engine='openpyxl')
+    df = pd.read_excel(
+        bio, sheet_name=sheet, usecols=usecols,
+        header=header_row - 1, skiprows=skiprows,
+        dtype=dtype_map, engine='openpyxl'
+    )
     return _downcast_numeric(df)
+
 
 # ----------------------------- Cached Basic Stats -----------------------------
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=64)
@@ -483,6 +495,11 @@ if up is not None:
         st.rerun()
 with st.sidebar.expander('3) Cache', expanded=False):
     if not HAS_PYARROW:
+        try:
+            import duckdb
+            HAS_DUCKDB = True
+        except Exception:
+            HAS_DUCKDB = False
         st.caption('⚠️ PyArrow chưa sẵn sàng — Disk cache (Parquet) sẽ bị tắt.')
         SS['use_parquet_cache'] = False
     SS['use_parquet_cache'] = st.checkbox('Disk cache (Parquet) for faster reloads', value=SS.get('use_parquet_cache', False) and HAS_PYARROW)
@@ -703,7 +720,6 @@ TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6 = st.tabs([ '0) Data Quality', '1) Over
 # ---- TAB 0: Data Quality (FULL) ----
 
 with TAB0:
-    SS['_capture_tab'] = 'Tổng quan' 
     st.subheader('🧪 Data Quality')
     if SS.get('df') is None:
         st.info('Hãy **Load full data** để xem Data Quality Tab.')
@@ -762,10 +778,10 @@ with TAB0:
 
 # ============================== TAB 1 — OVERVIEW (Sales Activities) ==============================
 with TAB1:
-    SS['_capture_tab'] = 'Overview (Sales acitivties)' 
     import numpy as np, pandas as pd
     import plotly.express as px
     import plotly.graph_objects as go
+    import textwrap # Cần import textwrap
 
     st.subheader("📈 Overview — Sales Activities")
 
@@ -779,6 +795,7 @@ with TAB1:
         bad = t.notna() & ((t.dt.year < min_year) | (t.dt.year > max_year))
         return t.mask(bad)
 
+    @st.cache_data(ttl=900, show_spinner="Đang tổng hợp...")
     def _agg_by_period(series_time, values, rule_code):
         t = _clean_time(series_time)
         m = t.notna()
@@ -786,9 +803,7 @@ with TAB1:
         return (pd.DataFrame({"p": p[m], "v": values[m]})
                 .groupby("p", dropna=False)["v"].sum().sort_index())
 
-    # --- Pie: wrap label + vẽ pie chống cắt chữ ---
     def _wrap_label(lbl, width=16):
-        import textwrap
         s = "" if lbl is None else str(lbl)
         return "<br>".join(textwrap.wrap(s, width=width)) if len(s) > width else s
 
@@ -812,7 +827,11 @@ with TAB1:
         return fig
 
     def _pick(col, label, key, help_=None):
-        v = col.selectbox(label, ["—"] + list(df.columns), index=0, key=key, help=help_)
+        df_full = SS.get('df') 
+        if df_full is None:
+            return col.selectbox(label, ["—"], index=0, key=key, help=help_)
+        
+        v = col.selectbox(label, ["—"] + list(df_full.columns), index=0, key=key, help=help_)
         return None if v == "—" else v
 
     def _norm_period_value(p_text):
@@ -829,7 +848,7 @@ with TAB1:
         if not vals: return set()
         return set(pd.Series(list(vals)).astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.lower())
 
-    # === Drill-down per chart (expander gọn cho từng biểu đồ) ===
+    # === (KHÔI PHỤC) Drill-down per chart (đúng như code gốc) ===
     def _chart_drilldown_mask(prefix: str,
                               dfin: pd.DataFrame,
                               tv: pd.Series, rule_code: str,
@@ -839,8 +858,8 @@ with TAB1:
                               cust_col: str | None,
                               time_col_present: bool = True):
         def _top_values_local(df_local, col, k=200):
-            if not col or col not in df_local.columns: return []
-            return df_local[col].astype(str).value_counts(dropna=False).head(k).index.tolist()
+            if not col or col not in dfin.columns: return []
+            return dfin[col].astype(str).value_counts(dropna=False).head(k).index.tolist()
 
         with st.expander("🎯 Drill-down filter — Khoanh vùng dữ liệu (biểu đồ này)", expanded=False):
             ckR, ckC, ckP, ckU, ckT = st.columns([1,1,1,1,1])
@@ -851,10 +870,10 @@ with TAB1:
             useT = ckT.checkbox("Time",    key=f"{prefix}_useT") if time_col_present else False
 
             m1, m2 = st.columns([1.1, 2.2])
-            selR = m1.multiselect("Region (top 200)",  _top_values_local(dfin, region_col),  key=f"{prefix}_valR") if (useR and region_col) else []
-            selC = m1.multiselect("Channel (top 200)", _top_values_local(dfin, channel_col), key=f"{prefix}_valC") if (useC and channel_col) else []
-            selP = m2.multiselect("Product (top 200)",  _top_values_local(dfin, prod_col),   key=f"{prefix}_valP") if (useP and prod_col) else []
-            selU = m2.multiselect("Customer (top 200)", _top_values_local(dfin, cust_col),   key=f"{prefix}_valU") if (useU and cust_col) else []
+            selR = m1.multiselect("Region",  _top_values_local(dfin, region_col),  key=f"{prefix}_valR") if (useR and region_col and region_col in dfin.columns) else []
+            selC = m1.multiselect("Channel", _top_values_local(dfin, channel_col), key=f"{prefix}_valC") if (useC and channel_col and channel_col in dfin.columns) else []
+            selP = m2.multiselect("Product",  _top_values_local(dfin, prod_col),   key=f"{prefix}_valP") if (useP and prod_col and prod_col in dfin.columns) else []
+            selU = m2.multiselect("Customer", _top_values_local(dfin, cust_col),   key=f"{prefix}_valU") if (useU and cust_col and cust_col in dfin.columns) else []
 
             if useT and time_col_present and tv is not None and not tv.isna().all():
                 per_lbl = {"MS":"Month","QS":"Quarter","YS":"Year"}[rule_code]
@@ -865,16 +884,15 @@ with TAB1:
                 selT = []
 
         mask = pd.Series(True, index=dfin.index)
-        if useR and region_col and selR: mask &= dfin[region_col].astype(str).isin(selR)
-        if useC and channel_col and selC: mask &= dfin[channel_col].astype(str).isin(selC)
-        if useP and prod_col and selP:    mask &= dfin[prod_col].astype(str).isin(selP)
-        if useU and cust_col and selU:    mask &= dfin[cust_col].astype(str).isin(selU)
-        if useT and time_col_present and selT:
+        if useR and region_col and selR and region_col in dfin.columns: mask &= dfin[region_col].astype(str).isin(selR)
+        if useC and channel_col and selC and channel_col in dfin.columns: mask &= dfin[channel_col].astype(str).isin(selC)
+        if useP and prod_col and selP and prod_col in dfin.columns:    mask &= dfin[prod_col].astype(str).isin(selP)
+        if useU and cust_col and selU and cust_col in dfin.columns:    mask &= dfin[cust_col].astype(str).isin(selU)
+        if useT and time_col_present and selT and tv is not None:
             per_now = tv.dt.to_period({"MS":"M","QS":"Q","YS":"Y"}[rule_code]).astype(str)
             mask &= per_now.loc[dfin.index].isin(set(selT))
         return mask
 
-    # === Nhãn tránh “dính chữ” + tuỳ chọn hiển thị ===
     def _sparse_line_labels(y_vals, fmt=lambda v: f"{v:.1f}%", min_dy_ratio=0.08, max_points=22):
         y = np.array([np.nan if v is None else v for v in y_vals], dtype=float)
         if len(y) == 0 or len(y) > max_points:
@@ -896,38 +914,59 @@ with TAB1:
         if len(values) <= max_labels:
             return [fmt(v) for v in values]
         return None
+        
+    @st.cache_data(ttl=900, show_spinner="Đang tính toán chiết khấu...")
+    def get_discount_analysis(df_source, group_col, revenue_series, discount_series):
+        if not group_col or group_col not in df_source.columns:
+            return pd.DataFrame(columns=["Group", "Discount_Rate", "Total_Discount", "Total_Revenue"])
+        
+        g_disc = (pd.DataFrame({
+            "Group": df_source[group_col].astype(str).fillna("(NA)"),
+            "SalesB": revenue_series,
+            "DiscB":  discount_series
+        }).groupby("Group").sum(numeric_only=True))
+
+        g_disc = g_disc[g_disc["SalesB"] > 0] 
+        if g_disc.empty:
+            return pd.DataFrame(columns=["Group", "Discount_Rate", "Total_Discount", "Total_Revenue"])
+            
+        g_disc["Discount_Rate"] = (-g_disc["DiscB"] / g_disc["SalesB"]) * 100.0
+        g_disc = g_disc.sort_values("Discount_Rate", ascending=False)
+        
+        g_disc.columns = ["Total_Revenue", "Total_Discount", "Discount_Rate"]
+        g_disc = g_disc.reset_index() 
+        return g_disc[['Group', 'Discount_Rate', 'Total_Discount', 'Total_Revenue']]
 
     # ---- Data / guard
-    df = SS.get("df")
+    df = SS.get("df") 
     if df is None or df.empty:
         st.info("Hãy nạp dữ liệu trước."); st.stop()
 
-    # ====================== 0) Import Input Data — (giữ luồng cũ) ======================
+    # ====================== 0) Import Input Data — (ĐÃ CẬP NHẬT) ======================
     st.markdown("### ⚙️ Import Input Data — (Required)")
     with st.container(border=True):
-        c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
+        c1, c2, c3, c4, c5 = st.columns(5)
         time_col    = _pick(c1, "🕒 Time", "ov_time", help_="Datetime để resample Month/Quarter/Year.")
-        order_col   = _pick(c2, "🧾 Order/Doc", "ov_order", help_="Mã chứng từ/đơn hàng (đếm Orders).")
-        cust_col    = _pick(c3, "👤 Customer", "ov_cust")
-        prod_col    = _pick(c4, "📦 Product", "ov_prod")
-        region_col  = _pick(c5, "🌍 Region", "ov_region")
-        channel_col = _pick(c6, "🛒 Channel", "ov_channel")
+        cust_col    = _pick(c2, "👤 Customer", "ov_cust")
+        prod_col    = _pick(c3, "📦 Product", "ov_prod")
+        region_col  = _pick(c4, "🌍 Region", "ov_region")
+        channel_col = _pick(c5, "🛒 Channel", "ov_channel")
 
-        r1, r2, r3 = st.columns([1,1,1])
+        r1, r2, r3, r4 = st.columns(4) 
         rev_col    = _pick(r1, "💰 Revenue", "ov_rev", help_="Doanh thu cho biểu đồ/bảng.")
-        vol_col    = _pick(r2, "📦 Amount (volume)", "ov_amt", help_="Khối lượng để tính %Sales(A)/%Transfer(A).")
-        weight_col = _pick(r3, "⚖️ Weight", "ov_weight", help_="Dùng cho Avg Price & chart Revenue vs Weight.")
-
-        r5, r6 = st.columns([1,1])
-        map_a = _pick(r5, "🏷️ Mapping A — Transaction", "ov_map_a",
-                      help_="Phân Sales (External) vs Transfer (Internal) — theo VOLUME.")
-        map_b = _pick(r6, "🏷️ Mapping B — Value Type", "ov_map_b",
+        weight_vol_col = _pick(r2, "⚖️ Weight (Amount)", "ov_weight_vol", 
+                               help_="Dùng cho Avg Price, %Sales(A), và chart Revenue vs Weight.")
+        
+        map_a = _pick(r3, "🏷️ Mapping A — Transaction", "ov_map_a",
+                      help_="Phân Sales (External) vs Transfer (Internal) — theo VOLUME/WEIGHT.")
+        map_b = _pick(r4, "🏷️ Mapping B — Value Type", "ov_map_b",
                       help_="Phân Sales(B) vs Discount(B) — theo REVENUE.")
         if map_a and map_b and map_a == map_b:
             st.warning("Mapping A và Mapping B đang dùng **cùng cột**. Hãy chọn cột khác nhau.")
 
-        uniq_a = sorted(df[map_a].astype(str).unique().tolist()) if map_a else []
-        uniq_b = sorted(df[map_b].astype(str).unique().tolist()) if map_b else []
+        uniq_a = sorted(df[map_a].astype(str).unique().tolist()) if map_a and map_a in df.columns else []
+        uniq_b = sorted(df[map_b].astype(str).unique().tolist()) if map_b and map_b in df.columns else []
+        
         with st.expander("Mapping chi tiết", expanded=False):
             a1, a2 = st.columns(2)
             mv_a_sales = a1.multiselect("Sales (External) — A", uniq_a, key="mv_a_sales")
@@ -948,24 +987,26 @@ with TAB1:
         period     = _norm_period_value(period_raw)
         rule       = RULE[period]
 
-        if time_col:
+        if time_col and time_col in df.columns:
             all_years = sorted(pd.to_datetime(df[time_col], errors="coerce").dropna().dt.year.unique())
             year_scope = d3.selectbox("Year scope (KPI/Trend)", ["All"]+[str(y) for y in all_years], index=len(all_years))
         else:
             year_scope = "All"
-
+            
         # ====================== 2) Lọc scope năm ======================
-        t_all = _clean_time(df[time_col]) if time_col else pd.Series(pd.NaT, index=df.index)
+        t_all = _clean_time(df[time_col]) if time_col and time_col in df.columns else pd.Series(pd.NaT, index=df.index)
         mask_scope = (t_all.dt.year == int(year_scope)) if (time_col and year_scope!="All") else pd.Series(True, index=df.index)
-        dfv = df.loc[mask_scope].copy()
+        
+        dfv = df.loc[mask_scope].copy() # dfv là DataFrame chỉ lọc theo năm
         tv  = t_all.loc[mask_scope] if time_col else pd.Series(pd.NaT, index=dfv.index)
+        
         if dfv.empty:
             st.info("Không có dữ liệu trong phạm vi đã chọn."); st.stop()
+        # =========================================================================
 
         # series cơ bản
         rev = pd.to_numeric(dfv[rev_col], errors="coerce").fillna(0.0)
-        vol = pd.to_numeric(dfv[vol_col], errors="coerce").fillna(0.0) if vol_col else pd.Series(0.0, index=dfv.index)
-        wgt = pd.to_numeric(dfv[weight_col], errors="coerce").fillna(0.0) if weight_col else pd.Series(0.0, index=dfv.index)
+        vol_wgt = pd.to_numeric(dfv[weight_vol_col], errors="coerce").fillna(0.0) if weight_vol_col and weight_vol_col in dfv.columns else pd.Series(0.0, index=dfv.index)
 
         # Mapping A
         if map_a and map_a in dfv.columns:
@@ -976,476 +1017,522 @@ with TAB1:
             m_salesA    = pd.Series(False, index=dfv.index)
             m_transferA = pd.Series(False, index=dfv.index)
 
-        salesA_vol    = vol.where(m_salesA, 0.0)
-        transferA_vol = vol.where(m_transferA, 0.0)
+        salesA_vol    = vol_wgt.where(m_salesA, 0.0)
+        transferA_vol = vol_wgt.where(m_transferA, 0.0)
         baseA = float(salesA_vol.abs().sum() + transferA_vol.abs().sum())
         pct_salesA    = (float(salesA_vol.abs().sum())/baseA*100) if baseA>0 else np.nan
         pct_transferA = (float(transferA_vol.abs().sum())/baseA*100) if baseA>0 else np.nan
 
         # Mapping B
         if map_b and map_b in dfv.columns:
-            B = dfv[map_b].astype(str)
-            is_salesB = B.isin(set(map(str, SS.get("mv_b_sales", []))))
-            is_discB  = B.isin(set(map(str, SS.get("mv_b_disc",  []))))
+            B_norm = _norm_ser(dfv[map_b])
+            is_salesB = B_norm.isin(_norm_list(SS.get("mv_b_sales", [])))
+            is_discB  = B_norm.isin(_norm_list(SS.get("mv_b_disc",  [])))
             salesB_rev = rev.where(is_salesB, 0.0)
             discB_rev  = rev.where(is_discB,  0.0)
         else:
-            salesB_rev = rev.copy()
-            discB_rev  = pd.Series(0.0, index=dfv.index)
+            salesB_rev = rev.copy() 
+            discB_rev  = pd.Series(0.0, index=dfv.index) 
 
-        # Discount%
+        # Discount% (Tính toán sớm để KPI dùng)
         disc_avg_month = np.nan; disc_year_pct = np.nan
-        if time_col:
+        mon_sales_gt_0 = pd.DataFrame() 
+        
+        if time_col and not salesB_rev.empty and not discB_rev.empty:
             mon = (pd.DataFrame({"m": tv.dt.to_period("M").dt.start_time,
                                 "SalesB": salesB_rev, "DiscB": discB_rev})
                 .groupby("m").sum(numeric_only=True))
-            mon = mon[mon["SalesB"] != 0]
-            if not mon.empty:
-                mon["Discount%"] = (-mon["DiscB"]/mon["SalesB"])*100.0
-                yr = int(year_scope) if (year_scope!="All") else int(mon.index.year.max())
-                mon_y = mon[mon.index.year==yr]
-                if not mon_y.empty:
-                    disc_avg_month = float(mon_y["Discount%"].mean())
-                    disc_year_pct  = float((-mon_y["DiscB"].sum()/mon_y["SalesB"].sum())*100.0)
+            mon_sales_gt_0 = mon[mon["SalesB"] > 0].copy() 
+            
+            if not mon_sales_gt_0.empty:
+                mon_sales_gt_0["Discount%"] = (-mon_sales_gt_0["DiscB"] / mon_sales_gt_0["SalesB"]) * 100.0
+                
+                y_opts = sorted(mon_sales_gt_0.index.year.unique())
+                if y_opts:
+                    yr = int(year_scope) if (year_scope!="All" and int(year_scope) in y_opts) else int(y_opts[-1])
+                    mon_y = mon_sales_gt_0[mon_sales_gt_0.index.year==yr]
+                    
+                    if not mon_y.empty:
+                        disc_avg_month = float(mon_y["Discount%"].mean())
+                        disc_year_pct  = float((-mon_y["DiscB"].sum() / mon_y["SalesB"].sum()) * 100.0)
 
-        revenue_for_charts = salesB_rev if (map_b and map_b in dfv.columns) else rev
+        revenue_for_charts = salesB_rev if (map_b and map_b in dfv.columns and SS.get("mv_b_sales")) else rev
 
-        # ====================== 3) KPI ======================
-        orders_total = (dfv[order_col].nunique() if (order_col and order_col in dfv.columns) else len(dfv))
+        # ====================== 3) KPI (ĐÃ CẬP NHẬT) ======================
+        orders_total = len(dfv)
         prod_total   = (dfv.loc[revenue_for_charts>0, prod_col].nunique()
                         if (prod_col and prod_col in dfv.columns) else np.nan)
         revenue_total = float(revenue_for_charts.sum())
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Revenue (for charts)", f"{revenue_total:,.0f}")
-        k2.metric("Orders", f"{orders_total:,.0f}")
+        k2.metric("Total Transactions", f"{orders_total:,.0f}") 
         k3.metric("Total product", f"{prod_total:,.0f}" if not np.isnan(prod_total) else "—")
-        k4.metric("%Sales (A) by Volume", f"{pct_salesA:.1f}%" if not np.isnan(pct_salesA) else "—")
+        k4.metric("%Sales (A) by Weight/Vol", f"{pct_salesA:.1f}%" if not np.isnan(pct_salesA) else "—") 
 
         k5, k6, k7, k8 = st.columns(4)
-        k5.metric("%Transfer (A) by Volume", f"{pct_transferA:.1f}%" if not np.isnan(pct_transferA) else "—")
+        k5.metric("%Transfer (A) by Weight/Vol", f"{pct_transferA:.1f}%" if not np.isnan(pct_transferA) else "—") 
         k6.metric("Discount% avg monthly (B)", f"{disc_avg_month:.1f}%" if not np.isnan(disc_avg_month) else "—")
         k7.metric("Discount% (YTD, B)", f"{disc_year_pct:.1f}%" if not np.isnan(disc_year_pct) else "—")
         k8.metric("Scope year", year_scope)
 
         # =============== 4) Trend — Revenue + %Δ ==================
-        st.markdown("### 📊 Trend — Revenue & %Δ")
-        tmask = _chart_drilldown_mask("ov_trend", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
-
-        with st.expander("🎨 Màu & nhãn — Trend", expanded=False):
-            ccol1, ccol2, ccol3 = st.columns([1,1,1])
-            color_bar_trend   = ccol1.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_tr_bar")
-            color_line_trend  = ccol2.color_picker("Màu line (%Δ)",    "#1f77b4", key="clr_tr_line")
-            color_text_common = ccol3.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_tr_txt")
-            show_all_line_lbl = st.checkbox("Hiện tất cả nhãn line", value=True, key="tr_show_all")
-
-        if time_col:
-            g_rev = _agg_by_period(tv.loc[tmask], revenue_for_charts.loc[tmask], rule)
-            base  = g_rev.shift(1) if compare=="Prev" else g_rev.shift(YOY[rule])
-            pct   = np.where(base!=0, (g_rev/base-1.0)*100.0, np.nan)
-
-            bar_text = _bar_text(g_rev.values)
-            if show_all_line_lbl:
-                line_text = [f"{v:.1f}%" if (v is not None and not np.isnan(v)) else "" for v in pct]
-            else:
-                line_text = _sparse_line_labels(pct, fmt=lambda v: f"{v:.1f}%")
-
-            y_pad = max(g_rev.max() * 0.15, 1.0)
-            fig = go.Figure()
-            fig.add_bar(x=g_rev.index, y=g_rev.values, name="Revenue",
-                        marker_color=color_bar_trend,
-                        text=bar_text, textposition="outside",
-                        textfont=dict(color=color_text_common), cliponaxis=False)
-            fig.add_scatter(x=g_rev.index, y=pct, yaxis="y2", mode="lines+markers+text", name="%Δ",
-                            line=dict(color=color_line_trend),
-                            text=line_text, textposition="top center",
-                            textfont=dict(color=color_text_common))
-            fig.update_layout(
-                xaxis_title=period,
-                yaxis=dict(title="Revenue", range=[0, float(g_rev.max()+y_pad)], title_standoff=8),
-                yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False, title_standoff=14),
-                margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
-                uniformtext_minsize=10, uniformtext_mode="hide"
-            )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-            with st.expander("📄 Trend data (table)"):
-                show = pd.DataFrame({
-                    period: g_rev.index, "Revenue": g_rev.values,
-                    "Base": base.values, "%Δ": pct
-                })
-                show["%Δ"] = show["%Δ"].map(lambda x: None if pd.isna(x) else round(x, 2))
-                st.dataframe(show, use_container_width=True, hide_index=True)
-
-            # === Monthly Discount (table) — nằm trong phần Trend ===
-            with st.expander("🔎 Monthly Discount (table)", expanded=False):
-                # gộp doanh thu SalesB và Discount theo THÁNG
-                dm = (
-                    pd.DataFrame({
-                        "m": tv.dt.to_period("M").dt.start_time,
-                        "SalesB": salesB_rev,   # đã tính từ Mapping B ở trên
-                        "DiscB":  discB_rev
-                    })
-                    .groupby("m").sum(numeric_only=True)
-                )
-
-                if dm.empty:
-                    st.info("Chưa đủ dữ liệu để tính Monthly Discount.")
-                else:
-                    # %Discount = -DiscB / SalesB
-                    dm = dm[dm["SalesB"] != 0]
-                    dm["Discount%"] = (-dm["DiscB"] / dm["SalesB"]) * 100.0
-
-                    # chọn năm theo scope (nếu có), mặc định năm mới nhất
-                    y_opts = sorted(dm.index.year.unique())
-                    if year_scope != "All" and int(year_scope) in y_opts:
-                        default_year = int(year_scope)
-                    else:
-                        default_year = y_opts[-1]
-
-                    yr = st.selectbox("Year", y_opts, index=y_opts.index(default_year), key="trend_disc_year")
-
-                    show = dm[dm.index.year == int(yr)].copy()
-                    show.index = show.index.strftime("%b %Y")
-
-                    # định dạng hiển thị
-                    styled = show.copy()
-                    styled["SalesB"]    = styled["SalesB"].map(lambda x: f"{x:,.0f}")
-                    styled["DiscB"]     = styled["DiscB"].map(lambda x: f"{x:,.0f}")
-                    styled["Discount%"] = styled["Discount%"].map(lambda x: f"{x:.1f}%")
-
-                    st.dataframe(styled, use_container_width=True, height=340)
-        else:
-            st.info("Cần chọn **Time** để xem Trend.")
+        with st.expander("📊 1. Trend — Revenue & %Δ", expanded=True):
+            tmask = _chart_drilldown_mask("ov_trend", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
             
+            with st.expander("🎨 Màu & nhãn — Trend", expanded=False):
+                ccol1, ccol2, ccol3 = st.columns([1,1,1])
+                color_bar_trend   = ccol1.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_tr_bar")
+                color_line_trend  = ccol2.color_picker("Màu line (%Δ)",    "#1f77b4", key="clr_tr_line")
+                color_text_common = ccol3.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_tr_txt")
+                show_all_line_lbl = st.checkbox("Hiện tất cả nhãn line", value=True, key="tr_show_all")
 
-        # ============ 4b) Sales Revenue vs Sales Weight ============
-        st.markdown("### 💹 Sales Revenue vs Sales Weight")
-        rw_mask = _chart_drilldown_mask("ov_rw", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
-        with st.expander("🎨 Màu & nhãn — Revenue vs Weight", expanded=False):
-            c3, c4, c5 = st.columns([1,1,1])
-            color_bar_rw   = c3.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_rw_bar")
-            color_line_rw  = c4.color_picker("Màu line (Weight)", "#2ca02c", key="clr_rw_line")
-            color_text_rw  = c5.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_rw_txt")
-            show_all_line_lbl_rw = st.checkbox("Hiện tất cả nhãn line", value=True, key="rw_show_all")
+            if time_col:
+                g_rev = _agg_by_period(tv.loc[tmask], revenue_for_charts.loc[tmask], rule)
+                base  = g_rev.shift(1) if compare=="Prev" else g_rev.shift(YOY[rule])
+                pct   = np.where(base!=0, (g_rev/base-1.0)*100.0, np.nan)
 
-        if time_col and weight_col and weight_col in df.columns:
-            g_rev2 = _agg_by_period(tv.loc[rw_mask], revenue_for_charts.loc[rw_mask], rule)
-            g_wgt2 = _agg_by_period(tv.loc[rw_mask], wgt.loc[rw_mask].where(wgt.loc[rw_mask]>0, 0.0), rule)
-            idx = g_rev2.index.union(g_wgt2.index)
-            g_rev2 = g_rev2.reindex(idx, fill_value=0)
-            g_wgt2 = g_wgt2.reindex(idx, fill_value=0)
+                bar_text = _bar_text(g_rev.values)
+                line_text = [f"{v:.1f}%" if (v is not None and not np.isnan(v)) else "" for v in pct] if show_all_line_lbl else _sparse_line_labels(pct, fmt=lambda v: f"{v:.1f}%")
 
-            bar_text = _bar_text(g_rev2.values)
-            if show_all_line_lbl_rw:
-                line_text= [f"{v:,.0f}" if not pd.isna(v) else "" for v in g_wgt2.values]
+                y_pad = max(g_rev.max() * 0.15, 1.0) if not g_rev.empty else 1.0
+                fig = go.Figure()
+                fig.add_bar(x=g_rev.index, y=g_rev.values, name="Revenue",
+                            marker_color=color_bar_trend,
+                            text=bar_text, textposition="outside",
+                            textfont=dict(color=color_text_common), cliponaxis=False)
+                fig.add_scatter(x=g_rev.index, y=pct, yaxis="y2", mode="lines+markers+text", name="%Δ",
+                                line=dict(color=color_line_trend),
+                                text=line_text, textposition="top center",
+                                textfont=dict(color=color_text_common))
+                fig.update_layout(
+                    xaxis_title=period,
+                    yaxis=dict(title="Revenue", range=[0, float(g_rev.max()+y_pad)] if not g_rev.empty else [0,1], title_standoff=8),
+                    yaxis2=dict(title="%Δ", overlaying="y", side="right", showgrid=False, title_standoff=14),
+                    margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
+                    uniformtext_minsize=10, uniformtext_mode="hide"
+                )
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+                with st.expander("📄 Trend data (table)"):
+                    show = pd.DataFrame({
+                        period: g_rev.index, "Revenue": g_rev.values,
+                        "Base": base.values, "%Δ": pct
+                    })
+                    # (SỬA LỖI ĐỊNH DẠNG)
+                    show_styled = show.copy()
+                    show_styled["Revenue"] = show_styled["Revenue"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    show_styled["Base"] = show_styled["Base"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    show_styled["%Δ"] = show_styled["%Δ"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+                    st.dataframe(show_styled, use_container_width=True, hide_index=True)
             else:
-                line_text= _sparse_line_labels(g_wgt2.values, fmt=lambda v: f"{v:,.0f}")
+                st.info("Cần chọn **Time** để xem Trend.")
 
-            y_pad = max(g_rev2.max() * 0.15, 1.0)
-            fig2 = go.Figure()
-            fig2.add_bar(x=idx, y=g_rev2.values, name="Sales Revenue",
-                        marker_color=color_bar_rw,
-                        text=bar_text, textposition="outside",
-                        textfont=dict(color=color_text_rw),
-                        cliponaxis=False)
-            fig2.add_scatter(x=idx, y=g_wgt2.values, yaxis="y2", mode="lines+markers+text", name="Sales Weight",
-                            line=dict(color=color_line_rw),
-                            text=line_text, textposition="top center",
-                            textfont=dict(color=color_text_rw))
-            fig2.update_layout(
-                xaxis_title=period,
-                yaxis=dict(title="Sales Revenue", range=[0, float(g_rev2.max()+y_pad)], title_standoff=8),
-                yaxis2=dict(title="Sales Weight", overlaying="y", side="right", showgrid=False, title_standoff=14),
-                margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
-                uniformtext_minsize=10, uniformtext_mode="hide"
-            )
-            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+        # =============== (MỚI) TÁCH PHÂN TÍCH CHIẾT KHẤU RA RIÊNG =================
+        with st.expander("📉 2. Phân tích Chiết khấu (Discount Analysis)", expanded=False):
+            if not time_col or not map_b or not SS.get("mv_b_sales"):
+                st.info("Cần chọn **Time** và **Mapping B (Value Type)** (bao gồm Sales và Discount) để xem phân tích Chiết khấu.")
+            else:
+                dmask = _chart_drilldown_mask("ov_disc", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+                
+                dfv_disc = dfv.loc[dmask]
+                tv_disc = tv.loc[dmask]
+                salesB_rev_disc = salesB_rev.loc[dmask]
+                discB_rev_disc = discB_rev.loc[dmask]
 
-            with st.expander("📄 Revenue vs Weight — monthly (table)"):
-                show = pd.DataFrame({period: idx, "Revenue": g_rev2.reindex(idx).values,
-                                    "Weight": g_wgt2.reindex(idx).values})
-                st.dataframe(show, use_container_width=True, hide_index=True)
-        else:
-            st.info("Cần chọn **Time** và **Weight** để xem biểu đồ này.")
+                st.markdown("#### Tỷ lệ chiết khấu hàng tháng")
+                
+                mon_disc = (pd.DataFrame({
+                    "m": tv_disc.dt.to_period("M").dt.start_time,
+                    "SalesB": salesB_rev_disc, 
+                    "DiscB":  discB_rev_disc
+                }).groupby("m").sum(numeric_only=True))
+                mon_disc_gt_0 = mon_disc[mon_disc["SalesB"] > 0].copy() 
+                
+                if mon_disc_gt_0.empty:
+                    st.info("Chưa đủ dữ liệu để tính Monthly Discount (sau khi drill-down).")
+                else:
+                    mon_disc_gt_0["Discount%"] = (-mon_disc_gt_0["DiscB"] / mon_disc_gt_0["SalesB"]) * 100.0
+                    y_opts = sorted(mon_disc_gt_0.index.year.unique())
+                    if not y_opts:
+                        st.warning("Không tìm thấy năm hợp lệ.")
+                    else:
+                        default_year_idx = y_opts.index(int(year_scope)) if (year_scope!="All" and int(year_scope) in y_opts) else len(y_opts)-1
+                        yr = st.selectbox("Year", y_opts, index=default_year_idx, key="trend_disc_year")
+
+                        show = mon_disc_gt_0[mon_disc_gt_0.index.year == int(yr)].copy()
+                        show.index = show.index.strftime("%b %Y")
+                        
+                        # (SỬA LỖI ĐỊNH DẠNG)
+                        styled = show.copy()
+                        styled["SalesB"]    = styled["SalesB"].map(lambda x: f"{x:,.0f}")
+                        styled["DiscB"]     = styled["DiscB"].map(lambda x: f"{x:,.0f}")
+                        styled["Discount%"] = styled["Discount%"].map(lambda x: f"{x:.1f}%")
+                        st.dataframe(styled, use_container_width=True, height=340)
+                        
+                        st.markdown("#### Top Chiết khấu (trong năm đã chọn & đã drill-down)")
+                        
+                        dfv_year_disc = dfv_disc[tv_disc.dt.year == int(yr)] if time_col else dfv_disc
+                        salesB_rev_year_disc = salesB_rev.loc[dfv_year_disc.index]
+                        discB_rev_year_disc = discB_rev.loc[dfv_year_disc.index]
+                        
+                        tabD1, tabD2, tabD3 = st.tabs(["Theo Cửa hàng (Region)", "Theo Sản phẩm", "Theo Khách hàng"])
+                        
+                        # (SỬA LỖI ĐỊNH DẠNG)
+                        def format_disc_table(df_in):
+                            df_out = df_in.head(15).copy()
+                            df_out["Discount_Rate"] = df_out["Discount_Rate"].map(lambda x: f"{x:.2f}%" if pd.notna(x) else "—")
+                            df_out["Total_Discount"] = df_out["Total_Discount"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                            df_out["Total_Revenue"] = df_out["Total_Revenue"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                            return df_out
+                        
+                        with tabD1:
+                            df_disc_region = get_discount_analysis(dfv_year_disc, region_col, salesB_rev_year_disc, discB_rev_year_disc)
+                            st.dataframe(format_disc_table(df_disc_region), 
+                                         use_container_width=True, hide_index=True)
+                        with tabD2:
+                            df_disc_prod = get_discount_analysis(dfv_year_disc, prod_col, salesB_rev_year_disc, discB_rev_year_disc)
+                            st.dataframe(format_disc_table(df_disc_prod), 
+                                         use_container_width=True, hide_index=True)
+                        with tabD3:
+                            df_disc_cust = get_discount_analysis(dfv_year_disc, cust_col, salesB_rev_year_disc, discB_rev_year_disc)
+                            st.dataframe(format_disc_table(df_disc_cust), 
+                                         use_container_width=True, hide_index=True)
+            
+        # ============ 4b) Sales Revenue vs Sales Weight ============
+        with st.expander("💹 3. Sales Revenue vs Sales Weight", expanded=False):
+            rw_mask = _chart_drilldown_mask("ov_rw", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+            
+            with st.expander("🎨 Màu & nhãn — Revenue vs Weight", expanded=False):
+                c3, c4, c5 = st.columns([1,1,1])
+                color_bar_rw   = c3.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_rw_bar")
+                color_line_rw  = c4.color_picker("Màu line (Weight)", "#2ca02c", key="clr_rw_line")
+                color_text_rw  = c5.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_rw_txt")
+                show_all_line_lbl_rw = st.checkbox("Hiện tất cả nhãn line", value=True, key="rw_show_all")
+
+            if time_col and weight_vol_col and weight_vol_col in df.columns:
+                g_rev2 = _agg_by_period(tv.loc[rw_mask], revenue_for_charts.loc[rw_mask], rule)
+                g_wgt2 = _agg_by_period(tv.loc[rw_mask], vol_wgt.loc[rw_mask].where(vol_wgt.loc[rw_mask]>0, 0.0), rule)
+                idx = g_rev2.index.union(g_wgt2.index)
+                g_rev2 = g_rev2.reindex(idx, fill_value=0)
+                g_wgt2 = g_wgt2.reindex(idx, fill_value=0)
+
+                bar_text = _bar_text(g_rev2.values)
+                line_text = [f"{v:,.0f}" if not pd.isna(v) else "" for v in g_wgt2.values] if show_all_line_lbl_rw else _sparse_line_labels(g_wgt2.values, fmt=lambda v: f"{v:,.0f}")
+
+                y_pad = max(g_rev2.max() * 0.15, 1.0) if not g_rev2.empty else 1.0
+                fig2 = go.Figure()
+                fig2.add_bar(x=idx, y=g_rev2.values, name="Sales Revenue",
+                            marker_color=color_bar_rw,
+                            text=bar_text, textposition="outside",
+                            textfont=dict(color=color_text_rw),
+                            cliponaxis=False)
+                fig2.add_scatter(x=idx, y=g_wgt2.values, yaxis="y2", mode="lines+markers+text", name="Sales Weight",
+                                line=dict(color=color_line_rw),
+                                text=line_text, textposition="top center",
+                                textfont=dict(color=color_text_rw))
+                fig2.update_layout(
+                    xaxis_title=period,
+                    yaxis=dict(title="Sales Revenue", range=[0, float(g_rev2.max()+y_pad)] if not g_rev2.empty else [0,1], title_standoff=8),
+                    yaxis2=dict(title="Sales Weight", overlaying="y", side="right", showgrid=False, title_standoff=14),
+                    margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
+                    uniformtext_minsize=10, uniformtext_mode="hide"
+                )
+                st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
+                with st.expander("📄 Revenue vs Weight — monthly (table)"):
+                    show = pd.DataFrame({period: idx, "Revenue": g_rev2.reindex(idx).values,
+                                        "Weight": g_wgt2.reindex(idx).values})
+                    # (SỬA LỖI ĐỊNH DẠNG)
+                    show_styled = show.copy()
+                    show_styled["Revenue"] = show_styled["Revenue"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    show_styled["Weight"] = show_styled["Weight"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    st.dataframe(show_styled, use_container_width=True, hide_index=True)
+            else:
+                st.info("Cần chọn **Time** và **Weight (Amount)** để xem biểu đồ này.")
 
         # ====================== 5) Top Contribution  |  Pie ======================
-        st.markdown("### 🧱 Top Contribution  |  🥧 Pie")
-        tc1, tc2, tc3 = st.columns([2,1,1])
-        dim_col = tc1.selectbox("📊 Dimension (X)", ["—"] + list(dfv.columns), index=0)
-        topN    = tc2.slider("Top-N", 3, 50, 10)
-        as_share= tc3.checkbox("Chuẩn hóa % (share)", value=False, key="ov_share")
+        with st.expander("🧱 4. Top Contribution  |  🥧 Pie", expanded=False):
+            tc1, tc2, tc3 = st.columns([2,1,1])
+            dim_col = tc1.selectbox("📊 Dimension (X)", ["—"] + list(dfv.columns), index=0, key="ov_dim_topc")
+            topN    = tc2.slider("Top-N", 3, 50, 10, key="ov_topn_topc")
+            as_share= tc3.checkbox("Chuẩn hóa % (share)", value=False, key="ov_share")
 
-        pal_opts = {
-            "Plotly": px.colors.qualitative.Plotly,
-            "Bold":   px.colors.qualitative.Bold,
-            "Pastel": px.colors.qualitative.Pastel,
-            "Set3":   px.colors.qualitative.Set3,
-        }
-        with st.expander("🎨 Màu & nhãn — Top Contribution", expanded=False):
-            cpl, cln = st.columns([1,1])
-            pal_name = cpl.selectbox("Bảng màu Bar/Pie", list(pal_opts.keys()), index=0, key="ov_tc_palette")
-            color_line_cum = cln.color_picker("Màu line (Cumulative %)", "#636EFA", key="clr_tc_line")
-            color_text_tc  = st.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_tc_txt")
-            show_all_line_lbl_tc = st.checkbox("Hiện tất cả nhãn line", value=True, key="tc_show_all")
+            pal_opts = { "Plotly": px.colors.qualitative.Plotly, "Bold": px.colors.qualitative.Bold, "Pastel": px.colors.qualitative.Pastel, "Set3": px.colors.qualitative.Set3 }
+            with st.expander("🎨 Màu & nhãn — Top Contribution", expanded=False):
+                cpl, cln = st.columns([1,1])
+                pal_name = cpl.selectbox("Bảng màu Bar/Pie", list(pal_opts.keys()), index=0, key="ov_tc_palette")
+                color_line_cum = cln.color_picker("Màu line (Cumulative %)", "#636EFA", key="clr_tc_line")
+                color_text_tc  = st.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_tc_txt")
+                show_all_line_lbl_tc = st.checkbox("Hiện tất cả nhãn line", value=True, key="tc_show_all")
 
-        if (not dim_col) or (dim_col=="—") or (dim_col not in dfv.columns):
-            st.info("Chọn Dimension (X) để xem Top Contribution.")
-        else:
-            tc_mask = _chart_drilldown_mask("ov_tc", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
-            dim_vals = dfv.loc[tc_mask, dim_col].astype(str).fillna("(NA)")
-            g = (pd.DataFrame({"d": dim_vals, "v": revenue_for_charts.loc[tc_mask]})
-                .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
+            if (not dim_col) or (dim_col=="—") or (dim_col not in dfv.columns):
+                st.info("Chọn Dimension (X) để xem Top Contribution.")
+            else:
+                tc_mask = _chart_drilldown_mask("ov_tc", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+                
+                dim_vals = dfv.loc[tc_mask, dim_col].astype(str).fillna("(NA)")
+                g = (pd.DataFrame({"d": dim_vals, "v": revenue_for_charts.loc[tc_mask]})
+                    .groupby("d", dropna=False)["v"].sum().sort_values(ascending=False))
 
-            total_sel = float(g.sum()) if len(g) else 0.0
-            g_top = g.head(topN)
-            cum   = (g_top.cumsum()/total_sel*100.0) if total_sel>0 else pd.Series(np.nan, index=g_top.index)
-            yvals = (g_top/total_sel*100.0) if (as_share and total_sel>0) else g_top
+                total_sel = float(g.sum()) if len(g) else 0.0
+                g_top = g.head(topN)
+                cum   = (g_top.cumsum()/total_sel*100.0) if total_sel>0 else pd.Series(np.nan, index=g_top.index)
+                yvals = (g_top/total_sel*100.0) if (as_share and total_sel>0) else g_top
 
-            palette = pal_opts[pal_name]
-            colors_for = {cat: palette[i % len(palette)] for i, cat in enumerate(g_top.index)}
+                palette = pal_opts[pal_name]
+                colors_for = {cat: palette[i % len(palette)] for i, cat in enumerate(g_top.index)}
 
-            cL, cR = st.columns([0.7, 0.3])
-            with cL:
-                bar_text = _bar_text(yvals.values, fmt=(lambda v: f"{v:.1f}%") if as_share else (lambda v: f"{v:,.0f}"))
-                if show_all_line_lbl_tc:
-                    line_text = [f"{v:.1f}%" if not pd.isna(v) else "" for v in cum.values]
-                else:
-                    line_text = _sparse_line_labels(cum.values, fmt=lambda v: f"{v:.1f}%")
-                fig_t = go.Figure()
-                fig_t.add_bar(
-                    x=g_top.index, y=yvals.values, name="Top-N",
-                    marker_color=[colors_for[c] for c in g_top.index],
-                    text=bar_text, textposition="outside",
-                    textfont=dict(color=color_text_tc), cliponaxis=False
-                )
-                fig_t.add_scatter(
-                    x=g_top.index, y=cum.values, yaxis="y2", mode="lines+markers+text", name="Cumulative %",
-                    line=dict(color=color_line_cum),
-                    text=line_text, textposition="top center",
-                    textfont=dict(color=color_text_tc)
-                )
-                fig_t.update_layout(
-                    xaxis_title=dim_col,
-                    yaxis_title=("Share %" if as_share else "Revenue"),
-                    yaxis2=dict(title="Cumulative %", overlaying="y", side="right", showgrid=False, title_standoff=14),
-                    margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=460,
-                    uniformtext_minsize=10, uniformtext_mode="hide"
-                )
-                st.plotly_chart(fig_t, use_container_width=True, config={"displayModeBar": False})
+                cL, cR = st.columns([0.7, 0.3])
+                with cL:
+                    bar_text = _bar_text(yvals.values, fmt=(lambda v: f"{v:.1f}%") if as_share else (lambda v: f"{v:,.0f}"))
+                    line_text = [f"{v:.1f}%" if not pd.isna(v) else "" for v in cum.values] if show_all_line_lbl_tc else _sparse_line_labels(cum.values, fmt=lambda v: f"{v:.1f}%")
+                    fig_t = go.Figure()
+                    fig_t.add_bar(
+                        x=g_top.index, y=yvals.values, name="Top-N",
+                        marker_color=[colors_for[c] for c in g_top.index],
+                        text=bar_text, textposition="outside",
+                        textfont=dict(color=color_text_tc), cliponaxis=False
+                    )
+                    fig_t.add_scatter(
+                        x=g_top.index, y=cum.values, yaxis="y2", mode="lines+markers+text", name="Cumulative %",
+                        line=dict(color=color_line_cum),
+                        text=line_text, textposition="top center",
+                        textfont=dict(color=color_text_tc)
+                    )
+                    fig_t.update_layout(
+                        xaxis_title=dim_col,
+                        yaxis_title=("Share %" if as_share else "Revenue"),
+                        yaxis2=dict(title="Cumulative %", overlaying="y", side="right", showgrid=False, title_standoff=14),
+                        margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=460,
+                        uniformtext_minsize=10, uniformtext_mode="hide"
+                    )
+                    st.plotly_chart(fig_t, use_container_width=True, config={"displayModeBar": False})
 
-            with cR:
-                other_val = max(0.0, total_sel - float(g_top.sum()))
-                labels = list(g_top.index) + (["Other"] if other_val > 0 else [])
-                values = list(g_top.values) + ([other_val] if other_val > 0 else [])
-                colors = [colors_for[c] for c in g_top.index] + (["#BDBDBD"] if other_val > 0 else [])
-                fig_p = _pie_with_smart_labels(labels, values, colors, height=460)
-                st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
+                with cR:
+                    other_val = max(0.0, total_sel - float(g_top.sum()))
+                    labels = list(g_top.index) + (["Other"] if other_val > 0 else [])
+                    values = list(g_top.values) + ([other_val] if other_val > 0 else [])
+                    colors = [colors_for[c] for c in g_top.index] + (["#BDBDBD"] if other_val > 0 else [])
+                    fig_p = _pie_with_smart_labels(labels, values, colors, height=460)
+                    st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
 
-            with st.expander("📄 Top contribution (table)"):
-                tbl = (pd.DataFrame({"Label": g_top.index, "Value": g_top.values})
-                    .assign(Share=lambda d: d["Value"]/d["Value"].sum()*100 if d["Value"].sum()!=0 else np.nan))
-                st.dataframe(tbl, use_container_width=True, hide_index=True)
+                with st.expander("📄 Top contribution (table)"):
+                    tbl = (pd.DataFrame({"Label": g_top.index, "Value": g_top.values})
+                        .assign(Share=lambda d: d["Value"]/d["Value"].sum()*100 if d["Value"].sum()!=0 else np.nan))
+                    # (SỬA LỖI ĐỊNH DẠNG)
+                    tbl_styled = tbl.copy()
+                    tbl_styled["Value"] = tbl_styled["Value"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    tbl_styled["Share"] = tbl_styled["Share"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+                    st.dataframe(tbl_styled, use_container_width=True, hide_index=True)
 
         # =============== 6) Avg Price vs Revenue =================
-        st.markdown("### 💹 Avg Price vs Revenue")
-        pr_mask = _chart_drilldown_mask("ov_avg", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
-        with st.expander("🎨 Màu & nhãn — Avg Price vs Revenue", expanded=False):
-            c5, c6, c7 = st.columns([1,1,1])
-            color_bar_avg  = c5.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_avg_bar")
-            color_line_avg = c6.color_picker("Màu line (Avg Price)", "#e377c2", key="clr_avg_line")
-            color_text_avg = c7.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_avg_txt")
-            show_all_line_lbl_avg = st.checkbox("Hiện tất cả nhãn line", value=True, key="avg_show_all")
+        with st.expander("💹 5. Avg Price vs Revenue", expanded=False):
+            pr_mask = _chart_drilldown_mask("ov_avg", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+            
+            with st.expander("🎨 Màu & nhãn — Avg Price vs Revenue", expanded=False):
+                c5, c6, c7 = st.columns([1,1,1])
+                color_bar_avg  = c5.color_picker("Màu cột (Revenue)", "#74b9ff", key="clr_avg_bar")
+                color_line_avg = c6.color_picker("Màu line (Avg Price)", "#e377c2", key="clr_avg_line")
+                color_text_avg = c7.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_avg_txt")
+                show_all_line_lbl_avg = st.checkbox("Hiện tất cả nhãn line", value=True, key="avg_show_all")
 
-        if time_col and weight_col and weight_col in df.columns:
-            grpM = tv.loc[pr_mask].dt.to_period("M").dt.start_time
-            rev_bar = pd.DataFrame({"m": grpM, "v": revenue_for_charts.loc[pr_mask]}).groupby("m")["v"].sum()
-            mask_w = wgt.loc[pr_mask] > 0
-            num = pd.DataFrame({"m": grpM, "num": revenue_for_charts.loc[pr_mask].where(mask_w, 0.0)}).groupby("m")["num"].sum()
-            den = pd.DataFrame({"m": grpM, "den": wgt.loc[pr_mask].where(mask_w, 0.0)}).groupby("m")["den"].sum().replace(0, np.nan)
-            avg_price = (num/den).reindex(rev_bar.index)
+            if time_col and weight_vol_col and weight_vol_col in df.columns:
+                grpM = tv.loc[pr_mask].dt.to_period("M").dt.start_time
+                rev_bar = pd.DataFrame({"m": grpM, "v": revenue_for_charts.loc[pr_mask]}).groupby("m")["v"].sum()
+                mask_w = vol_wgt.loc[pr_mask] > 0
+                num = pd.DataFrame({"m": grpM, "num": revenue_for_charts.loc[pr_mask].where(mask_w, 0.0)}).groupby("m")["num"].sum()
+                den = pd.DataFrame({"m": grpM, "den": vol_wgt.loc[pr_mask].where(mask_w, 0.0)}).groupby("m")["den"].sum().replace(0, np.nan)
+                avg_price = (num/den).reindex(rev_bar.index)
 
-            bar_text  = _bar_text(rev_bar.values)
-            if show_all_line_lbl_avg:
-                line_text = [f"{v:,.0f}" if not pd.isna(v) else "" for v in avg_price.values]
+                bar_text  = _bar_text(rev_bar.values)
+                line_text = [f"{v:,.0f}" if not pd.isna(v) else "" for v in avg_price.values] if show_all_line_lbl_avg else _sparse_line_labels(avg_price.values, fmt=lambda v: f"{v:,.0f}")
+
+                y_pad = max(rev_bar.max() * 0.15, 1.0) if not rev_bar.empty else 1.0
+                figp = go.Figure()
+                figp.add_bar(x=rev_bar.index, y=rev_bar.values, name="Revenue",
+                            marker_color=color_bar_avg,
+                            text=bar_text, textposition="outside",
+                            textfont=dict(color=color_text_avg),
+                            cliponaxis=False)
+                figp.add_scatter(x=rev_bar.index, y=avg_price.values, yaxis="y2", mode="lines+markers+text", name="Avg Price",
+                                line=dict(color=color_line_avg),
+                                text=line_text, textposition="top center",
+                                textfont=dict(color=color_text_avg))
+                figp.update_layout(
+                    xaxis_title="Month",
+                    yaxis=dict(title="Revenue", range=[0, float(rev_bar.max()+y_pad)] if not rev_bar.empty else [0,1], title_standoff=8),
+                    yaxis2=dict(title="Avg Price", overlaying="y", side="right", showgrid=False, title_standoff=14),
+                    margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
+                    uniformtext_minsize=10, uniformtext_mode="hide"
+                )
+                st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
+
+                with st.expander("📄 Avg Price vs Revenue — monthly (table)"):
+                    show = pd.DataFrame({
+                        "Month": rev_bar.index, "Revenue": rev_bar.values,
+                        "Avg Price": avg_price.values
+                    })
+                    # (SỬA LỖI ĐỊNH DẠNG)
+                    show_styled = show.copy()
+                    show_styled["Revenue"] = show_styled["Revenue"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    show_styled["Avg Price"] = show_styled["Avg Price"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                    st.dataframe(show_styled, use_container_width=True, hide_index=True)
             else:
-                line_text = _sparse_line_labels(avg_price.values, fmt=lambda v: f"{v:,.0f}")
-
-            y_pad = max(rev_bar.max() * 0.15, 1.0)
-            figp = go.Figure()
-            figp.add_bar(x=rev_bar.index, y=rev_bar.values, name="Revenue",
-                        marker_color=color_bar_avg,
-                        text=bar_text, textposition="outside",
-                        textfont=dict(color=color_text_avg),
-                        cliponaxis=False)
-            figp.add_scatter(x=rev_bar.index, y=avg_price.values, yaxis="y2", mode="lines+markers+text", name="Avg Price",
-                            line=dict(color=color_line_avg),
-                            text=line_text, textposition="top center",
-                            textfont=dict(color=color_text_avg))
-            figp.update_layout(
-                xaxis_title="Month",
-                yaxis=dict(title="Revenue", range=[0, float(rev_bar.max()+y_pad)], title_standoff=8),
-                yaxis2=dict(title="Avg Price", overlaying="y", side="right", showgrid=False, title_standoff=14),
-                margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=430,
-                uniformtext_minsize=10, uniformtext_mode="hide"
-            )
-            st.plotly_chart(figp, use_container_width=True, config={"displayModeBar": False})
-
-            with st.expander("📄 Avg Price vs Revenue — monthly (table)"):
-                show = pd.DataFrame({
-                    "Month": rev_bar.index, "Revenue": rev_bar.values,
-                    "Avg Price": avg_price.values
-                })
-                st.dataframe(show, use_container_width=True, hide_index=True)
-        else:
-            st.info("Cần chọn **Time** và **Weight** để xem Avg Price vs Revenue.")
+                st.info("Cần chọn **Time** và **Weight (Amount)** để xem Avg Price vs Revenue.")
 
         # =============== 7) Distribution — Region × Channel (stacked) ===============
-        st.markdown("### 🗺️ Distribution — Region × Channel (stacked)")
-        ds_mask = _chart_drilldown_mask("ov_dist", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+        with st.expander("🗺️ 6. Distribution — Region × Channel (stacked)", expanded=False):
+            ds_mask = _chart_drilldown_mask("ov_dist", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
 
-        with st.expander("🎨 Màu — Distribution", expanded=False):
-            pal_name2 = st.selectbox("Bảng màu (stacked)", ["Plotly","Bold","Pastel","Set3"], index=0, key="ov_dist_pal")
-        pal2 = {"Plotly": px.colors.qualitative.Plotly,
-                "Bold":   px.colors.qualitative.Bold,
-                "Pastel": px.colors.qualitative.Pastel,
-                "Set3":   px.colors.qualitative.Set3}[pal_name2]
+            with st.expander("🎨 Màu — Distribution", expanded=False):
+                pal_name2 = st.selectbox("Bảng màu (stacked)", ["Plotly","Bold","Pastel","Set3"], index=0, key="ov_dist_pal")
+            pal2 = {"Plotly": px.colors.qualitative.Plotly, "Bold": px.colors.qualitative.Bold, "Pastel": px.colors.qualitative.Pastel, "Set3": px.colors.qualitative.Set3}[pal_name2]
 
-        if region_col and channel_col:
-            ddf = dfv.loc[ds_mask].copy()
-            srev= revenue_for_charts.loc[ds_mask]
+            if region_col and channel_col and region_col in dfv.columns and channel_col in dfv.columns:
+                ddf = dfv.loc[ds_mask].copy()
+                srev= revenue_for_charts.loc[ds_mask]
 
-            topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6, key="ov_dist_topn")
-            ch_sum = (pd.DataFrame({"ch": ddf[channel_col].astype(str), "v": srev})
-                    .groupby("ch")["v"].sum().sort_values(ascending=False))
-            keep = set(ch_sum.head(topn_ch).index)
-            ch = ddf[channel_col].astype(str).where(ddf[channel_col].astype(str).isin(keep), other="Other")
+                topn_ch = st.slider("Top-N Channel (stacked)", 3, 20, 6, key="ov_dist_topn")
+                ch_sum = (pd.DataFrame({"ch": ddf[channel_col].astype(str), "v": srev})
+                        .groupby("ch")["v"].sum().sort_values(ascending=False))
+                keep = set(ch_sum.head(topn_ch).index)
+                ch = ddf[channel_col].astype(str).where(ddf[channel_col].astype(str).isin(keep), other="Other")
 
-            g = (pd.DataFrame({"Region": ddf[region_col].astype(str), "Channel": ch, "v": srev})
-                .groupby(["Region","Channel"])["v"].sum().reset_index())
-            piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
-            color_map = {c: pal2[i % len(pal2)] for i, c in enumerate(piv.columns)}
+                g = (pd.DataFrame({"Region": ddf[region_col].astype(str), "Channel": ch, "v": srev})
+                    .groupby(["Region","Channel"])["v"].sum().reset_index())
+                piv = g.pivot(index="Region", columns="Channel", values="v").fillna(0.0)
+                color_map = {c: pal2[i % len(pal2)] for i, c in enumerate(piv.columns)}
 
-            row_tot = piv.sum(axis=1).replace(0, np.nan)
-            share   = piv.div(row_tot, axis=0) * 100.0
-            piv     = piv.loc[row_tot.sort_values().index]; share = share.loc[piv.index]
+                row_tot = piv.sum(axis=1).replace(0, np.nan)
+                share   = piv.div(row_tot, axis=0) * 100.0
+                piv     = piv.loc[row_tot.sort_values().index]; share = share.loc[piv.index]
 
-            fig = go.Figure(); thr = 8.0
-            for col in piv.columns:
-                vals = piv[col].values
-                pct  = share[col].values
-                text = [f"{v:.1f}%" if pd.notna(v) else "" for v in pct]
-                pos  = ["inside" if (isinstance(p, (int,float)) and p >= thr) else "outside" for p in pct]
-                fig.add_bar(x=piv.index, y=vals, name=str(col),
-                            marker_color=color_map[str(col)], text=text, textposition=pos, cliponaxis=False)
-            fig.update_layout(
-                barmode="stack", xaxis_title="Region", yaxis_title="Revenue",
-                margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=460,
-                uniformtext_minsize=10, uniformtext_mode="hide"
-            )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-            with st.expander("📄 Region × Channel (pivot table)"):
-                st.dataframe(piv, use_container_width=True)
-        else:
-            st.info("Cần chọn **Region** và **Channel**.")
-
-        # ====================== 8) ✨ Biểu đồ tuỳ chỉnh (pivot-like) ======================
-        st.markdown("### ✨ Biểu đồ tuỳ chỉnh (X/Y/Z như pivot)")
-        with st.container(border=True):
-            c0, c1, c2, c3 = st.columns([1.2,1,1,1])
-            x_col = c0.selectbox("X (Datetime/Categorical)", ["—"] + list(df.columns), index=0, key="pv_x")
-            y_col = c1.selectbox("Y (Numeric)", ["—"] + list(df.select_dtypes(include=[np.number]).columns), index=0, key="pv_y")
-            z_mode= c2.selectbox("Z (Line)", ["None","% share of Y","Secondary numeric"], index=0, key="pv_zmode")
-            chart = c3.selectbox("Chart type", ["Bar","Line","Bar + Line"], index=0, key="pv_chart")
-
-            pv_mask = _chart_drilldown_mask("ov_pv", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
-
-            with st.expander("🎨 Màu & nhãn — Custom chart", expanded=False):
-                c7, c8, c9 = st.columns([1,1,1])
-                color_pv_bar  = c7.color_picker("Màu cột (Y)", "#74b9ff", key="clr_pv_bar")
-                color_pv_line = c8.color_picker("Màu line (Z)", "#ff7f0e", key="clr_pv_line")
-                color_pv_txt  = c9.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_pv_txt")
-                show_all_line_lbl_pv = st.checkbox("Hiện tất cả nhãn line", value=True, key="pv_show_all")
-
-            agg = st.radio("Aggregation for Y", ["sum","mean","median","count"], horizontal=True, key="pv_agg")
-
-            if z_mode == "Secondary numeric":
-                z_col = st.selectbox("Z (Numeric for line)", ["—"] + list(df.select_dtypes(include=[np.number]).columns), index=0, key="pv_zcol")
-                z_agg= st.radio("Aggregation for Z", ["sum","mean","median","count"], horizontal=True, key="pv_zagg")
-            else:
-                z_col = None; z_agg = None
-
-            if (not x_col) or x_col=="—" or (not y_col) or y_col=="—":
-                st.info("Chọn X và Y để vẽ biểu đồ tuỳ chỉnh.")
-            else:
-                base = dfv.loc[pv_mask].copy()
-
-                x_series = base[x_col]
-                if pd.api.types.is_datetime64_any_dtype(df[x_col]) or 'date' in str(x_col).lower() or 'time' in str(x_col).lower():
-                    x_series = pd.to_datetime(x_series, errors="coerce").dt.to_period(P2[rule]).dt.start_time
-                    x_title  = f"{x_col} ({period})"
-                else:
-                    x_series = x_series.astype(str); x_title = f"{x_col} (category)"
-
-                y_ser = pd.to_numeric(base[y_col], errors="coerce")
-                agg_map = {"sum":"sum","mean":"mean","median":"median","count":"count"}
-                if agg == "count":
-                    dfY = pd.DataFrame({"x": x_series, "y": 1}).groupby("x")["y"].count()
-                else:
-                    dfY = pd.DataFrame({"x": x_series, "y": y_ser}).groupby("x")["y"].agg(agg_map[agg])
-
-                if z_mode == "Secondary numeric" and z_col and z_col != "—":
-                    z_ser = pd.to_numeric(base[z_col], errors="coerce")
-                    if z_agg == "count":
-                        dfZ = pd.DataFrame({"x": x_series, "z": 1}).groupby("x")["z"].count()
-                    else:
-                        dfZ = pd.DataFrame({"x": x_series, "z": z_ser}).groupby("x")["z"].agg(agg_map[z_agg])
-                    dfZ = dfZ.reindex(dfY.index)
-                elif z_mode == "% share of Y":
-                    total_y = float(dfY.sum()) if dfY.notna().any() else 0.0
-                    dfZ = (dfY/total_y*100.0) if total_y>0 else dfY*0+np.nan
-                else:
-                    dfZ = None
-
-                figc = go.Figure()
-                bar_text = _bar_text(dfY.values)
-                y_pad = max(dfY.max() * 0.15, 1.0)
-                if chart in ("Bar","Bar + Line"):
-                    figc.add_bar(x=dfY.index, y=dfY.values, name=f"Y ({agg})",
-                                marker_color=color_pv_bar,
-                                text=bar_text, textposition="outside",
-                                textfont=dict(color=color_pv_txt),
-                                cliponaxis=False)
-                if chart in ("Line","Bar + Line") and dfZ is not None:
-                    if show_all_line_lbl_pv:
-                        line_text = [f"{v:.1f}%" if z_mode=="% share of Y" else (f"{v:,.0f}" if not pd.isna(v) else "") for v in dfZ.values]
-                    else:
-                        line_text = _sparse_line_labels(dfZ.values, fmt=(lambda v: f"{v:.1f}%") if z_mode=="% share of Y" else (lambda v: f"{v:,.0f}"))
-                    figc.add_scatter(x=dfY.index, y=dfZ.values, yaxis="y2",
-                                    mode="lines+markers+text", name="Z (line)",
-                                    line=dict(color=color_pv_line),
-                                    text=line_text, textposition="top center",
-                                    textfont=dict(color=color_pv_txt))
-                figc.update_layout(
-                    xaxis_title=x_title,
-                    yaxis=dict(title=f"Y = {y_col} [{agg}]", range=[0, float(dfY.max()+y_pad)], title_standoff=8),
-                    yaxis2=dict(title=("Z = % share" if z_mode=="% share of Y" else f"Z = {z_col} [{z_agg}]"),
-                                overlaying="y", side="right", showgrid=False, title_standoff=14) if (chart!="Bar" and dfZ is not None) else None,
+                fig = go.Figure(); thr = 8.0
+                for col in piv.columns:
+                    vals = piv[col].values
+                    pct  = share[col].values
+                    text = [f"{v:.1f}%" if pd.notna(v) else "" for v in pct]
+                    pos  = ["inside" if (isinstance(p, (int,float)) and p >= thr) else "outside" for p in pct]
+                    fig.add_bar(x=piv.index, y=vals, name=str(col),
+                                marker_color=color_map[str(col)], text=text, textposition=pos, cliponaxis=False)
+                fig.update_layout(
+                    barmode="stack", xaxis_title="Region", yaxis_title="Revenue",
                     margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=460,
                     uniformtext_minsize=10, uniformtext_mode="hide"
                 )
-                st.plotly_chart(figc, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-                with st.expander("📄 Custom chart (table)"):
-                    out_tbl = pd.DataFrame({"X": dfY.index, "Y": dfY.values})
-                    if dfZ is not None:
-                        out_tbl["Z"] = dfZ.values
-                    st.dataframe(out_tbl, use_container_width=True, hide_index=True)
+                with st.expander("📄 Region × Channel (pivot table)"):
+                    # (SỬA LỖI ĐỊNH DẠNG)
+                    st.dataframe(piv.style.format("{:,.0f}"), use_container_width=True)
+            else:
+                st.info("Cần chọn **Region** và **Channel**.")
+
+        # ====================== 8) ✨ Biểu đồ tuỳ chỉnh (pivot-like) ======================
+        with st.expander("✨ 7. Biểu đồ tuỳ chỉnh (X/Y/Z như pivot)", expanded=False):
+            with st.container(border=True):
+                c0, c1, c2, c3 = st.columns([1.2,1,1,1])
+                x_col = c0.selectbox("X (Datetime/Categorical)", ["—"] + list(df.columns), index=0, key="pv_x")
+                y_col = c1.selectbox("Y (Numeric)", ["—"] + list(df.select_dtypes(include=[np.number]).columns), index=0, key="pv_y")
+                z_mode= c2.selectbox("Z (Line)", ["None","% share of Y","Secondary numeric"], index=0, key="pv_zmode")
+                chart = c3.selectbox("Chart type", ["Bar","Line","Bar + Line"], index=0, key="pv_chart")
+
+                pv_mask = _chart_drilldown_mask("ov_pv", dfv, tv, rule, region_col, channel_col, prod_col, cust_col, bool(time_col))
+
+                with st.expander("🎨 Màu & nhãn — Custom chart", expanded=False):
+                    c7, c8, c9 = st.columns([1,1,1])
+                    color_pv_bar  = c7.color_picker("Màu cột (Y)", "#74b9ff", key="clr_pv_bar")
+                    color_pv_line = c8.color_picker("Màu line (Z)", "#ff7f0e", key="clr_pv_line")
+                    color_pv_txt  = c9.color_picker("Màu số liệu (labels)", "#cccccc", key="clr_pv_txt")
+                    show_all_line_lbl_pv = st.checkbox("Hiện tất cả nhãn line", value=True, key="pv_show_all")
+
+                agg = st.radio("Aggregation for Y", ["sum","mean","median","count"], horizontal=True, key="pv_agg")
+
+                if z_mode == "Secondary numeric":
+                    z_col = st.selectbox("Z (Numeric for line)", ["—"] + list(df.select_dtypes(include=[np.number]).columns), index=0, key="pv_zcol")
+                    z_agg= st.radio("Aggregation for Z", ["sum","mean","median","count"], horizontal=True, key="pv_zagg")
+                else:
+                    z_col = None; z_agg = None
+
+                if (not x_col) or x_col=="—" or (not y_col) or y_col=="—" or x_col not in df.columns or y_col not in df.columns:
+                    st.info("Chọn X và Y để vẽ biểu đồ tuỳ chỉnh.")
+                else:
+                    base = dfv.loc[pv_mask].copy()
+
+                    x_series = base[x_col]
+                    if pd.api.types.is_datetime64_any_dtype(df[x_col]) or 'date' in str(x_col).lower() or 'time' in str(x_col).lower():
+                        x_series = pd.to_datetime(x_series, errors="coerce").dt.to_period(P2[rule]).dt.start_time
+                        x_title  = f"{x_col} ({period})"
+                    else:
+                        x_series = x_series.astype(str); x_title = f"{x_col} (category)"
+
+                    y_ser = pd.to_numeric(base[y_col], errors="coerce")
+                    agg_map = {"sum":"sum","mean":"mean","median":"median","count":"count"}
+                    if agg == "count":
+                        dfY = pd.DataFrame({"x": x_series, "y": 1}).groupby("x")["y"].count()
+                    else:
+                        dfY = pd.DataFrame({"x": x_series, "y": y_ser}).groupby("x")["y"].agg(agg_map[agg])
+
+                    dfZ = None
+                    if z_mode == "Secondary numeric" and z_col and z_col != "—" and z_col in df.columns:
+                        z_ser = pd.to_numeric(base[z_col], errors="coerce")
+                        if z_agg == "count":
+                            dfZ = pd.DataFrame({"x": x_series, "z": 1}).groupby("x")["z"].count()
+                        else:
+                            dfZ = pd.DataFrame({"x": x_series, "z": z_ser}).groupby("x")["z"].agg(agg_map[z_agg])
+                        dfZ = dfZ.reindex(dfY.index)
+                    elif z_mode == "% share of Y":
+                        total_y = float(dfY.sum()) if dfY.notna().any() else 0.0
+                        dfZ = (dfY/total_y*100.0) if total_y>0 else dfY*0+np.nan
+
+                    figc = go.Figure()
+                    bar_text = _bar_text(dfY.values)
+                    y_pad = max(dfY.max() * 0.15, 1.0) if not dfY.empty else 1.0
+                    
+                    if chart in ("Bar","Bar + Line"):
+                        figc.add_bar(x=dfY.index, y=dfY.values, name=f"Y ({agg})",
+                                    marker_color=color_pv_bar,
+                                    text=bar_text, textposition="outside",
+                                    textfont=dict(color=color_pv_txt),
+                                    cliponaxis=False)
+                    if chart in ("Line","Bar + Line") and dfZ is not None:
+                        line_text = [f"{v:.1f}%" if z_mode=="% share of Y" else (f"{v:,.0f}" if not pd.isna(v) else "") for v in dfZ.values] if show_all_line_lbl_pv else _sparse_line_labels(dfZ.values, fmt=(lambda v: f"{v:.1f}%") if z_mode=="% share of Y" else (lambda v: f"{v:,.0f}"))
+                        figc.add_scatter(x=dfY.index, y=dfZ.values, yaxis="y2",
+                                        mode="lines+markers+text", name="Z (line)",
+                                        line=dict(color=color_pv_line),
+                                        text=line_text, textposition="top center",
+                                        textfont=dict(color=color_pv_txt))
+                    figc.update_layout(
+                        xaxis_title=x_title,
+                        yaxis=dict(title=f"Y = {y_col} [{agg}]", range=[0, float(dfY.max()+y_pad)] if not dfY.empty else [0,1], title_standoff=8),
+                        yaxis2=dict(title=("Z = % share" if z_mode=="% share of Y" else f"Z = {z_col} [{z_agg}]"),
+                                    overlaying="y", side="right", showgrid=False, title_standoff=14) if (chart!="Bar" and dfZ is not None) else None,
+                        margin=dict(l=10,r=90,t=10,b=10), showlegend=True, height=460,
+                        uniformtext_minsize=10, uniformtext_mode="hide"
+                    )
+                    st.plotly_chart(figc, use_container_width=True, config={"displayModeBar": False})
+
+                    with st.expander("📄 Custom chart (table)"):
+                        out_tbl = pd.DataFrame({"X": dfY.index, "Y": dfY.values})
+                        
+                        # (SỬA LỖI ĐỊNH DẠNG)
+                        out_tbl_styled = out_tbl.copy()
+                        out_tbl_styled["Y"] = out_tbl_styled["Y"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                        
+                        if dfZ is not None:
+                            out_tbl_styled["Z"] = out_tbl["Z"]
+                            if z_mode == "% share of Y":
+                                out_tbl_styled["Z"] = out_tbl_styled["Z"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+                            elif z_agg == "count" or (z_col and z_col in df.columns and ("quantity" in z_col.lower() or "weight" in z_col.lower() or "amount" in z_col.lower())):
+                                out_tbl_styled["Z"] = out_tbl_styled["Z"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                            else:
+                                out_tbl_styled["Z"] = out_tbl_styled["Z"].map(lambda x: f"{x:,.2f}" if pd.notna(x) else "—")
+                                
+                        st.dataframe(out_tbl_styled, use_container_width=True, hide_index=True)
 
 # ============================== TAB 2 — PROFILING / DISTRIBUTION ==============================
 with TAB2:
-    SS['_capture_tab'] = 'Distribution' 
     import numpy as np
     import pandas as pd
     import plotly.graph_objects as go
@@ -1457,7 +1544,7 @@ with TAB2:
         _HAS_SCIPY = True
     except Exception:
         _HAS_SCIPY = False
-
+    MAX_POINTS_PROFILE = 500_000
     st.subheader("📊 Profiling / Distribution")
 
     df = st.session_state.get("df")
@@ -1659,6 +1746,16 @@ with TAB2:
     if s.empty:
         st.warning("Dữ liệu rỗng sau khi áp điều kiện. Hãy nới bộ lọc.")
         st.stop()
+    if len(s) > MAX_POINTS_PROFILE:
+        s_sampled_charts = s.sample(MAX_POINTS_PROFILE, random_state=42)
+    else:
+        s_sampled_charts = s
+
+    MAX_STATS_SAMPLE = 500_000
+    if len(s) > MAX_STATS_SAMPLE:
+        s_stats_sample = s.sample(MAX_STATS_SAMPLE, random_state=42)
+    else:
+        s_stats_sample = s
 
     # ---------- Metric tổng hợp (2 cột; giải thích đưa xuống phần Nhận định) ----------
     desc = s.describe(percentiles=[.05, .25, .5, .75, .95]).to_dict()
@@ -1671,16 +1768,16 @@ with TAB2:
     iqr_v = float(s.quantile(.75) - s.quantile(.25))
     cv_v = float(std_v / mean_v * 100) if (mean_v != 0 and np.isfinite(mean_v) and np.isfinite(std_v)) else np.nan
     if _HAS_SCIPY and len(s) > 2:
-        skew_v = float(stats.skew(s))
+        skew_v = float(stats.skew(s_stats_sample))
     else:
         skew_v = float(pd.Series(s).skew()) if len(s) > 2 else np.nan
     if _HAS_SCIPY and len(s) > 3:
-        kurt_v = float(stats.kurtosis(s, fisher=True))  # excess
+        kurt_v = float(stats.kurtosis(s_stats_sample, fisher=True))
     else:
         kurt_v = float(pd.Series(s).kurt()) if len(s) > 3 else np.nan
     if _HAS_SCIPY and len(s) > 7:
         try:
-            p_norm = float(stats.normaltest(s)[1])  # D’Agostino K^2
+            p_norm = float(stats.normaltest(s_stats_sample)[1])  # D’Agostino K^2
         except Exception:
             p_norm = np.nan
     else:
@@ -1800,15 +1897,45 @@ with TAB2:
         ) * 1.05
 
         figH = go.Figure()
-        figH.add_histogram(
-            x=s, nbinsx=bins, name="Frequency",
+        # 1. Bin dữ liệu bằng NumPy (cực nhanh)
+        counts, bin_edges = np.histogram(s, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2 # Lấy điểm giữa của mỗi bin
+
+        # 2. Lấy y_max từ counts (đã bin)
+        y_max = float(counts.max()) if len(counts) > 0 else 0.0
+
+        figH = go.Figure()
+
+        # 3. Dùng go.Bar để vẽ các bin (chỉ gửi 'bins' (50) điểm dữ liệu)
+        figH.add_trace(go.Bar(
+            x=bin_centers,
+            y=counts,
+            name="Frequency",
             marker_color=clr_hist,
-            hovertemplate="%{x:,.4g}: %{y:,}<extra></extra>"
-        )
+            width=(bin_edges[1]-bin_edges[0]) # Độ rộng của bin
+        ))
+
+        # 4. Tính toán Bell curve (như cũ)
+        xs = np.linspace(float(s.min()), float(s.max()), 400)
+        sigma = float(s.std(ddof=1)) if len(s) > 1 else np.nan
+        mu = float(s.mean())
+
+        if np.isfinite(sigma) and sigma > 0:
+            bell = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((xs - mu) / sigma) ** 2)
+            # Sửa 'binw' để khớp với tính toán của NumPy
+            binw = (bin_edges[1]-bin_edges[0]) if len(bin_edges)>1 else 1.0
+            bell_scaled = bell * len(s) * binw
+        else:
+            bell_scaled = np.zeros_like(xs)
+
+        # 5. Thêm bell curve và vlines (như cũ)
         figH.add_scatter(
             x=xs, y=bell_scaled, mode="lines",
             name="Normal bell (scaled)", line=dict(color=clr_bell, width=2)
         )
+
+        # Cập nhật y_max để bao gồm cả bell curve
+        y_max = max(y_max, float(bell_scaled.max() if len(bell_scaled) else 0.0)) * 1.05
 
         marks = {
             "Min": float(s.min()),
@@ -1819,22 +1946,13 @@ with TAB2:
             "Max": float(s.max()),
         }
         _add_vlines_with_legend(figH, marks, y_max, annotate=True)
-
-        figH.update_layout(
-            title=f"Histogram — Frequency vs {x_title}",
-            xaxis_title=x_title, yaxis_title="Count",
-            bargap=0.02, height=430,
-            legend=dict(orientation="v", y=1, x=1.02, yanchor="top", xanchor="left"),
-            margin=dict(l=10, r=160, t=40, b=10),
-        )
         st.plotly_chart(figH, use_container_width=True, config={"displayModeBar": False})
         st.caption("Cột thể hiện tần suất; đường *bell* cho biết mức độ gần chuẩn. Các mốc Min/Q1/Median/Mean/Q3/Max hiển thị rõ trên biểu đồ và ở legend bên phải.")
 
     # ECDF với legend mốc ở bên phải + nhãn trên đồ thị
     with gR:
-        s_sorted = np.sort(s.values)
+        s_sorted = np.sort(s_sampled_charts.values)
         y_ecdf = np.arange(1, len(s_sorted) + 1) / len(s_sorted)
-
         figE = go.Figure()
         figE.add_scatter(
             x=s_sorted, y=y_ecdf,
@@ -1861,7 +1979,7 @@ with TAB2:
     b1, b2 = st.columns(2)
     with b1:
         figB = go.Figure()
-        figB.add_box(y=s, name=x_title, boxpoints="outliers", marker_color=clr_box)
+        figB.add_box(y=s_sampled_charts, name=x_title, boxpoints="outliers", marker_color=clr_box)
         figB.update_layout(
             title="Box Plot", yaxis_title=x_title, height=400,
             margin=dict(l=10, r=10, t=40, b=10)
@@ -1870,7 +1988,7 @@ with TAB2:
         st.caption("Hộp giữa Q1–Q3; đường giữa là Median; điểm vượt *fence* là outlier tiềm năng.")
     with b2:
         figV = go.Figure()
-        figV.add_violin(y=s, name=x_title, line_color=clr_box,
+        figV.add_violin(y=s_sampled_charts, name=x_title, line_color=clr_box,
                         fillcolor="rgba(162,155,254,0.25)", meanline_visible=True)
         figV.update_layout(
             title="Violin Plot", yaxis_title=x_title, height=400,
@@ -1881,7 +1999,6 @@ with TAB2:
 
 # ============================== TAB 3 — CORRELATION (BUSINESS-ORIENTED) ==============================
 with TAB3:
-    SS['_capture_tab'] = 'Correlation' 
     import numpy as np
     import pandas as pd
     import plotly.graph_objects as go
@@ -2169,7 +2286,7 @@ with TAB3:
                 figR = go.Figure()
                 figR.add_scatter(
                     x=g.index, y=r_roll, mode="lines+markers",
-                    name=f"r rolling ({win})", line=dict(color="#2ecc71"),
+                    name=f"Pearson-r rolling ({win})", line=dict(color="#2ecc71"),
                     marker=dict(size=5),
                     hovertemplate="%{x|%Y-%m-%d}<br>r=%{y:.3f}<extra></extra>"
                 )
@@ -2397,7 +2514,6 @@ with TAB3:
 
 # ------------------------------- TAB 3: Benford -------------------------------
 with TAB4:
-    SS['_capture_tab'] = 'Benford Law' 
     for k in ['bf1_res','bf2_res','bf1_col','bf2_col']:
         if k not in SS: SS[k]=None
     st.subheader('🔢 Benford Law — 1D & 2D')
@@ -2634,8 +2750,8 @@ with TAB4:
                     st.info(f"Diff% status: {msg2} • p={p2:.4f}, MAD={MAD2:.4f} ⇒ Benford severity: {sev2}")
 
 # ------------------------------ TAB ? : Statistics Test (ANOVA & Nonparametric, balanced UI) ------------------------------
+# ------------------------------ TAB 5 : Statistics Test (ANOVA & Nonparametric, balanced UI) ------------------------------
 with TAB5:
-    SS['_capture_tab'] = 'Hypothesis' 
     import numpy as np, pandas as pd, re
     import plotly.express as px
     import plotly.graph_objects as go
@@ -2671,7 +2787,6 @@ with TAB5:
         return s.astype(str).where(s.astype(str).isin(keep), "Khác")
 
     def group_summary(y, g):
-        """Return summary per group: n, mean, std, median, se, ci95(≈1.96*se)."""
         d = pd.DataFrame({"y": y, "g": g}).dropna()
         if d.empty: 
             return pd.DataFrame(columns=["group","n","mean","std","median","se","ci95"])
@@ -2679,16 +2794,11 @@ with TAB5:
         agg["se"] = agg["std"] / np.sqrt(agg["n"].clip(lower=1))
         agg["ci95"] = 1.96 * agg["se"]
         out = agg.reset_index().rename(columns={"g":"group"})
-        # fillna to avoid plotly errors
         return out.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     def holm_bonferroni(pvals, labels):
-        """Holm-Bonferroni adjust (two-sided)."""
-        p = np.asarray(pvals, dtype=float)
-        m = len(p)
-        order = np.argsort(p)  # ascending
-        adj = np.empty(m, dtype=float)
-        running_max = 0.0
+        p = np.asarray(pvals, dtype=float); m = len(p); order = np.argsort(p)
+        adj = np.empty(m, dtype=float); running_max = 0.0
         for r, idx in enumerate(order):
             adj_val = (m - r) * p[idx]
             running_max = max(running_max, adj_val)
@@ -2696,24 +2806,17 @@ with TAB5:
         return pd.DataFrame({"pair": labels, "p_raw": p, "p_adj_holm": adj}).sort_values("p_adj_holm")
 
     def one_way_anova_fast(y, g):
-        """One-way ANOVA via group sums. Return F, p, df1, df2, eta2, omega2, leve_p."""
         d = pd.DataFrame({"y": pd.to_numeric(y, errors="coerce"), "g": g}).dropna()
         if d["g"].nunique() < 2 or len(d) < 3:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-        # Levene (center='median' bền vững)
         try:
             levene_p = stats.levene(*[grp["y"].values for _, grp in d.groupby("g")], center="median").pvalue
         except Exception:
             levene_p = np.nan
-
-        grp = d.groupby("g")["y"].agg(n="count", mean="mean")
-        ssq = d.assign(y2=d["y"]**2).groupby("g")["y2"].sum()
-        grand_mean = float(d["y"].mean())
-        ssb = float((grp["n"] * (grp["mean"] - grand_mean) ** 2).sum())
-        ssw = float((ssq - grp["n"] * (grp["mean"] ** 2)).sum())
-        sst = float(((d["y"] - grand_mean) ** 2).sum())
-        k = int(grp.shape[0]); n = int(d.shape[0])
-        df1 = k - 1; df2 = max(n - k, 1)
+        grp = d.groupby("g")["y"].agg(n="count", mean="mean"); ssq = d.assign(y2=d["y"]**2).groupby("g")["y2"].sum()
+        grand_mean = float(d["y"].mean()); ssb = float((grp["n"] * (grp["mean"] - grand_mean) ** 2).sum())
+        ssw = float((ssq - grp["n"] * (grp["mean"] ** 2)).sum()); sst = float(((d["y"] - grand_mean) ** 2).sum())
+        k = int(grp.shape[0]); n = int(d.shape[0]); df1 = k - 1; df2 = max(n - k, 1)
         msb = ssb / max(df1, 1); msw = ssw / max(df2, 1)
         F = (msb / msw) if msw > 0 else np.inf
         p = 1 - stats.f.cdf(F, df1, df2) if np.isfinite(F) else 0.0
@@ -2722,10 +2825,8 @@ with TAB5:
         return float(F), float(p), float(df1), float(df2), float(eta2), float(omega2), float(levene_p)
 
     def kruskal_eps2(H, k, n):
-        """Epsilon-squared for Kruskal–Wallis."""
         return float((H - (k - 1)) / (n - k)) if (n - k) > 0 else np.nan
 
-    # ===== UI helpers (balanced & hints) =====
     def _dtype_name(col):
         if col is None: return "—"
         try:
@@ -2741,73 +2842,40 @@ with TAB5:
         icon = "✅" if ok else "⚠️"
         st.caption(f"{icon} {label}: `{col}` · {actual} (yêu cầu: {expect})")
 
-    def _cheatsheet_note(expanded: bool = False):
-        with st.expander("📝 Xác định nhanh theo mục tiêu & dữ liệu", expanded=expanded):
-            # Thu nhỏ chữ & khoảng cách
-            st.markdown(
-                """
-                <style>
-                  .mini-note p, .mini-note li { margin-bottom: 0.15rem; }
-                  .mini-note h5 { margin: 0.2rem 0 0.4rem 0; font-size: 1rem; }
-                  .mini-note { font-size: 0.92rem; line-height: 1.25; }
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
-    
-            # Tóm tắt 1 dòng theo mục tiêu & dữ liệu
-            st.markdown(
-                """
-                <div class="mini-note">
-                <strong>➤ So sánh trung bình/median (Y numeric)</strong><br>
-                <em>Independent (between):</em> 2 nhóm → <strong>Welch t-test</strong> (mặc định) / <em>Mann–Whitney U</em>; ≥3 nhóm → <strong>One-way ANOVA</strong> (var≈) / <strong>Welch ANOVA</strong> (var≠) / <em>Kruskal–Wallis</em>; 2 yếu tố → <strong>Two-way ANOVA</strong> (kiểm <em>interaction</em>); có biến kiểm soát → <strong>ANCOVA</strong>.<br>
-                <em>Repeated (within):</em> 2 điều kiện → <strong>Paired t-test</strong> / <em>Wilcoxon</em>; ≥3 điều kiện → <strong>RM-ANOVA</strong> / <em>Friedman</em>.<br>
-                <em>Big data:</em> dùng <strong>Max rows (fit)</strong>, <strong>Top-N groups</strong>, <strong>Fast charts</strong> (heatmap/violin), <strong>sample overlay</strong>.
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-    
-            # Hai cột: ANOVA vs Non-Parametric
-            c1, c2 = st.columns(2, gap="small")
-            with c1:
-                st.markdown('<div class="mini-note"><h5>ANOVA (Parametric)</h5>', unsafe_allow_html=True)
-                st.markdown(
-                    """
-                    <div class="mini-note">
-                    <em>Independent (between):</em><br>
-                    • <strong>One-way ANOVA</strong>: Y numeric + factor categorical (≥2), giả định gần chuẩn & phương sai gần bằng. Var≠ → <strong>Welch ANOVA</strong>.<br>
-                    • <strong>Two-way ANOVA</strong>: Factor A, B; đọc <em>interaction</em> A×B trước khi kết luận main effects.<br>
-                    • <em>Post-hoc</em>: <strong>Tukey HSD</strong> (var≈) / <strong>Games-Howell</strong> (var≠).<br><br>
-                    <em>Repeated (within):</em><br>
-                    • <strong>RM-ANOVA</strong>: kiểm <em>sphericity</em>; vi phạm → hiệu chỉnh <strong>Greenhouse–Geisser</strong>. <em>Post-hoc</em> Bonferroni.<br>
-                    • 2 điều kiện lặp → <strong>Paired t-test</strong>.
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                st.markdown('</div>', unsafe_allow_html=True)
-    
-            with c2:
-                st.markdown('<div class="mini-note"><h5>Non-Parametric</h5>', unsafe_allow_html=True)
-                st.markdown(
-                    """
-                    <div class="mini-note">
-                    <em>Independent (between):</em><br>
-                    • 2 nhóm → <strong>Mann–Whitney U</strong> (effect size <em>r≈|Z|/√N</em>).<br>
-                    • ≥3 nhóm → <strong>Kruskal–Wallis</strong> (effect size <em>ε²</em>); <em>Post-hoc</em> <strong>Dunn + Holm</strong>.<br><br>
-                    <em>Repeated (within):</em><br>
-                    • 2 điều kiện → <strong>Wilcoxon signed-rank</strong> (effect size <em>r</em>).<br>
-                    • ≥3 điều kiện → <strong>Friedman</strong> (effect size <em>Kendall’s W</em>); <em>Post-hoc</em> cặp-đôi Wilcoxon + Holm.
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                st.markdown('</div>', unsafe_allow_html=True)
+    # ===== (THAY ĐỔI) Đặt Hướng dẫn Popover gọn gàng BÊN TRÊN Tabs =====
+    st.markdown(
+        """
+        <style>
+            /* Thu nhỏ popover trigger button */
+            button[data-testid="stPopoverTrigger"] {
+                padding: 0px 6px;
+                font-size: 0.9rem;
+                margin-left: 8px;
+            }
+        </style>
+        """, unsafe_allow_html=True
+    )
 
-    # ===== Tabs =====
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        with st.popover("ⓘ ANOVA (Parametric)?"):
+            st.markdown("**Khi nào dùng:** Dữ liệu Y (numeric) của bạn *gần* tuân theo phân phối chuẩn.")
+            st.markdown("**Kiểm tra (ở TAB 2):**")
+            st.markdown("* `Skewness` (độ lệch): Lý tưởng là `gần 0` (ví dụ: trong khoảng -1 đến 1).")
+            st.markdown("* `Kurtosis` (độ nhọn): Lý tưởng là `gần 0` (ví dụ: trong khoảng -2 đến 2).")
+            st.markdown("* `Normality p-value`: > 0.05.")
+            st.markdown("---")
+            st.markdown("⚠️ *Nếu vi phạm nặng (p < 0.05, skew/kurtosis lớn), hãy ưu tiên **Nonparametric**.*")
+    with col_t2:
+        with st.popover("ⓘ Nonparametric?"):
+             st.markdown("**Khi nào dùng:**")
+             st.markdown("* Dữ liệu Y *lệch nhiều* hoặc *không chuẩn* (vi phạm giả định Parametric).")
+             st.markdown("* Dữ liệu có *nhiều outliers* (bị kéo đuôi).")
+             st.markdown("* Bạn muốn so sánh *trung vị (median)* thay vì *trung bình (mean)*.")
+
     tab_a, tab_np = st.tabs(["ANOVA (Parametric)", "Nonparametric"])
-# ====================== ANOVA (Parametric) — Unified UI like Nonparametric ======================
+
+# ====================== ANOVA (Parametric) — (UI Tinh giản) ======================
     with tab_a:
         mode_a = st.radio("Testing", ["Independent (between)", "Repeated (within)"], horizontal=True, key="anova_mode")
     
@@ -2816,47 +2884,53 @@ with TAB5:
             if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
                 st.info("Cần tối thiểu 1 cột numeric (Y) và 1 cột categorical (factor).")
             else:
-                # Header balanced: Left (design), Right (note)
                 box_top = st.container(border=True)
                 with box_top:
-                    L, R = st.columns(2)
-                    with L:
-                        st.markdown("### ANOVA — Independent (between)")
-                        y_col  = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="av_y")
-                        a_col  = st.selectbox("🏷️ Factor A (categorical)", CAT_COLS, key="av_a")
-                        use_two = st.toggle("➕ Two-way ANOVA (thêm Factor B)", value=False, key="av_two")
-                        b_col = None
-                        if use_two:
-                            b_choices = [c for c in CAT_COLS if c != a_col]
+                    st.markdown("### ANOVA — Independent (between)")
+                    with st.popover("ⓘ Hướng dẫn"):
+                        st.markdown(
+                            "**Independent (between):**\n\n"
+                            "So sánh các nhóm *khác biệt, độc lập* với nhau.\n\n"
+                            "*Ví dụ: So sánh doanh số giữa Region A, Region B, và Region C.*"
+                        )
+                    
+                    y_col  = st.selectbox("🎯 Dependent (numeric)", NUM_COLS, key="av_y")
+                    a_col  = st.selectbox("🏷️ Factor A (categorical)", CAT_COLS, key="av_a")
+                    
+                    use_two = st.toggle("➕ Two-way ANOVA (Thêm Factor B)", value=False, key="av_two")
+                    b_col = None
+                    if use_two:
+                        # *** (THAY ĐỔI) Lọc thông minh: B không thể là A ***
+                        b_choices = [c for c in CAT_COLS if c != a_col]
+                        if not b_choices:
+                            st.warning("Không đủ cột categorical khác để làm Factor B.")
+                            use_two = False
+                        else:
                             b_col = st.selectbox("🏷️ Factor B (categorical)", b_choices, key="av_b")
-                        # type hints
-                        _type_hint("Dependent", y_col, "numeric")
-                        _type_hint("Factor A", a_col, "categorical")
-                        if use_two and b_col:
-                            _type_hint("Factor B", b_col, "categorical")
-                    with R:
-                        _cheatsheet_note()
+                    
+                    _type_hint("Dependent", y_col, "numeric")
+                    _type_hint("Factor A", a_col, "categorical")
+                    if use_two and b_col:
+                        _type_hint("Factor B", b_col, "categorical")
     
-                # Controls balanced
+                # Controls (UI Tinh giản - Ẩn Cài đặt Nâng cao)
                 box_ctl = st.container(border=True)
                 with box_ctl:
-                    L, R = st.columns(2)
-                    with L:
-                        topN_A = int(st.number_input("Top N nhóm (Factor A)", 2, 50, 10, step=1, key="av_topn_a"))
-                        if use_two:
-                            topN_B = int(st.number_input("Top N nhóm (Factor B)", 2, 50, 8, step=1, key="av_topn_b"))
-                        show_ci  = st.checkbox("Hiện 95% CI", value=True, key="av_ci")
-                        posthoc  = (not use_two) and st.checkbox("Pairwise (Holm adjust)", value=True, key="av_posthoc")
-                    with R:
-                        max_fit  = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="av_max"))
-                        fast     = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="av_fast")
-                        chart_sample = st.number_input("Chart sample overlay", 0, 200_000, 10_000, step=1_000, key="av_samp")
-                        run = st.button("▶️ Run ANOVA", use_container_width=True, key="av_run")
+                    st.checkbox("Hiện 95% CI (Biểu đồ)", value=True, key="av_ci")
+                    if not use_two:
+                        st.checkbox("Pairwise Post-hoc (So sánh cặp)", value=True, key="av_posthoc")
+                    
+                    # *** (THAY ĐỔI) Cài đặt nâng cao được ẩn đi (mặc định) ***
+                    topN_A = 10
+                    topN_B = 8
+                    max_fit = 300_000
+                    
+                    run = st.button("▶️ Run", use_container_width=True, key="av_run")
     
                 # Compute & report
                 if run:
                     if not use_two:
-                        # ----- One-way ANOVA (giữ công thức nhanh) -----
+                        # ----- One-way (TỰ ĐỘNG CHỌN T-TEST / ANOVA) -----
                         sub = DF[[y_col, a_col]].copy()
                         if len(sub) > max_fit:
                             sub = sub.sample(n=max_fit, random_state=42)
@@ -2870,54 +2944,95 @@ with TAB5:
                         summ = group_summary(y, g).sort_values("mean", ascending=False)
                         st.dataframe(summ, use_container_width=True, hide_index=True)
                         if summ.shape[0] < 2 or len(y) < 3:
-                            st.warning("Không đủ nhóm/hàng để chạy ANOVA.")
+                            st.warning("Không đủ nhóm/hàng để chạy.")
                             st.stop()
-    
-                        F, p, df1, df2, eta2, omega2, lev_p = one_way_anova_fast(y, g)
-    
-                        # metric cards
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("F", f"{F:.3f}")
-                        m2.metric("p-value", f"{p:.4g}")
-                        m3.metric("η²", f"{eta2:.3f}" if not np.isnan(eta2) else "—")
-                        m4.metric("ω²", f"{omega2:.3f}" if not np.isnan(omega2) else "—")
-                        st.caption(f"Levene (phương sai bằng nhau) p = {lev_p:.4g}")
-    
-                        # chart
-                        if fast or not show_ci:
-                            fig = px.bar(summ, x="group", y="mean", labels={"group": a_col, "mean": f"Mean {y_col}"})
+                        
+                        k = summ.shape[0] # Số lượng nhóm
+
+                        if k == 2:
+                            # ----- (THAY ĐỔI) CHẠY WELCH T-TEST CHO 2 NHÓM -----
+                            st.markdown("#### Kết quả Welch's T-test (cho 2 nhóm)")
+                            groups = [y[g == lv].values for lv in summ["group"]]
+                            tt = stats.ttest_ind(groups[0], groups[1], equal_var=False) # equal_var=False là Welch
+                            
+                            m1, m2, m3 = st.columns(3)
+                            m1.metric("t-statistic", f"{tt.statistic:.4f}")
+                            m2.metric("p-value", f"{tt.pvalue:.4g}")
+                            m3.metric("Groups", f"{summ['group'].iloc[0]} vs {summ['group'].iloc[1]}")
+                            
+                            # *** (THAY ĐỔI) Dùng Violin Plot cho 2 nhóm ***
+                            st.markdown("#### Biểu đồ phân phối (Violin)")
+                            fig = px.violin(
+                                pd.DataFrame({"group": g, "y": y}), 
+                                x="group", y="y", 
+                                box=True, points=False, 
+                                labels={"group": a_col, "y": y_col}
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            if tt.pvalue < 0.05:
+                                st.success(f"**Kết luận:** Có sự khác biệt có ý nghĩa thống kê giữa 2 nhóm (p < 0.05).")
+                            else:
+                                st.info(f"**Kết luận:** Chưa đủ bằng chứng về sự khác biệt giữa 2 nhóm (p >= 0.05).")
+
                         else:
-                            fig = go.Figure(go.Bar(x=summ["group"], y=summ["mean"],
-                                                   error_y=dict(type="data", array=summ["ci95"], visible=True)))
-                            fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
-                        st.plotly_chart(fig, use_container_width=True)
-    
-                        # post-hoc (Welch t-test + Holm)
-                        if posthoc and summ.shape[0] >= 2:
-                            groups = summ["group"].tolist()
-                            pvals, labs = [], []
-                            for i in range(len(groups)):
-                                gi = groups[i]; xi = y[g == gi].values
-                                for j in range(i+1, len(groups)):
-                                    gj = groups[j]; xj = y[g == gj].values
-                                    if len(xi) >= 2 and len(xj) >= 2:
-                                        tt = stats.ttest_ind(xi, xj, equal_var=False)
-                                        pvals.append(float(tt.pvalue)); labs.append(f"{gi} vs {gj}")
-                            if pvals:
-                                adj = holm_bonferroni(np.array(pvals), np.array(labs))
-                                diffs = []
-                                for pair in adj["pair"]:
-                                    gi, gj = str(pair).split(" vs ")
-                                    mi = summ.loc[summ["group"] == gi, "mean"].values[0]
-                                    mj = summ.loc[summ["group"] == gj, "mean"].values[0]
-                                    diffs.append(mi - mj)
-                                adj["mean_diff"] = diffs
-                                st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
-                                st.caption("Pairwise Welch t-test (Holm-adjusted).")
-    
-                        strength = ("yếu" if (np.isnan(eta2) or eta2 < 0.06) else ("vừa" if eta2 < 0.14 else "mạnh"))
-                        best = str(summ.iloc[0]["group"]) if len(summ) else "—"
-                        st.success(f"**Kết luận:** Khác biệt giữa các nhóm {strength} (η²={eta2:.2f}). Nhóm cao nhất: **{best}**.")
+                            # ----- CHẠY ANOVA (như cũ, cho 3+ nhóm) -----
+                            st.markdown(f"#### Kết quả One-Way ANOVA (cho {k} nhóm)")
+                            F, p, df1, df2, eta2, omega2, lev_p = one_way_anova_fast(y, g)
+        
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("F", f"{F:.3f}")
+                            m2.metric("p-value", f"{p:.4g}")
+                            m3.metric("η²", f"{eta2:.3f}" if not np.isnan(eta2) else "—")
+                            m4.metric("ω²", f"{omega2:.3f}" if not np.isnan(omega2) else "—")
+                            st.caption(f"Levene (phương sai bằng nhau) p = {lev_p:.4g}")
+
+                            # *** CẢNH BÁO LEVENE (ĐÃ THÊM) ***
+                            if lev_p < 0.05:
+                                st.warning(
+                                    "⚠️ Levene's p < 0.05: Giả định về phương sai bằng nhau đã bị vi phạm. "
+                                    "Kết quả F-test của ANOVA có thể không đáng tin cậy. "
+                                    "**Gợi ý:** Hãy ưu tiên kết quả Post-hoc 'Welch t-test' (vì nó robust) "
+                                    "hoặc sử dụng tab 'Nonparametric' (Kruskal-Wallis)."
+                                )
+        
+                            # chart
+                            if not SS.get("av_ci"): # Bỏ check 'fast'
+                                fig = px.bar(summ, x="group", y="mean", labels={"group": a_col, "mean": f"Mean {y_col}"})
+                            else:
+                                fig = go.Figure(go.Bar(x=summ["group"], y=summ["mean"],
+                                                       error_y=dict(type="data", array=summ["ci95"], visible=True)))
+                                fig.update_layout(yaxis_title=f"{y_col} (mean ± 95% CI)")
+                            st.plotly_chart(fig, use_container_width=True)
+        
+                            # post-hoc (Welch t-test + Holm)
+                            if SS.get("av_posthoc") and summ.shape[0] >= 2:
+                                groups_dict = {lv: y[g == lv].values for lv in summ["group"]}
+                                pvals, labs = [], []
+                                group_names = summ["group"].tolist()
+                                for i in range(len(group_names)):
+                                    gi = group_names[i]; xi = groups_dict[gi]
+                                    for j in range(i+1, len(group_names)):
+                                        gj = group_names[j]; xj = groups_dict[gj]
+                                        if len(xi) >= 2 and len(xj) >= 2:
+                                            tt = stats.ttest_ind(xi, xj, equal_var=False)
+                                            pvals.append(float(tt.pvalue)); labs.append(f"{gi} vs {gj}")
+                                if pvals:
+                                    adj = holm_bonferroni(np.array(pvals), np.array(labs))
+                                    diffs = []
+                                    for pair in adj["pair"]:
+                                        gi, gj = str(pair).split(" vs ")
+                                        mi = summ.loc[summ["group"] == gi, "mean"].values[0]
+                                        mj = summ.loc[summ["group"] == gj, "mean"].values[0]
+                                        diffs.append(mi - mj)
+                                    adj["mean_diff"] = diffs
+                                    st.dataframe(adj.head(50), use_container_width=True, hide_index=True)
+                                    st.caption("Pairwise Welch t-test (Holm-adjusted).")
+        
+                            # *** (GIỮ NGUYÊN) Kết luận Mạnh/Yếu/Vừa ***
+                            strength = ("yếu" if (np.isnan(eta2) or eta2 < 0.06) else ("vừa" if eta2 < 0.14 else "mạnh"))
+                            best = str(summ.iloc[0]["group"]) if len(summ) else "—"
+                            st.success(f"**Kết luận:** Khác biệt giữa các nhóm **{strength}** (η²={eta2:.2f}). Nhóm cao nhất: **{best}**.")
     
                     else:
                         # ----- Two-way ANOVA (OLS + anova_lm) -----
@@ -2934,7 +3049,6 @@ with TAB5:
                         sub[a_col] = topn_cat(sub[a_col], n=topN_A)
                         sub[b_col] = topn_cat(sub[b_col], n=topN_B)
     
-                        # rename for formula
                         d = sub.rename(columns={y_col: "Y", a_col: "A", b_col: "B"})
                         d["Y"] = pd.to_numeric(d["Y"], errors="coerce")
                         d = d.dropna(subset=["Y"])
@@ -2943,10 +3057,9 @@ with TAB5:
                             st.stop()
     
                         model = smf.ols("Y ~ C(A) + C(B) + C(A):C(B)", data=d).fit()
-                        an_tbl = sm.stats.anova_lm(model, typ=2)  # sum_sq, df, F, PR(>F)
+                        an_tbl = sm.stats.anova_lm(model, typ=2)
                         st.dataframe(an_tbl, use_container_width=True)
     
-                        # partial η² cho từng hiệu ứng
                         if "Residual" in an_tbl.index and "sum_sq" in an_tbl.columns:
                             ss_res = float(an_tbl.loc["Residual", "sum_sq"])
                             def peta(row): 
@@ -2957,7 +3070,6 @@ with TAB5:
                         else:
                             pe = {}
     
-                        # cards: A, B, A×B
                         def card_val(name, col):
                             if name in an_tbl.index:
                                 Fv = an_tbl.loc[name, "F"]; pv = an_tbl.loc[name, "PR(>F)"]
@@ -2970,13 +3082,11 @@ with TAB5:
                         c1, c2, c3 = st.columns(3)
                         card_val("C(A)", c1); card_val("C(B)", c2); card_val("C(A):C(B)", c3)
     
-                        # summary means (bar grouped)
                         grp = d.groupby(["A","B"])["Y"].agg(n="count", mean="mean").reset_index()
                         fig = px.bar(grp, x="A", y="mean", color="B", barmode="group",
                                      labels={"A": a_col, "B": b_col, "mean": f"Mean {y_col}"})
                         st.plotly_chart(fig, use_container_width=True)
     
-                        # kết luận
                         pA = float(an_tbl.loc["C(A)", "PR(>F)"]) if "C(A)" in an_tbl.index else np.nan
                         pB = float(an_tbl.loc["C(B)", "PR(>F)"]) if "C(B)" in an_tbl.index else np.nan
                         pI = float(an_tbl.loc["C(A):C(B)", "PR(>F)"]) if "C(A):C(B)" in an_tbl.index else np.nan
@@ -2997,32 +3107,38 @@ with TAB5:
             if len(NUM_COLS) == 0 or len(cand_id) == 0 or len(cand_factor) == 0:
                 st.info("Cần: 1 numeric (Y), 1 ID (subject), 1 categorical (condition).")
             else:
-                # Header balanced
                 box_top_r = st.container(border=True)
                 with box_top_r:
-                    L, R = st.columns(2)
-                    with L:
-                        st.markdown("### ANOVA — Repeated (within)")
-                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="av_rep_y")
-                        id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="av_rep_id")
-                        cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="av_rep_cond")
-                        _type_hint("Y", y_col, "numeric")
-                        _type_hint("ID", id_col, "categorical")
-                        _type_hint("Condition", cond_col, "categorical")
-                    with R:
-                        _cheatsheet_note()
+                    st.markdown("### ANOVA — Repeated (within)")
+                    with st.popover("ⓘ Hướng dẫn"):
+                        st.markdown(
+                            "**Repeated (within):**\n\n"
+                            "So sánh *cùng một đối tượng* qua nhiều điều kiện hoặc thời gian.\n\n"
+                            "*Ví dụ: So sánh doanh số của từng Cửa hàng vào Tháng 1, Tháng 2, và Tháng 3.*"
+                        )
+                    y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="av_rep_y")
+                    id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="av_rep_id")
+                    
+                    # *** (THAY ĐỔI) Lọc thông minh: Condition không thể là ID ***
+                    cond_choices = [c for c in cand_factor if c != id_col]
+                    if not cond_choices:
+                        st.warning("Không đủ cột categorical khác để làm Condition.")
+                        st.stop()
+                    else:
+                        cond_col = st.selectbox("🏷️ Condition (within)", cond_choices, key="av_rep_cond")
+
+                    _type_hint("Y", y_col, "numeric")
+                    _type_hint("ID", id_col, "categorical")
+                    _type_hint("Condition", cond_col, "categorical")
     
                 box_ctl_r = st.container(border=True)
                 with box_ctl_r:
-                    L, R = st.columns(2)
-                    with L:
-                        max_subj_fit = int(st.number_input("Max subjects (fit)", 50, 50_000, 5_000, step=50, key="av_rep_max"))
-                    with R:
-                        plot_subj = int(st.number_input("Spaghetti sample", 0, 1000, 80, step=20, key="av_rep_sp"))
-                        run = st.button("▶️ Run", use_container_width=True, key="av_rep_run")
+                    # *** (THAY ĐỔI) Ẩn cài đặt nâng cao ***
+                    max_subj_fit = 5_000
+                    plot_subj = 80
+                    run = st.button("▶️ Run", use_container_width=True, key="av_rep_run")
     
                 if run:
-                    # Prefer RM-ANOVA via statsmodels; nếu không có, hướng dẫn dùng Friedman (đã có ở tab Nonparametric)
                     try:
                         from statsmodels.stats.anova import AnovaRM
                     except Exception:
@@ -3033,7 +3149,6 @@ with TAB5:
                     cnt = d0.groupby([id_col, cond_col]).size().unstack(cond_col).dropna()
                     keep_ids = cnt.index
                     d = d0[d0[id_col].isin(keep_ids)]
-                    # limit subjects
                     uniq_ids = d[id_col].unique()
                     if len(uniq_ids) > max_subj_fit:
                         keep = pd.Index(uniq_ids).sample(max_subj_fit, random_state=42)
@@ -3045,7 +3160,8 @@ with TAB5:
     
                     model = AnovaRM(d, depvar=y_col, subject=id_col, within=[cond_col])
                     res = model.fit()
-                    st.text(res.summary())
+                    # *** (THAY ĐỔI) Hiển thị DataFrame sạch sẽ ***
+                    st.dataframe(res.anova_summary, use_container_width=True)
     
                     # Means + spaghetti
                     pivot = d.pivot_table(index=id_col, columns=cond_col, values=y_col, aggfunc="mean")
@@ -3053,17 +3169,17 @@ with TAB5:
                     means = pivot.mean().reset_index()
                     means.columns = ["cond","mean"]
                     fig = px.line(means, x="cond", y="mean", markers=True)
-                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # *** (THAY ĐỔI) Bỏ biểu đồ lặp, chỉ vẽ 1 lần ***
                     if plot_subj > 0 and pivot.shape[0] > 0:
                         samp = pivot.sample(min(plot_subj, pivot.shape[0]), random_state=42)
                         for _, row in samp.iterrows():
                             fig.add_trace(go.Scatter(x=levels, y=row.values, mode="lines", opacity=0.25, showlegend=False))
-                        st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True)
     
-                    # Quick read
                     st.success("**Kết luận:** xem p-value của within-factor trong bảng; p<0.05 ⇒ có khác biệt giữa các điều kiện.")
 
-    # ====================== NONPARAMETRIC ======================
+    # ====================== NONPARAMETRIC (UI Tinh giản) ======================
     with tab_np:
         mode = st.radio("Testing", ["Independent (between)", "Repeated (within)"], horizontal=True, key="np_mode")
 
@@ -3072,28 +3188,28 @@ with TAB5:
             if len(NUM_COLS) == 0 or len(CAT_COLS) == 0:
                 st.info("Cần 1 numeric (Y) và 1 categorical (group).")
             else:
-                # Balanced header
                 box_top_np = st.container(border=True)
                 with box_top_np:
-                    L, R = st.columns(2)
-                    with L:
-                        st.markdown("### Nonparametric — Independent")
-                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="np_y")
-                        g_col = st.selectbox("🏷️ Group (categorical)", CAT_COLS, key="np_g")
-                        _type_hint("Y", y_col, "numeric")
-                        _type_hint("Group", g_col, "categorical")
-                    with R:
-                        _cheatsheet_note()
+                    st.markdown("### Nonparametric — Independent")
+                    with st.popover("ⓘ Hướng dẫn"):
+                        st.markdown(
+                            "**Independent (between):**\n\n"
+                            "So sánh các nhóm *khác biệt, độc lập* với nhau (dùng Median).\n\n"
+                            "*Ví dụ: So sánh doanh số giữa Region A, B, C khi dữ liệu bị lệch (skewed).* \n\n"
+                            "• 2 nhóm: **Mann–Whitney U**.\n\n"
+                            "• 3+ nhóm: **Kruskal–Wallis**."
+                        )
+                    y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="np_y")
+                    g_col = st.selectbox("🏷️ Group (categorical)", CAT_COLS, key="np_g")
+                    _type_hint("Y", y_col, "numeric")
+                    _type_hint("Group", g_col, "categorical")
 
                 box_ctl_np = st.container(border=True)
                 with box_ctl_np:
-                    L, R = st.columns(2)
-                    with L:
-                        topN = int(st.number_input("Top N groups", 2, 50, 10, step=1, key="np_topn"))
-                        fast = st.toggle("⚡ Fast", value=(len(DF) >= 300_000), key="np_fast")
-                    with R:
-                        max_fit = int(st.number_input("Max rows (fit)", 5_000, 2_000_000, 300_000, step=5_000, key="np_max"))
-                        run = st.button("▶️ Run", use_container_width=True, key="np_run")
+                    # *** (THAY ĐỔI) Ẩn cài đặt nâng cao ***
+                    topN = 10
+                    max_fit = 300_000
+                    run = st.button("▶️ Run", use_container_width=True, key="np_run")
 
                 if run:
                     sub = DF[[y_col, g_col]].copy()
@@ -3116,10 +3232,9 @@ with TAB5:
                         # Mann–Whitney U
                         ures = stats.mannwhitneyu(groups[0], groups[1], alternative="two-sided")
                         p = float(ures.pvalue); U = float(ures.statistic)
-                        # z from p (two-sided)
                         z = float(stats.norm.isf(p / 2.0)) if p > 0 else np.inf
                         r_eff = z / np.sqrt(n) if n > 0 and np.isfinite(z) else np.nan
-                        st.markdown(f"**Mann–Whitney U**: U = {U:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f}")
+                        st.markdown(f"**Mann–Whitney U**: U = {U:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f} (effect size)")
 
                         fig = px.violin(pd.DataFrame({g_col: g, y_col: y}), x=g_col, y=y_col,
                                         box=True, points=False)
@@ -3128,13 +3243,15 @@ with TAB5:
                         hi = str(summ.iloc[0]['group']) if len(summ) else "—"
                         level = ("mạnh" if (not np.isnan(r_eff) and r_eff >= 0.5)
                                  else "vừa" if (not np.isnan(r_eff) and r_eff >= 0.3) else "yếu")
-                        st.success(f"**Kết luận:** Khác biệt {level} (r≈{r_eff:.2f}). Nhóm median cao nhất: **{hi}**.")
-                    else:
+                        st.success(f"**Kết luận:** Khác biệt **{level}** (r≈{r_eff:.2f}). Nhóm median cao nhất: **{hi}**.")
+                    
+                    elif k > 2:
                         # Kruskal–Wallis
                         H, p = stats.kruskal(*groups)
                         eps2 = kruskal_eps2(H, k, n)
-                        st.markdown(f"**Kruskal–Wallis**: H = {H:.3f}, p = {p:.4g}, ε² = {eps2:.3f}")
+                        st.markdown(f"**Kruskal–Wallis**: H = {H:.3f}, p = {p:.4g}, ε² = {eps2:.3f} (effect size)")
 
+                        # (Biểu đồ bar cho 3+ nhóm là phù hợp)
                         fig = go.Figure(go.Bar(x=summ["group"], y=summ["median"],
                                                error_y=dict(array=summ["ci95"], visible=True)))
                         fig.update_layout(yaxis_title=f"{y_col} (median ± 95% CI≈)")
@@ -3155,7 +3272,9 @@ with TAB5:
                         strength = ("yếu" if (np.isnan(eps2) or eps2 < 0.06)
                                     else ("vừa" if eps2 < 0.14 else "mạnh"))
                         hi = str(summ.iloc[0]["group"]) if len(summ) else "—"
-                        st.success(f"**Kết luận:** Khác biệt {strength} (ε²={eps2:.2f}). Nhóm median cao nhất: **{hi}**.")
+                        st.success(f"**Kết luận:** Khác biệt **{strength}** (ε²={eps2:.2f}). Nhóm median cao nhất: **{hi}**.")
+                    else:
+                        st.warning("Cần ít nhất 2 nhóm để so sánh.")
 
         # ---------- Repeated (within) ----------
         else:
@@ -3166,30 +3285,39 @@ with TAB5:
             else:
                 box_top_r = st.container(border=True)
                 with box_top_r:
-                    L, R = st.columns(2)
-                    with L:
-                        st.markdown("### Nonparametric — Repeated (within)")
-                        y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="rep_y")
-                        id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="rep_id")
-                        cond_col = st.selectbox("🏷️ Condition (within)", cand_factor, key="rep_cond")
-                        _type_hint("Y", y_col, "numeric")
-                        _type_hint("ID", id_col, "categorical")
-                        _type_hint("Condition", cond_col, "categorical")
-                    with R:
-                        _cheatsheet_note()
+                    st.markdown("### Nonparametric — Repeated (within)")
+                    with st.popover("ⓘ Hướng dẫn"):
+                        st.markdown(
+                            "**Repeated (within):**\n\n"
+                            "So sánh *cùng một đối tượng* qua nhiều điều kiện (dùng Median).\n\n"
+                            "*Ví dụ: So sánh doanh số (bị lệch) của từng Cửa hàng vào Tháng 1, 2, 3.*\n\n"
+                            "• 2 điều kiện: **Wilcoxon**.\n\n"
+                            "• 3+ điều kiện: **Friedman**."
+                        )
+                    y_col = st.selectbox("🎯 Y (numeric)", NUM_COLS, key="rep_y")
+                    id_col = st.selectbox("🧑‍🤝‍🧑 ID (subject)", cand_id, key="rep_id")
+                    
+                    # *** (THAY ĐỔI) Lọc thông minh: Condition không thể là ID ***
+                    cond_choices = [c for c in cand_factor if c != id_col]
+                    if not cond_choices:
+                        st.warning("Không đủ cột categorical khác để làm Condition.")
+                        st.stop()
+                    else:
+                        cond_col = st.selectbox("🏷️ Condition (within)", cond_choices, key="rep_cond")
+
+                    _type_hint("Y", y_col, "numeric")
+                    _type_hint("ID", id_col, "categorical")
+                    _type_hint("Condition", cond_col, "categorical")
 
                 box_ctl_r = st.container(border=True)
                 with box_ctl_r:
-                    L, R = st.columns(2)
-                    with L:
-                        max_subj_fit = int(st.number_input("Max subjects (fit)", 50, 50_000, 5_000, step=50, key="rep_max"))
-                    with R:
-                        plot_subj = int(st.number_input("Spaghetti sample", 0, 1000, 80, step=20, key="rep_sp"))
-                        run = st.button("▶️ Run", use_container_width=True, key="rep_run")
+                    # *** (THAY ĐỔI) Ẩn cài đặt nâng cao ***
+                    max_subj_fit = 5_000
+                    plot_subj = 80
+                    run = st.button("▶️ Run", use_container_width=True, key="rep_run")
 
                 if run:
                     d0 = DF[[y_col, id_col, cond_col]].dropna().copy()
-                    # Keep subjects having all levels
                     count = d0.groupby([id_col, cond_col]).size().unstack(cond_col).dropna()
                     subj_keep = count.index
                     d = d0[d0[id_col].isin(subj_keep)]
@@ -3211,37 +3339,37 @@ with TAB5:
                         p = float(res.pvalue); Wstat = float(res.statistic)
                         z = float(stats.norm.isf(p/2.0)) if p > 0 else np.inf
                         r_eff = z / np.sqrt(n) if n > 0 and np.isfinite(z) else np.nan
-                        st.markdown(f"**Wilcoxon signed-rank**: W = {Wstat:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f}")
+                        st.markdown(f"**Wilcoxon signed-rank**: W = {Wstat:.3f}, p = {p:.4g}, r ≈ {r_eff:.3f} (effect size)")
 
                         means = pivot.mean().reset_index()
                         means.columns = ["cond","mean"]
                         fig = px.line(means, x="cond", y="mean", markers=True)
-                        st.plotly_chart(fig, use_container_width=True)
+                        
                         if plot_subj > 0:
                             samp = pivot.sample(min(plot_subj, pivot.shape[0]), random_state=42)
                             for _, row in samp.iterrows():
                                 fig.add_trace(go.Scatter(x=levels, y=row.values, mode="lines", opacity=0.25, showlegend=False))
-                            st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True)
 
                         level = ("mạnh" if (not np.isnan(r_eff) and r_eff >= 0.5)
                                  else "vừa" if (not np.isnan(r_eff) and r_eff >= 0.3) else "yếu")
-                        st.success(f"**Kết luận:** Khác biệt {level} (r≈{r_eff:.2f}).")
+                        st.success(f"**Kết luận:** Khác biệt **{level}** (r≈{r_eff:.2f}).")
 
-                    else:
+                    elif m > 2:
                         fr = stats.friedmanchisquare(*[pivot[c].values for c in levels])
                         chi2 = float(fr.statistic); p = float(fr.pvalue)
                         W = chi2 / (n * m * (m + 1) / 12.0) if n > 0 else np.nan
-                        st.markdown(f"**Friedman**: χ² = {chi2:.3f}, p = {p:.4g}, W = {W:.3f}")
+                        st.markdown(f"**Friedman**: χ² = {chi2:.3f}, p = {p:.4g}, W = {W:.3f} (Kendall's W effect size)")
 
                         means = pivot.mean().reset_index()
                         means.columns = ["cond","mean"]
                         fig = px.line(means, x="cond", y="mean", markers=True)
-                        st.plotly_chart(fig, use_container_width=True)
+
                         if plot_subj > 0:
                             samp = pivot.sample(min(plot_subj, pivot.shape[0]), random_state=42)
                             for _, row in samp.iterrows():
                                 fig.add_trace(go.Scatter(x=levels, y=row.values, mode="lines", opacity=0.25, showlegend=False))
-                            st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True)
 
                         # Post-hoc: pairwise Wilcoxon + Holm
                         pvals, labs = [], []
@@ -3259,10 +3387,11 @@ with TAB5:
 
                         strength = ("yếu" if (np.isnan(W) or W < 0.1) else ("vừa" if W < 0.3 else "mạnh"))
                         best = str(means.sort_values("mean", ascending=False).iloc[0]["cond"])
-                        st.success(f"**Kết luận:** Khác biệt {strength} (W={W:.2f}). Điều kiện cao nhất: **{best}**.")
+                        st.success(f"**Kết luận:** Khác biệt **{strength}** (W={W:.2f}). Điều kiện cao nhất: **{best}**.")
+                    else:
+                        st.warning("Cần ít nhất 2 điều kiện để so sánh.")
 # ================= TAB 6 — REGRESSION (drilldown like screenshot + size-safe) =================
 with TAB6:
-    SS['_capture_tab'] = 'Regression' 
     import numpy as np, pandas as pd, plotly.graph_objects as go, streamlit as st
     try:
         from sklearn.model_selection import train_test_split
@@ -3489,25 +3618,62 @@ with TAB6:
         if (prev==prev and prev<0.10) or (int(y_series.sum())<50):
             test_size_auto=max(test_size_auto,0.30)
     random_state_auto=int((len(df_full)+len(df)+sum(len(str(c)) for c in X_cols)+len(str(y_col)))%10000)
-
-    scaler = StandardScaler()
-    nums_now = X.select_dtypes(include=[np.number]).columns
-    X[nums_now]=scaler.fit_transform(X[nums_now])
+    # ---- DÁN TOÀN BỘ KHỐI CODE MỚI NÀY VÀO ----
 
     XY = pd.concat([y_series.rename(y_col), X], axis=1).dropna()
     if XY.empty: st.warning("Dữ liệu rỗng sau làm sạch."); st.stop()
-    y = XY[y_col].values
-    X = XY.drop(columns=[y_col]).values
-    feat_names = XY.drop(columns=[y_col]).columns.tolist()
 
-    Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=test_size_auto,random_state=random_state_auto,stratify=(y if y_is_binary else None))
+    y = XY[y_col].values
+    X_df = XY.drop(columns=[y_col]) # <-- Giữ ở dạng DataFrame
+    feat_names = X_df.columns.tolist()
+    nums_now = X_df.select_dtypes(include=[np.number]).columns.tolist()
+
+    # ... (Code trước đó của bạn trong Tab 6) ...
+
+    # 1. Chuẩn bị X và y (dòng 2088-2101)
+    XY = pd.concat([y_series.rename(y_col), X], axis=1).dropna()
+    if XY.empty: st.warning("Dữ liệu rỗng sau làm sạch."); st.stop()
+
+    y = XY[y_col].values
+    X_df = XY.drop(columns=[y_col]) # Giữ X dạng DataFrame để tiện truy cập tên cột
+    feat_names = X_df.columns.tolist()
+    nums_now = X_df.select_dtypes(include=[np.number]).columns.tolist()
+
+    # 2. Chia Train/Test TRƯỚC (dùng DataFrame X_df)
+    # Thay đổi: Chia dữ liệu trước khi chuẩn hóa
+    Xtr_df, Xte_df, ytr, yte = train_test_split(
+        X_df, y, 
+        test_size=test_size_auto, 
+        random_state=random_state_auto, 
+        stratify=(y if y_is_binary else None)
+    )
+
+    # 3. Chuẩn hóa dữ liệu (Scaling) ĐÚNG CÁCH
+    # Thay đổi: Fit scaler chỉ trên tập train, sau đó transform cả train và test
+    scaler = StandardScaler()
+    
+    # Tạo bản copy để tránh cảnh báo SettingWithCopyWarning
+    Xtr = Xtr_df.copy()
+    Xte = Xte_df.copy()
+
+    if nums_now: # Chỉ chạy nếu có cột numeric
+        # Fit VÀ transform tập train
+        Xtr[nums_now] = scaler.fit_transform(Xtr_df[nums_now])
+        # Chỉ transform tập test (dùng mean/std của tập train)
+        Xte[nums_now] = scaler.transform(Xte_df[nums_now])
+
+    # 4. Chuyển đổi sang values để fit mô hình (như code cũ của bạn)
+    Xtr_values = Xtr.values
+    Xte_values = Xte.values
+
     st.caption(f"**Auto** ➜ test_size={test_size_auto:.2f} · random_state={random_state_auto} · Scaling=StandardScaler · ClassWeight(Logistic)='balanced'")
 
     # ---------------- train & evaluate ----------------
     if task.startswith("Linear"):
         st.markdown("### 📌 Linear Regression")
-        model = LinearRegression().fit(Xtr,ytr)
-        ypred = model.predict(Xte)
+        # Sửa: Dùng Xtr_values, Xte_values
+        model = LinearRegression().fit(Xtr_values, ytr)
+        ypred = model.predict(Xte_values)
 
         R2=r2_score(yte, ypred); RMSE=_rmse(yte, ypred); MAE=mean_absolute_error(yte, ypred)
         msk=np.where(yte==0, False, True)
@@ -3586,8 +3752,9 @@ with TAB6:
 
     else:
         st.markdown("### 📌 Logistic Regression")
-        model=LogisticRegression(max_iter=1000, class_weight='balanced', solver="liblinear").fit(Xtr,ytr)
-        p_pred=model.predict_proba(Xte)[:,1]
+        model=LogisticRegression(max_iter=1000, class_weight='balanced', solver="liblinear").fit(Xtr_values,ytr)
+        p_pred=model.predict_proba(Xte_values)[:,1]
+        
         fpr,tpr,thr_roc=roc_curve(yte, p_pred); youden=tpr-fpr
         thr_youden=float(thr_roc[np.argmax(youden)]) if len(thr_roc)>0 else 0.5
         f1_vals=[(t, f1_score(yte,(p_pred>=t).astype(int), zero_division=0)) for t in np.linspace(0.1,0.9,33)]
