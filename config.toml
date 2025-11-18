@@ -10,7 +10,9 @@ font = "sans serif"
 headless = true
 enableCORS = false
 enableXsrfProtection = true
+keepAlive = 30
 
 [runner]
 magicEnabled = false
 maxMessageSize = 300
+
