@@ -716,7 +716,7 @@ def build_rule_context() -> Dict[str,Any]:
 
 
 # ----------------------------------- TABS -------------------------------------
-TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6 = st.tabs([ '0) Data Quality', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) ANOVA & Nonparametric', '6) Regression'])
+TAB0, TAB1, TAB2, TAB3, TAB4, TAB5, TAB6, TAB7 = st.tabs([ '0) Data Quality', '1) Overview (Sales activity)', '2) Profiling/Distribution', '3) Correlation & Trend', '4) Benford', '5) ANOVA & Nonparametric', '6) Regression','7) Pareto (80/20)'])
 # ---- TAB 0: Data Quality (FULL) ----
 
 with TAB0:
@@ -784,7 +784,6 @@ with TAB1:
     import textwrap # Cần import textwrap
 
     st.subheader("📈 Overview — Sales Activities")
-
     # ---------- helpers ----------
     RULE = {"Month":"MS","Quarter":"QS","Year":"YS"}
     P2   = {"MS":"M","QS":"Q","YS":"Y"}
@@ -3390,433 +3389,480 @@ with TAB5:
                         st.success(f"**Kết luận:** Khác biệt **{strength}** (W={W:.2f}). Điều kiện cao nhất: **{best}**.")
                     else:
                         st.warning("Cần ít nhất 2 điều kiện để so sánh.")
-# ================= TAB 6 — REGRESSION (drilldown like screenshot + size-safe) =================
+## ============================== TAB 6 : REGRESSION (Predictive & Audit) ==============================
+# ============================== TAB 6 : REGRESSION (Predictive & Audit) ==============================
 with TAB6:
-    import numpy as np, pandas as pd, plotly.graph_objects as go, streamlit as st
-    try:
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.linear_model import LinearRegression, LogisticRegression
-        from sklearn.metrics import (
-            r2_score, mean_squared_error, mean_absolute_error,
-            accuracy_score, precision_score, recall_score, f1_score,
-            roc_auc_score, roc_curve, confusion_matrix, precision_recall_curve, auc
-        )
-        _HAS_SK = True
-    except Exception:
-        _HAS_SK = False
+    from sklearn.model_selection import train_test_split
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, confusion_matrix, classification_report, roc_auc_score, roc_curve
+    from sklearn.preprocessing import StandardScaler
+    import plotly.express as px
+    import plotly.graph_objects as go
+    import pandas as pd
+    import numpy as np
 
-    st.subheader("📈 Regression — Linear & Logistic")
-    df_full = st.session_state.get("df")
-    if not _HAS_SK or df_full is None or df_full.empty:
-        st.info("Hãy nạp dữ liệu (và cài scikit-learn) để chạy Regression."); st.stop()
+    st.subheader("🔮 Regression Analysis (Dự báo & Phát hiện Bất thường)")
 
-    # ---------- hard limits to avoid MessageSizeError ----------
-    MAX_SCATTER_POINTS = 20_000
-    MAX_CURVE_POINTS   = 4_000
-    MAX_COEF_ROWS      = 800
-    MAX_TIME_OPTIONS   = {"M":240, "Q":80, "Y":40}  # tránh multiselect quá lớn
-
-    # ---------- helpers ----------
-    def _rmse(y_true, y_pred):
-        try: return mean_squared_error(y_true, y_pred, squared=False)
-        except TypeError: return float(np.sqrt(mean_squared_error(y_true, y_pred)))
-
-    def _downsample_xy(x, y, nmax=MAX_SCATTER_POINTS):
-        n = len(x); 
-        if n<=nmax: return x, y
-        idx = np.linspace(0, n-1, nmax, dtype=int)
-        return x[idx], y[idx]
-
-    def _downsample_series(x, nmax=MAX_CURVE_POINTS):
-        n=len(x); 
-        if n<=nmax: return x
-        idx=np.linspace(0, n-1, nmax, dtype=int)
-        return x[idx]
-
-    def _cap_df(d, n=MAX_COEF_ROWS):
-        return d.head(n).copy() if (d is not None and not d.empty) else d
-
-    def _fmt(x, n=4):
-        try:
-            fx=float(x)
-            if abs(fx)>=1e7: return f"{fx:,.{n}f}"
-            if abs(fx)>=1000: return f"{fx:,.{max(0,n-2)}f}"
-            return f"{fx:.{n}f}"
-        except Exception: return str(x)
-
-    def _choose_task():
-        try: return st.segmented_control("Task", ["Linear (numeric Y)","Logistic (binary Y)"], default="Linear (numeric Y)")
-        except Exception: return st.radio("Task", ["Linear (numeric Y)","Logistic (binary Y)"], horizontal=True)
-
-    def _build_dummies(df_in, cat_cols, ref_levels):
-        out=df_in.copy()
-        for c in (cat_cols or []):
-            if c not in out.columns: continue
-            s=out[c].astype(str).fillna("(Missing)")
-            ref=ref_levels.get(c) or s.value_counts().idxmax()
-            cats=[ref]+[v for v in s.unique() if v!=ref]
-            s=pd.Categorical(s, categories=cats, ordered=True)
-            out=pd.concat([out.drop(columns=[c]), pd.get_dummies(s, prefix=c, drop_first=True, dtype=float)], axis=1)
-        return out
-
-    def _equation_linear(b0, coefs: pd.Series):
-        return "y = " + " + ".join([f"{_fmt(b0,6)}"] + [f"{_fmt(b,6)}·{n}" for n,b in coefs.items()])
-
-    def _equation_logit(b0, coefs: pd.Series):
-        return "logit(p) = " + " + ".join([f"{_fmt(b0,6)}"] + [f"{_fmt(b,6)}·{n}" for n,b in coefs.items()]) + "   ⇒   p = 1/(1 + e^(−logit))"
-
-    def _grade(v, bins, labels):
-        try: v=float(v)
-        except: return labels[-1]
-        for (lo,hi),lab in zip(bins,labels):
-            if lo<=v<hi: return lab
-        return labels[-1]
-
-    def _clean_time(ts):
-        t=pd.to_datetime(ts, errors="coerce")
-        bad=t.notna() & ((t.dt.year<1900) | (t.dt.year>2100))
-        return t.mask(bad)
-
-    def _top_k_values(df, col, k=200):
-        if not col or col not in df.columns: return []
-        return df[col].astype(str).value_counts(dropna=False).head(k).index.tolist()
-
-    # ---------- DRILL-DOWN PANEL (UI như screenshot) ----------
-    def drilldown_panel(df: pd.DataFrame, prefix="rg"):
-        st.markdown("### 🔎 Drill-down filter — Khoanh vùng dữ liệu")
-        ckR, ckC, ckP, ckU, ckT = st.columns([1,1,1,1,1])
-        useR = ckR.checkbox("Region",  key=f"{prefix}_useR")
-        useC = ckC.checkbox("Channel", key=f"{prefix}_useC")
-        useP = ckP.checkbox("Product", key=f"{prefix}_useP")
-        useU = ckU.checkbox("Customer",key=f"{prefix}_useU")
-        useT = ckT.checkbox("Time",    key=f"{prefix}_useT", value=True)
-
-        # Time block (giống hình)
-        time_col = None; per_rule="M"; sel_periods=[]
-        if useT:
-            st.write("")  # spacing
-            st.caption("Cột thời gian")
-            time_col = st.selectbox(" ", ["—"]+list(df.columns), index=0, key=f"{prefix}_timecol", label_visibility="collapsed")
-            st.caption("Granularity")
-            per_txt = st.radio(" ", ["Month","Quarter","Year"], horizontal=True, key=f"{prefix}_gran", label_visibility="collapsed")
-            per_rule = {"Month":"M","Quarter":"Q","Year":"Y"}[per_txt]
-            if time_col and time_col!="—":
-                t=_clean_time(df[time_col])
-                periods = t.dt.to_period(per_rule).astype(str).dropna()
-                uniq = sorted(periods.unique().tolist())
-                # giới hạn option để payload nhẹ
-                cap = MAX_TIME_OPTIONS[per_rule]
-                if len(uniq)>cap: uniq = uniq[-cap:]
-                st.caption("Khoảng thời gian")
-                sel_periods = st.multiselect(" ", uniq, default=uniq[-1:] if uniq else [], key=f"{prefix}_selT", label_visibility="collapsed")
-        
-        # Others
-        region_col=channel_col=prod_col=cust_col=None
-        selR=selC=selP=selU=[]
-        if useR:
-            region_col = st.selectbox("Cột Region", ["—"]+list(df.columns), index=0, key=f"{prefix}_colR")
-            if region_col and region_col!="—":
-                selR = st.multiselect("Region", _top_k_values(df, region_col), key=f"{prefix}_valR")
-        if useC:
-            channel_col = st.selectbox("Cột Channel", ["—"]+list(df.columns), index=0, key=f"{prefix}_colC")
-            if channel_col and channel_col!="—":
-                selC = st.multiselect("Channel", _top_k_values(df, channel_col), key=f"{prefix}_valC")
-        if useP:
-            prod_col = st.selectbox("Cột Product", ["—"]+list(df.columns), index=0, key=f"{prefix}_colP")
-            if prod_col and prod_col!="—":
-                selP = st.multiselect("Product", _top_k_values(df, prod_col), key=f"{prefix}_valP")
-        if useU:
-            cust_col = st.selectbox("Cột Customer", ["—"]+list(df.columns), index=0, key=f"{prefix}_colU")
-            if cust_col and cust_col!="—":
-                selU = st.multiselect("Customer", _top_k_values(df, cust_col), key=f"{prefix}_valU")
-
-        # build mask
-        mask = pd.Series(True, index=df.index)
-        if useT and time_col and time_col!="—" and sel_periods:
-            t=_clean_time(df[time_col])
-            cur=t.dt.to_period(per_rule).astype(str)
-            mask &= cur.isin(set(sel_periods))
-        if useR and region_col and region_col!="—" and selR:
-            mask &= df[region_col].astype(str).isin(selR)
-        if useC and channel_col and channel_col!="—" and selC:
-            mask &= df[channel_col].astype(str).isin(selC)
-        if useP and prod_col and prod_col!="—" and selP:
-            mask &= df[prod_col].astype(str).isin(selP)
-        if useU and cust_col and cust_col!="—" and selU:
-            mask &= df[cust_col].astype(str).isin(selU)
-
-        return time_col if time_col!="—" else None, region_col, channel_col, prod_col, cust_col, mask
-
-    # ---------------- use drilldown panel ----------------
-    time_col, region_col, channel_col, prod_col, cust_col, dd_mask = drilldown_panel(df_full, "rg")
-    df = df_full.loc[dd_mask].copy()
-    if df.empty:
-        st.warning("Không còn dữ liệu sau khi khoanh vùng."); st.stop()
-
-    # ---------------- choose task & variables ----------------
-    task = _choose_task()
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols_local = df.select_dtypes(include=["object","category","bool"]).columns.tolist()
-
-    top_row = st.columns([1.2, 0.7, 2.3])  # target | dummy | predictors
-    if task.startswith("Linear"):
-        if not num_cols: st.warning("Không có cột numeric cho Y."); st.stop()
-        y_col = top_row[0].selectbox("🎯 Target (numeric Y)", num_cols, key="rg_y_lin")
-    else:
-        cand = [c for c in df.columns if df[c].dropna().nunique()<=20]
-        y_col = top_row[0].selectbox("🎯 Target (binary Y)", cand or list(df.columns), key="rg_y_log")
-
-    dummy_cols, ref_levels = [], {}
-    try:
-        with top_row[1].popover("Dummy"):
-            dummy_cols = st.multiselect("One-hot columns", [c for c in cat_cols_local if c != y_col], key="rg_dummy_cols")
-            for c in dummy_cols:
-                lv = df[c].astype(str).fillna("(Missing)").value_counts().index.tolist()
-                ref_levels[c] = st.selectbox(f"Ref `{c}`", lv, index=0, key=f"rg_ref_{c}")
-    except Exception:
-        with top_row[1].expander("Dummy", expanded=False):
-            dummy_cols = st.multiselect("One-hot columns", [c for c in cat_cols_local if c != y_col], key="rg_dummy_cols")
-            for c in dummy_cols:
-                lv = df[c].astype(str).fillna("(Missing)").value_counts().index.tolist()
-                ref_levels[c] = st.selectbox(f"Ref `{c}`", lv, index=0, key=f"rg_ref_{c}")
-
-    X_cols = top_row[2].multiselect(
-        "🧩 Predictors", [c for c in df.columns if c != y_col],
-        default=[c for c in num_cols if c != y_col][:5], key="rg_X_cols"
-    )
-    if not y_col or not X_cols:
-        st.info("Hãy chọn **Target** và ≥1 **Predictor**."); st.stop()
-
-    # ---------------- prepare data & auto settings ----------------
-    base = df[[y_col]+X_cols].copy()
-    for c in X_cols:
-        if c in num_cols: base[c]=pd.to_numeric(base[c], errors="coerce")
-        else: base[c]=base[c].astype(str)
-
-    if task.startswith("Linear"):
-        y_series = pd.to_numeric(base[y_col], errors="coerce"); y_is_binary=False
-    else:
-        y_tmp = df[y_col].astype(str).str.strip()
-        classes = sorted(y_tmp.dropna().unique().tolist())
-        pos_auto = (y_tmp.value_counts(normalize=True).idxmin() if len(classes)==2 else classes[0]) if classes else None
-        pos_label = st.selectbox("Positive class (label=1)", classes or ["—"], index= (classes.index(pos_auto) if classes and pos_auto in classes else 0), key="rg_pos")
-        y_series = (y_tmp == str(pos_label)).astype(int); y_is_binary=True
-
-    X = base[X_cols].copy()
-    for c in X.columns:
-        if c in num_cols: X[c]=pd.to_numeric(X[c], errors="coerce").fillna(X[c].median())
-        else: X[c]=X[c].astype(str).fillna("(Missing)")
-    X = _build_dummies(X, dummy_cols, ref_levels)
-
-    n_samples=len(X)
-    if n_samples<400:   test_size_auto=0.35
-    elif n_samples<4000:test_size_auto=0.25
-    else:               test_size_auto=0.20
-    if y_is_binary:
-        prev=float(np.mean(y_series)) if len(y_series) else np.nan
-        if (prev==prev and prev<0.10) or (int(y_series.sum())<50):
-            test_size_auto=max(test_size_auto,0.30)
-    random_state_auto=int((len(df_full)+len(df)+sum(len(str(c)) for c in X_cols)+len(str(y_col)))%10000)
-    # ---- DÁN TOÀN BỘ KHỐI CODE MỚI NÀY VÀO ----
-
-    XY = pd.concat([y_series.rename(y_col), X], axis=1).dropna()
-    if XY.empty: st.warning("Dữ liệu rỗng sau làm sạch."); st.stop()
-
-    y = XY[y_col].values
-    X_df = XY.drop(columns=[y_col]) # <-- Giữ ở dạng DataFrame
-    feat_names = X_df.columns.tolist()
-    nums_now = X_df.select_dtypes(include=[np.number]).columns.tolist()
-
-    # ... (Code trước đó của bạn trong Tab 6) ...
-
-    # 1. Chuẩn bị X và y (dòng 2088-2101)
-    XY = pd.concat([y_series.rename(y_col), X], axis=1).dropna()
-    if XY.empty: st.warning("Dữ liệu rỗng sau làm sạch."); st.stop()
-
-    y = XY[y_col].values
-    X_df = XY.drop(columns=[y_col]) # Giữ X dạng DataFrame để tiện truy cập tên cột
-    feat_names = X_df.columns.tolist()
-    nums_now = X_df.select_dtypes(include=[np.number]).columns.tolist()
-
-    # 2. Chia Train/Test TRƯỚC (dùng DataFrame X_df)
-    # Thay đổi: Chia dữ liệu trước khi chuẩn hóa
-    Xtr_df, Xte_df, ytr, yte = train_test_split(
-        X_df, y, 
-        test_size=test_size_auto, 
-        random_state=random_state_auto, 
-        stratify=(y if y_is_binary else None)
-    )
-
-    # 3. Chuẩn hóa dữ liệu (Scaling) ĐÚNG CÁCH
-    # Thay đổi: Fit scaler chỉ trên tập train, sau đó transform cả train và test
-    scaler = StandardScaler()
+    # --- 0. Data Source ---
+    df_root = SS.get('df')
     
-    # Tạo bản copy để tránh cảnh báo SettingWithCopyWarning
-    Xtr = Xtr_df.copy()
-    Xte = Xte_df.copy()
+    if df_root is None or df_root.empty:
+        st.info("Chưa có dữ liệu."); st.stop()
 
-    if nums_now: # Chỉ chạy nếu có cột numeric
-        # Fit VÀ transform tập train
-        Xtr[nums_now] = scaler.fit_transform(Xtr_df[nums_now])
-        # Chỉ transform tập test (dùng mean/std của tập train)
-        Xte[nums_now] = scaler.transform(Xte_df[nums_now])
+    # --- 1. Local Drill-down Filter (Gọn gàng trong Expander) ---
+    def _local_drilldown(df_in):
+        # Mặc định đóng (expanded=False) để gọn màn hình
+        with st.expander("🔎 Bộ lọc dữ liệu (Drill-down Filter)", expanded=False):
+            st.caption("Chọn các điều kiện bên dưới để khoanh vùng dữ liệu chạy mô hình.")
+            
+            # Hàng 1: Checkbox chọn cột
+            c1, c2, c3, c4, c5 = st.columns(5)
+            use_reg = c1.checkbox("Region", key="reg_chk_r")
+            use_chan = c2.checkbox("Channel", key="reg_chk_c")
+            use_prod = c3.checkbox("Product", key="reg_chk_p")
+            use_cust = c4.checkbox("Customer", key="reg_chk_u")
+            use_time = c5.checkbox("Time", key="reg_chk_t", value=True)
 
-    # 4. Chuyển đổi sang values để fit mô hình (như code cũ của bạn)
-    Xtr_values = Xtr.values
-    Xte_values = Xte.values
+            mask = pd.Series(True, index=df_in.index)
+            
+            # Logic Time Filter
+            col_time = SS.get('ov_time')
+            if not col_time:
+                 col_time = next((c for c in df_in.columns if 'date' in c.lower() or 'time' in c.lower()), None)
+            
+            if use_time and col_time:
+                try:
+                    time_s = pd.to_datetime(df_in[col_time], errors='coerce')
+                    periods = sorted(time_s.dt.to_period("M").astype(str).dropna().unique())
+                    default_sel = periods[-3:] if len(periods) > 3 else periods
+                    sel_t = st.multiselect(f"Thời gian ({col_time})", periods, default=default_sel, key="reg_sel_t")
+                    if sel_t: mask &= time_s.dt.to_period("M").astype(str).isin(sel_t)
+                except: st.warning("Lỗi xử lý cột thời gian.")
 
-    st.caption(f"**Auto** ➜ test_size={test_size_auto:.2f} · random_state={random_state_auto} · Scaling=StandardScaler · ClassWeight(Logistic)='balanced'")
+            # Logic Categorical Filters
+            c_fil1, c_fil2 = st.columns(2)
+            with c_fil1:
+                if use_reg:
+                    col_reg = next((c for c in df_in.columns if 'region' in c.lower() or 'loc' in c.lower()), None)
+                    if col_reg:
+                        sel_r = st.multiselect(f"Region ({col_reg})", df_in[col_reg].unique(), key="reg_sel_r")
+                        if sel_r: mask &= df_in[col_reg].isin(sel_r)
+                if use_prod:
+                    col_prod = next((c for c in df_in.columns if 'product' in c.lower() or 'item' in c.lower()), None)
+                    if col_prod:
+                        opts = df_in[col_prod].value_counts().head(200).index.tolist()
+                        sel_p = st.multiselect(f"Product ({col_prod}) - Top 200", opts, key="reg_sel_p")
+                        if sel_p: mask &= df_in[col_prod].isin(sel_p)
+            with c_fil2:
+                if use_chan:
+                    col_chan = next((c for c in df_in.columns if 'channel' in c.lower()), None)
+                    if col_chan:
+                        sel_c = st.multiselect(f"Channel ({col_chan})", df_in[col_chan].unique(), key="reg_sel_c")
+                        if sel_c: mask &= df_in[col_chan].isin(sel_c)
+                if use_cust:
+                    col_cust = next((c for c in df_in.columns if 'cust' in c.lower()), None)
+                    if col_cust:
+                        opts = df_in[col_cust].value_counts().head(200).index.tolist()
+                        sel_u = st.multiselect(f"Customer ({col_cust}) - Top 200", opts, key="reg_sel_u")
+                        if sel_u: mask &= df_in[col_cust].isin(sel_u)
 
-    # ---------------- train & evaluate ----------------
-    if task.startswith("Linear"):
-        st.markdown("### 📌 Linear Regression")
-        # Sửa: Dùng Xtr_values, Xte_values
-        model = LinearRegression().fit(Xtr_values, ytr)
-        ypred = model.predict(Xte_values)
+        return df_in.loc[mask].copy()
 
-        R2=r2_score(yte, ypred); RMSE=_rmse(yte, ypred); MAE=mean_absolute_error(yte, ypred)
-        msk=np.where(yte==0, False, True)
-        MAPE=float(np.mean(np.abs((yte[msk]-ypred[msk])/yte[msk]))*100) if msk.any() else np.nan
-        y_std=float(np.std(yte, ddof=1)) if len(yte)>1 else np.nan
-        rel_rmse=(RMSE/y_std*100) if (y_std and y_std==y_std and y_std!=0) else np.nan
-        pearson=np.corrcoef(yte, ypred)[0,1] if len(yte)>1 else np.nan
-        resid=yte-ypred; bias=float(np.mean(ypred-yte))
-        corr_rp=np.corrcoef(ypred, resid)[0,1] if len(yte)>1 else np.nan
-        within10=float(np.mean(np.abs(ypred-yte)<=0.10*np.maximum(np.abs(yte),1e-12))*100)
+    # Áp dụng lọc
+    df_reg = _local_drilldown(df_root)
+    
+    # Chỉ hiện số dòng nếu dữ liệu thay đổi hoặc người dùng quan tâm
+    if len(df_reg) < len(df_root):
+        st.caption(f"⚡ Dữ liệu phân tích: **{len(df_reg):,}** dòng (đã lọc).")
 
-        c1,c2,c3,c4 = st.columns(4)
-        c1.metric("R²", _fmt(R2,4)); c2.metric("RMSE", _fmt(RMSE))
-        c3.metric("MAE", _fmt(MAE)); c4.metric("MAPE (%)", _fmt(MAPE,2))
+    if df_reg.empty: st.warning("Dữ liệu rỗng sau khi lọc."); st.stop()
 
-        # Nhận định đặt ngay dưới KPI (giữ nguyên nội dung chi tiết)
-        r2_grade=_grade(R2,[(0,0.3),(0.3,0.6),(0.6,0.9),(0.9,1.01)],["yếu","trung bình","khá/tốt","rất cao (cần cảnh giác overfit)"])
-        resid_msg="không thấy pattern mạnh" if (np.isnan(corr_rp) or abs(corr_rp)<0.15) else "có dấu hiệu pattern/hệ số phương sai không đồng nhất"
-        st.markdown("\n".join([
-            f"- **R² = {_fmt(R2,4)}** → mức giải thích **{r2_grade}**.",
-            f"- **RMSE = {_fmt(RMSE)}** (≈ **{_fmt(rel_rmse,1)}%** σ(Y)); **MAE = {_fmt(MAE)}**; **MAPE = {_fmt(MAPE,2)}%**.",
-            f"- **Tương quan Pred–Actual = {_fmt(pearson,3)}**; **Bias = {_fmt(bias)}**; **±10% đúng ≈ {_fmt(within10,1)}%**.",
-            f"- **Residuals vs Fitted**: |corr| ≈ {_fmt(corr_rp,3)} → {resid_msg}."
-        ]))
+    # --- 2. Cấu hình Mô hình ---
+    nums = df_reg.select_dtypes(include=[np.number]).columns.tolist()
+    
+    c1, c2, c3 = st.columns([1.2, 2, 1])
+    target_col = c1.selectbox("🎯 Biến mục tiêu (Y)", ["—"] + nums, key="reg_y")
+    
+    # Khởi tạo biến Session State để lưu mô hình (FIX LỖI RELOAD)
+    if 'reg_result' not in SS: SS['reg_result'] = None
 
-        # Phương trình + hệ số (giới hạn top |β|)
-        coefs=pd.Series(model.coef_, index=feat_names); b0=float(model.intercept_)
-        st.markdown("#### 📐 Phương trình (Linear)")
-        st.code(_equation_linear(b0, coefs), language="text")
-
-        with st.expander("Giải thích phương trình (theo dữ liệu hiện tại)"):
-            top3=coefs.reindex(coefs.abs().sort_values(ascending=False).head(3).index)
-            st.write(f"- **Intercept β₀ = {_fmt(b0,6)}**: Y khi numeric ở mức trung bình & phân loại ở mức tham chiếu.")
-            if not top3.empty:
-                st.write("**3 biến tác động mạnh nhất:**")
-                for name,b in top3.items():
-                    msg = f"tăng 1σ làm Y đổi ≈ {_fmt(b,6)}" if name in XY.columns else f"bật biến so với ref làm Y đổi ≈ {_fmt(b,6)}"
-                    st.write(f"  • `{name}`: β={_fmt(b,6)} → {msg}.")
-
-        coef_tbl = pd.DataFrame({"Feature":feat_names,"β (coef)":coefs.values}).sort_values("β (coef)", key=np.abs, ascending=False)
-        coef_show=_cap_df(coef_tbl)
-        st.dataframe(coef_show, use_container_width=True, hide_index=True, height=min(360,48*(len(coef_show)+1)))
-
-        # Charts (size-safe)
-        st.markdown("#### 📊 Biểu đồ hỗ trợ")
-        g1,g2=st.columns(2)
-        with g1:
-            N=len(yte)
-            if N>MAX_SCATTER_POINTS*3:
-                fig=go.Figure()
-                fig.add_trace(go.Histogram2d(x=yte, y=ypred, nbinsx=80, nbinsy=80, colorscale="Blues", showscale=True))
-                lim=[float(min(yte.min(),ypred.min())), float(max(yte.max(),ypred.max()))]
-                fig.add_scatter(x=lim, y=lim, mode="lines", name="y=x", line=dict(color="#e67e22"))
-                title="Predicted vs Actual — 2D Density"
-            else:
-                xa,ya=_downsample_xy(yte, ypred)
-                fig=go.Figure()
-                fig.add_scatter(x=xa, y=ya, mode="markers", name="Pred vs Actual")
-                lim=[float(min(yte.min(),ypred.min())), float(max(yte.max(),ypred.max()))]
-                fig.add_scatter(x=lim, y=lim, mode="lines", name="y=x", line=dict(color="#e67e22"))
-                title="Predicted vs Actual"
-            fig.update_layout(title=title, xaxis_title="Actual", yaxis_title="Predicted", height=420, margin=dict(l=10,r=10,t=50,b=10))
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-            st.caption(f"**Giải thích:** r={_fmt(pearson,3)}; bias={_fmt(bias)}; {_fmt(within10,1)}% điểm nằm trong ±10% so với thực tế.")
-
-        with g2:
-            if len(yte)>MAX_SCATTER_POINTS*3:
-                fig2=go.Figure(); fig2.add_trace(go.Histogram2d(x=ypred, y=resid, nbinsx=80, nbinsy=80, colorscale="Blues", showscale=True))
-                fig2.add_hline(y=0, line_dash="dot"); title2="Residuals vs Fitted — 2D Density"
-            else:
-                xp,rp=_downsample_xy(ypred, resid)
-                fig2=go.Figure(); fig2.add_scatter(x=xp, y=rp, mode="markers", name="Residuals")
-                fig2.add_hline(y=0, line_dash="dot"); title2="Residuals vs Fitted"
-            fig2.update_layout(title=title2, xaxis_title="Predicted", yaxis_title="Residual", height=420, margin=dict(l=10,r=10,t=50,b=10))
-            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
-
-    else:
-        st.markdown("### 📌 Logistic Regression")
-        model=LogisticRegression(max_iter=1000, class_weight='balanced', solver="liblinear").fit(Xtr_values,ytr)
-        p_pred=model.predict_proba(Xte_values)[:,1]
+    if target_col and target_col != "—":
+        candidate_x = [c for c in nums if c != target_col]
+        feat_cols = c2.multiselect("Biến độc lập (X)", candidate_x, default=candidate_x[:3], key="reg_x")
         
-        fpr,tpr,thr_roc=roc_curve(yte, p_pred); youden=tpr-fpr
-        thr_youden=float(thr_roc[np.argmax(youden)]) if len(thr_roc)>0 else 0.5
-        f1_vals=[(t, f1_score(yte,(p_pred>=t).astype(int), zero_division=0)) for t in np.linspace(0.1,0.9,33)]
-        thr_f1=max(f1_vals, key=lambda z:z[1])[0] if f1_vals else 0.5
-        thr=st.slider("Ngưỡng phân loại (threshold)", 0.10,0.90, float(np.round(thr_f1,2)), 0.05, key="rg_thr")
-        yhat=(p_pred>=thr).astype(int)
+        # Xác định loại bài toán
+        is_binary = (df_reg[target_col].nunique() == 2)
+        model_type = "Logistic Regression" if is_binary else "Linear Regression"
+        
+        # Nút chạy mô hình
+        if feat_cols:
+            if c3.button("🚀 Chạy Mô hình", type="primary", use_container_width=True):
+                try:
+                    # A. Chuẩn bị dữ liệu
+                    XY = df_reg[[target_col] + feat_cols].dropna()
+                    if XY.empty: st.error("Dữ liệu rỗng."); st.stop()
+                    
+                    X = XY[feat_cols]
+                    y = XY[target_col]
 
-        prevalence=float(np.mean(yte)) if len(yte)>0 else np.nan
-        baseline=max(prevalence,1-prevalence) if prevalence==prevalence else np.nan
-        acc=accuracy_score(yte,yhat); prec=precision_score(yte,yhat, zero_division=0)
-        rec=recall_score(yte,yhat, zero_division=0); f1v=f1_score(yte,yhat, zero_division=0)
-        auc_roc=roc_auc_score(yte,p_pred); pr_prec, pr_recall,_=precision_recall_curve(yte,p_pred); auc_pr=auc(pr_recall, pr_prec)
+                    # B. Chia & Scale (Fix Data Leakage)
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=0.2, random_state=42, stratify=(y if is_binary else None)
+                    )
+                    scaler = StandardScaler()
+                    X_train_scaled = scaler.fit_transform(X_train)
+                    X_test_scaled = scaler.transform(X_test)
+                    
+                    X_train_df = pd.DataFrame(X_train_scaled, columns=feat_cols, index=X_train.index)
+                    X_test_df = pd.DataFrame(X_test_scaled, columns=feat_cols, index=X_test.index)
 
-        c1,c2,c3,c4,c5=st.columns(5)
-        c1.metric("Accuracy", _fmt(acc,4)); c2.metric("Precision", _fmt(prec,4))
-        c3.metric("Recall", _fmt(rec,4));   c4.metric("F1", _fmt(f1v,4)); c5.metric("ROC-AUC", _fmt(auc_roc,4))
+                    # C. Huấn luyện
+                    if not is_binary:
+                        model = LinearRegression()
+                        model.fit(X_train_df, y_train)
+                        y_pred = model.predict(X_test_df)
+                        metrics = {
+                            "r2": r2_score(y_test, y_pred),
+                            "rmse": np.sqrt(mean_squared_error(y_test, y_pred)),
+                            "mae": np.mean(np.abs(y_test - y_pred))
+                        }
+                    else:
+                        model = LogisticRegression(class_weight='balanced', max_iter=1000)
+                        model.fit(X_train_df, y_train)
+                        y_pred = model.predict(X_test_df)
+                        y_prob = model.predict_proba(X_test_df)[:, 1]
+                        metrics = {
+                            "acc": accuracy_score(y_test, y_pred),
+                            "roc": roc_auc_score(y_test, y_prob) if len(np.unique(y_test)) > 1 else 0.5,
+                            "y_prob": y_prob
+                        }
 
-        roc_grade=_grade(auc_roc,[(0.5,0.6),(0.6,0.7),(0.7,0.8),(0.8,0.9)],["yếu","trung bình","khá","tốt"])
-        impr=(acc-baseline)*100 if baseline==baseline else np.nan
-        st.markdown("\n".join([
-            f"- **Prevalence lớp 1** ≈ {_fmt(prevalence*100,2)}%; **Baseline acc** ≈ {_fmt(baseline*100,2)}%"+
-            ("" if np.isnan(impr) else f" → cải thiện ≈ {_fmt(impr,2)} điểm %."),
-            f"- Threshold = {np.round(thr,2)} → Precision={_fmt(prec,3)}, Recall={_fmt(rec,3)}, F1={_fmt(f1v,3)}.",
-            f"- **ROC-AUC = {_fmt(auc_roc,3)}** → năng lực phân biệt **{roc_grade}**; **PR-AUC = {_fmt(auc_pr,3)}** so với prevalence {_fmt(prevalence,3)}.",
-            f"- Gợi ý threshold: F1-opt={np.round(thr_f1,2)}; Youden={np.round(thr_youden,2)}."
-        ]))
+                    # D. LƯU VÀO SESSION STATE (QUAN TRỌNG ĐỂ KHÔNG BỊ MẤT KHI BẤM WHAT-IF)
+                    SS['reg_result'] = {
+                        "model": model,
+                        "scaler": scaler,
+                        "is_binary": is_binary,
+                        "features": feat_cols,
+                        "target": target_col,
+                        "metrics": metrics,
+                        "y_test": y_test,
+                        "y_pred": y_pred,
+                        "model_type": model_type,
+                        "XY_mean": XY.mean() # Dùng cho gợi ý What-if
+                    }
+                    if is_binary: SS['reg_result']['y_prob'] = y_prob
 
-        coefs=pd.Series(model.coef_[0], index=feat_names); b0=float(model.intercept_[0])
-        st.markdown("#### 📐 Phương trình (Logistic)")
-        st.code(_equation_logit(b0, coefs), language="text")
-        with st.expander("Giải thích phương trình (theo dữ liệu hiện tại)"):
-            p0=1/(1+np.exp(-b0))
-            st.write(f"- **Intercept β₀ = {_fmt(b0,6)}** → xác suất nền p₀ ≈ {_fmt(p0,3)} (numeric ở mức trung bình, phân loại ở ref).")
-            top3=coefs.reindex(coefs.abs().sort_values(ascending=False).head(3).index)
-            for name,b in top3.items():
-                st.write(f"  • `{name}`: β={_fmt(b,6)} → Odds Ratio≈{_fmt(np.exp(b),3)}.")
-        coef_tbl=pd.DataFrame({"Feature":feat_names,"β (log-odds)":coefs.values,"Odds Ratio":np.exp(coefs.values)}).sort_values("Odds Ratio", ascending=False, key=np.abs)
-        coef_show=_cap_df(coef_tbl)
-        st.dataframe(coef_show, use_container_width=True, hide_index=True, height=min(380,48*(len(coef_show)+1)))
+                except Exception as e:
+                    st.error(f"Lỗi khi chạy mô hình: {str(e)}")
 
-        # charts (size-safe)
-        st.markdown("#### 📊 Biểu đồ hỗ trợ")
-        h1,h2=st.columns(2)
-        with h1:
-            fig=go.Figure()
-            fig.add_scatter(x=_downsample_series(fpr), y=_downsample_series(tpr), mode="lines", name="ROC")
-            fig.add_scatter(x=[0,1], y=[0,1], mode="lines", name="Chance", line=dict(color="#e67e22", dash="dot"))
-            fig.update_layout(title="ROC Curve (Test set)", xaxis_title="FPR (1−Specificity)", yaxis_title="TPR (Recall)", height=420, margin=dict(l=10,r=10,t=50,b=10))
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-            st.caption(f"**Giải thích:** AUC={_fmt(auc_roc,4)}; threshold Youden≈{_fmt(thr_youden,2)} giữ TPR cao và FPR thấp.")
+    # --- 4. HIỂN THỊ KẾT QUẢ (Lấy từ Session State) ---
+    res = SS.get('reg_result')
+    
+    # Chỉ hiển thị nếu đã có kết quả (và người dùng chưa đổi biến mục tiêu khác)
+    if res and res['target'] == target_col:
+        st.divider()
+        st.markdown(f"### 📊 Kết quả: {res['model_type']}")
+        
+        # 4.1 Metrics
+        m = res['metrics']
+        c1, c2, c3 = st.columns(3)
+        if not res['is_binary']:
+            c1.metric("R² (Độ chính xác)", f"{m['r2']:.3f}", help="Càng gần 1 càng tốt")
+            c2.metric("RMSE (Sai số chuẩn)", f"{m['rmse']:,.2f}")
+            c3.metric("MAE (Sai số tuyệt đối)", f"{m['mae']:,.2f}")
+        else:
+            c1.metric("Accuracy", f"{m['acc']:.1%}")
+            c2.metric("ROC-AUC", f"{m['roc']:.3f}")
 
-        with h2:
-            cm=confusion_matrix(yte,yhat,labels=[0,1])
-            fig2=go.Figure(data=go.Heatmap(z=cm, x=["Pred 0","Pred 1"], y=["Actual 0","Actual 1"], colorscale="Blues", showscale=False, text=cm, texttemplate="%{text}"))
-            fig2.update_layout(title=f"Confusion Matrix (Threshold={np.round(thr,2)})", height=420, margin=dict(l=10,r=10,t=50,b=10))
-            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
-            tn,fp,fn,tp=cm.ravel()
-            tpr_now=tp/(tp+fn) if (tp+fn)>0 else np.nan
-            fpr_now=fp/(fp+tn) if (fp+tn)>0 else np.nan
-            st.caption(f"**Giải thích:** TPR={_fmt(tpr_now,3)}, FPR={_fmt(fpr_now,3)} · Precision={_fmt(prec,3)} · Recall={_fmt(rec,3)} · F1={_fmt(f1v,3)}.")
+        # 4.2 Coefficients & Equation
+        model = res['model']
+        feats = res['features']
+        
+        if not res['is_binary']:
+            st.markdown("#### 📐 Phân tích Tác động")
+            coef_df = pd.DataFrame({
+                "Biến số": feats,
+                "Hệ số (Beta)": model.coef_,
+                "Độ lớn tác động": [abs(c) for c in model.coef_]
+            }).sort_values("Độ lớn tác động", ascending=False)
+            
+            # Thêm Intercept
+            intercept_df = pd.DataFrame([{"Biến số": "Hằng số (Intercept)", "Hệ số (Beta)": model.intercept_, "Độ lớn tác động": 0}])
+            full_df = pd.concat([intercept_df, coef_df], ignore_index=True)
+            
+            c_tbl, c_txt = st.columns([3, 2])
+            with c_tbl:
+                st.dataframe(full_df.drop(columns=["Độ lớn tác động"]).style.format({"Hệ số (Beta)": "{:,.4f}"}), use_container_width=True, hide_index=True)
+                # Phương trình (chuyển xuống dưới bảng)
+                eq_str = f"$Y = {model.intercept_:.2f} " + " ".join([f"{'+' if c>=0 else '-'} {abs(c):.2f} \\cdot X_{i+1}" for i,c in enumerate(model.coef_)]) + "$"
+                st.info(f"**Phương trình:**\n\n{eq_str}")
+            
+            with c_txt:
+                # Business Interpretation (giữ nguyên)
+                interpret_text = f"**💡 Diễn giải Nghiệp vụ (Business Interpretation):**\n\n"
+                interpret_text += f"Để dự báo **{target_col}**, mô hình bắt đầu từ mức cơ bản là **{model.intercept_:,.2f}**. Sau đó, dựa trên dữ liệu quá khứ, ta thấy các yếu tố tác động mạnh nhất là:\n"
+                
+                # Lấy Top 3 biến quan trọng nhất để diễn giải
+                top_drivers = coef_df.head(3)
+                for _, row in top_drivers.iterrows():
+                    direction = "tăng thêm" if row['Hệ số (Beta)'] > 0 else "giảm đi"
+                    # Lưu ý về Standardized Unit
+                    interpret_text += f"- **{row['Biến số']}**: Khi biến này tăng (1 độ lệch chuẩn), **{target_col}** sẽ **{direction} khoảng {abs(row['Hệ số (Beta)']):,.2f}** đơn vị.\n"
+                
+                interpret_text += "\n*(Lưu ý: Các hệ số được tính trên dữ liệu đã chuẩn hóa để so sánh công bằng giữa các đơn vị khác nhau)*"
+                
+                st.info(interpret_text)
 
-        with st.expander("Precision–Recall Curve", expanded=False):
-            fig3=go.Figure(); fig3.add_scatter(x=_downsample_series(pr_recall), y=_downsample_series(pr_prec), mode="lines", name="PR")
-            fig3.update_layout(title="Precision–Recall Curve (Test set)", xaxis_title="Recall", yaxis_title="Precision", height=360, margin=dict(l=10,r=10,t=50,b=10))
-            st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False})
+            # 4.3 Residuals Audit
+            st.markdown("---")
+            st.markdown(f"#### 🕵️ Phân tích Bất thường (Residuals Audit)")
+            y_test, y_pred = res['y_test'], res['y_pred']
+            residuals = y_test - y_pred
+            
+            res_df = pd.DataFrame({
+                f"Thực tế ({res['target']})": y_test,
+                f"Dự báo ({res['target']})": y_pred,
+                "Độ lệch (Error)": residuals,
+                "Sai số %": (residuals / (y_test+0.001) * 100).round(1)
+            })
+            top_outliers = res_df.reindex(res_df["Độ lệch (Error)"].abs().sort_values(ascending=False).index).head(50)
+            
+            c_g1, c_g2 = st.columns([2, 1])
+            with c_g1:
+                fig = px.scatter(x=y_test, y=y_pred, labels={'x': 'Thực tế', 'y': 'Dự báo'}, title="Biểu đồ Thực tế vs Dự báo")
+                fig.add_shape(type="line", x0=y_test.min(), y0=y_test.min(), x1=y_test.max(), y1=y_test.max(), line=dict(color="Red", dash="dash"))
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("Điểm nằm càng xa đường đỏ nét đứt là các giao dịch có rủi ro cao (Mô hình không giải thích được).")
+            
+            with c_g2:
+                st.markdown("**Top giao dịch lệch nhiều nhất:**")
+                st.dataframe(top_outliers.style.format("{:,.2f}"), use_container_width=True, height=400)
+
+        else:
+            # Binary charts (ROC, Confusion Matrix) - Giữ nguyên code logic cũ nếu cần
+            st.markdown("#### 📐 Hệ số Log-Odds")
+            coef_df = pd.DataFrame({
+                "Feature": feats,
+                "Log-Odds Coeff": model.coef_[0]
+            }).sort_values("Log-Odds Coeff", key=abs, ascending=False)
+            st.dataframe(coef_df.style.format("{:,.4f}"), use_container_width=True)
+
+            st.markdown("#### Confusion Matrix & ROC")
+            c_conf, c_roc = st.columns(2)
+            with c_conf:
+                cm = confusion_matrix(y_test, y_pred)
+                fig_cm = px.imshow(cm, text_auto=True, labels=dict(x="Dự báo", y="Thực tế"), x=['False', 'True'], y=['False', 'True'], color_continuous_scale='Blues')
+                st.plotly_chart(fig_cm, use_container_width=True)
+            with c_roc:
+                fpr, tpr, _ = roc_curve(y_test, y_prob)
+                fig_roc = px.area(x=fpr, y=tpr, title=f'ROC Curve (AUC={m["roc"]:.2f})', labels=dict(x='False Positive Rate', y='True Positive Rate'))
+                fig_roc.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
+                st.plotly_chart(fig_roc, use_container_width=True)
+
+        # 4.4 WHAT-IF ANALYSIS (ĐÃ KHẮC PHỤC LỖI RESET)
+        st.markdown("---")
+        st.subheader("🧮 Giả lập Kịch bản (What-if Simulator)")
+        
+        with st.form("whatif_form"):
+            st.write("Điều chỉnh các thông số đầu vào để dự báo kết quả:")
+            cols = st.columns(3)
+            input_vals = []
+            
+            # Tạo input field cho từng biến
+            means = res['XY_mean']
+            for i, col in enumerate(res['features']):
+                default_val = float(means[col]) if col in means else 0.0
+                val = cols[i % 3].number_input(f"{col}", value=default_val)
+                input_vals.append(val)
+            
+            submit = st.form_submit_button("🔮 Dự báo ngay")
+        
+        if submit:
+            # Lấy scaler và model từ session state để dự báo
+            scaler_saved = res['scaler']
+            model_saved = res['model']
+            
+            # Transform input y hệt như lúc train
+            input_scaled = scaler_saved.transform([input_vals])
+            
+            if not res['is_binary']:
+                pred_val = model_saved.predict(input_scaled)[0]
+                st.success(f"💰 Giá trị dự báo **{res['target']}**: **{pred_val:,.2f}**")
+                
+                # So sánh với trung bình
+                avg_target = float(means[res['target']])
+                diff = pred_val - avg_target
+                pct = (diff / avg_target * 100) if avg_target != 0 else 0
+                st.caption(f"So với mức trung bình ({avg_target:,.0f}): {'Tăng' if diff>0 else 'Giảm'} **{abs(diff):,.0f}** ({pct:+.1f}%)")
+            else:
+                pred_prob = model_saved.predict_proba(input_scaled)[0, 1]
+                st.success(f"Khả năng thuộc lớp Positive: **{pred_prob:.1%}**")
+
+        else:
+            st.info("👈 Vui lòng chọn ít nhất 1 biến độc lập (X) để chạy mô hình.")
+# ============================== TAB 7 : PARETO & CONCENTRATION (ABC Analysis) ==============================
+with TAB7:
+    import numpy as np
+    import pandas as pd
+    import plotly.express as px
+    import plotly.graph_objects as go
+    import streamlit as st
+
+    st.subheader("⚖️ Pareto Principle (80/20 Rule) & Concentration Risk")
+    
+    # --- 1. Input & Settings ---
+    df = SS.get('df')
+    if df is None or df.empty:
+        st.info("Hãy nạp dữ liệu trước.")
+        st.stop()
+
+    # Lấy danh sách cột
+    all_cols = list(df.columns)
+    num_cols = list(df.select_dtypes(include=[np.number]).columns)
+
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns(4)
+        dim_col = c1.selectbox("🔍 Phân tích theo (Dimension)", ["—"] + all_cols, index=0, key="par_dim")
+        met_col = c2.selectbox("💰 Giá trị đo lường (Metric)", ["—"] + num_cols, index=0, key="par_met")
+        
+        threshold_A = c3.slider("Ngưỡng Nhóm A (Cumulative %)", 50, 90, 80, step=5, key="par_th_a", help="Mặc định 80%. Nhóm A đóng góp X% giá trị.")
+        threshold_B = c4.slider("Ngưỡng Nhóm B (Cumulative %)", threshold_A, 99, 95, step=1, key="par_th_b", help="Mặc định đến 95%. Nhóm B đóng góp tiếp theo.")
+
+    if dim_col != "—" and met_col != "—":
+        # --- 2. Calculation Core ---
+        # Groupby và tính tổng
+        df_agg = df.groupby(dim_col)[met_col].sum().reset_index()
+        
+        # Lọc giá trị dương để Pareto có ý nghĩa (hoặc lấy trị tuyệt đối tùy nghiệp vụ, ở đây ta lấy > 0)
+        df_agg = df_agg[df_agg[met_col] > 0].copy()
+        
+        if df_agg.empty:
+            st.warning("Không có dữ liệu > 0 để phân tích.")
+            st.stop()
+
+        # Sort giảm dần
+        df_agg = df_agg.sort_values(by=met_col, ascending=False).reset_index(drop=True)
+        
+        # Tính toán các chỉ số Pareto
+        total_val = df_agg[met_col].sum()
+        df_agg["Share"] = df_agg[met_col] / total_val
+        df_agg["CumSum"] = df_agg[met_col].cumsum()
+        df_agg["CumPct"] = df_agg["CumSum"] / total_val * 100.0
+        
+        # Phân lớp A, B, C
+        def classify_abc(cum_pct):
+            if cum_pct <= threshold_A: return "A"
+            elif cum_pct <= threshold_B: return "B"
+            return "C"
+        
+        # Lưu ý: Dòng ranh giới có thể bị lệch nhẹ do cumsum, logic này làm tròn theo dòng
+        df_agg["Class"] = df_agg["CumPct"].apply(classify_abc)
+        
+        # Chỉnh lại dòng biên (để đảm bảo nhóm A không bị rỗng nếu item đầu tiên > threshold)
+        if df_agg.loc[0, "Class"] != "A" and df_agg.loc[0, "CumPct"] > threshold_A:
+             df_agg.loc[0, "Class"] = "A" # Item đầu tiên quá lớn, nó vẫn là A (Super A)
+
+        # --- 3. Summary Metrics & Gini ---
+        summary = df_agg.groupby("Class").agg(
+            Count=(dim_col, "count"),
+            Value=(met_col, "sum")
+        ).reindex(["A", "B", "C"]).fillna(0)
+        
+        summary["Count %"] = summary["Count"] / len(df_agg) * 100
+        summary["Value %"] = summary["Value"] / total_val * 100
+
+        # Tính hệ số Gini (Concentration Index)
+        # Công thức Gini giản lược cho dữ liệu rời rạc
+        n = len(df_agg)
+        cum_y = df_agg["CumPct"].values / 100.0
+        cum_x = np.arange(1, n + 1) / n
+        # Diện tích dưới đường Lorenz (B) ~ xấp xỉ bằng hình thang
+        area_under_curve = np.trapz(cum_y, cum_x)
+        gini = 1 - 2 * area_under_curve
+        
+        # Hiển thị KPI
+        st.markdown("#### 🏁 Kết quả Phân tích ABC")
+        k1, k2, k3, k4 = st.columns(4)
+        
+        cnt_A = int(summary.loc["A", "Count"])
+        val_A_pct = summary.loc["A", "Value %"]
+        
+        k1.metric("Nhóm A (Vital Few)", f"{cnt_A} items", f"Chiếm {val_A_pct:.1f}% Giá trị")
+        k2.metric("Nhóm C (Trivial Many)", f"{int(summary.loc['C', 'Count'])} items", f"Chiếm {summary.loc['C', 'Value %']:.1f}% Giá trị")
+        k3.metric("Tổng Items", f"{n:,}")
+        k4.metric("Hệ số Gini", f"{gini:.3f}", 
+                  help="0: Bình đẳng tuyệt đối (dàn đều)\n1: Bất bình đẳng tuyệt đối (tập trung vào 1 item). \nGini > 0.6 là rủi ro tập trung cao.")
+
+        # --- 4. Visualization (Lorenz Curve) ---
+        # Giới hạn hiển thị để chart không bị lag nếu có quá nhiều item
+        MAX_SHOW = 200
+        if n > MAX_SHOW:
+            st.caption(f"⚠️ Biểu đồ chỉ hiển thị Top {MAX_SHOW} items hàng đầu để tối ưu hiệu năng (Số liệu tính toán vẫn dùng toàn bộ {n} items).")
+            plot_df = df_agg.head(MAX_SHOW).copy()
+        else:
+            plot_df = df_agg.copy()
+
+        fig = go.Figure()
+        
+        # Bar chart (Giá trị)
+        fig.add_trace(go.Bar(
+            x=plot_df[dim_col].astype(str),
+            y=plot_df[met_col],
+            name=met_col,
+            marker_color=plot_df["Class"].map({"A": "#ff7675", "B": "#ffeaa7", "C": "#74b9ff"}),
+            text=plot_df["Class"],
+            hovertemplate="%{x}<br>Val: %{y:,.0f}<br>Class: %{text}<extra></extra>"
+        ))
+
+        # Line chart (Lũy kế %)
+        fig.add_trace(go.Scatter(
+            x=plot_df[dim_col].astype(str),
+            y=plot_df["CumPct"],
+            name="Cumulative %",
+            yaxis="y2",
+            mode="lines",
+            line=dict(color="#2d3436", width=2)
+        ))
+
+        # Đường tham chiếu 80%
+        fig.add_hline(y=threshold_A, line_dash="dot", line_color="gray", annotation_text=f"Cut-off A ({threshold_A}%)")
+
+        fig.update_layout(
+            title="Biểu đồ Pareto (Lorenz Curve)",
+            xaxis=dict(title=dim_col, type='category'),
+            yaxis=dict(title=met_col),
+            yaxis2=dict(title="Cumulative %", overlaying="y", side="right", range=[0, 105]),
+            legend=dict(x=0.8, y=1.1, orientation="h"),
+            height=500,
+            bargap=0.1
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- 5. Detail Table (Drill-down) ---
+        with st.expander("📄 Chi tiết phân loại ABC (Danh sách đầy đủ)", expanded=True):
+            # Filter tool
+            fil_c = st.radio("Lọc theo nhóm:", ["All", "A (Quan trọng)", "B (Trung bình)", "C (Ít quan trọng)"], horizontal=True)
+            
+            view_df = df_agg.copy()
+            if fil_c == "A (Quan trọng)": view_df = view_df[view_df["Class"]=="A"]
+            elif fil_c == "B (Trung bình)": view_df = view_df[view_df["Class"]=="B"]
+            elif fil_c == "C (Ít quan trọng)": view_df = view_df[view_df["Class"]=="C"]
+            
+            # Format số liệu thủ công để tránh lỗi version
+            view_df_show = view_df.copy()
+            view_df_show[met_col] = view_df_show[met_col].map(lambda x: f"{x:,.0f}")
+            view_df_show["Share"] = view_df_show["Share"].map(lambda x: f"{x*100:.2f}%")
+            view_df_show["CumPct"] = view_df_show["CumPct"].map(lambda x: f"{x:.2f}%")
+            
+            st.dataframe(view_df_show, use_container_width=True, hide_index=True)
+
+        # --- 6. Audit Insight / Recommendation ---
+        st.info(f"""
+        **💡 Audit Insight:**
+        - **Nhóm A:** Gồm **{cnt_A}** {dim_col} ({(cnt_A/n*100):.1f}% số lượng) nhưng đóng góp **{val_A_pct:.1f}%** tổng {met_col}.
+          👉 **Hành động:** Kiểm kê định kỳ 100%, đàm phán giá tốt nhất, ưu tiên chăm sóc (nếu là khách hàng).
+        - **Nhóm C:** Gồm **{int(summary.loc['C', 'Count'])}** {dim_col} nhưng chỉ đóng góp **{summary.loc['C', 'Value %']:.1f}%** giá trị.
+          👉 **Hành động:** Xem xét loại bỏ mã hàng (nếu là Product), tự động hóa quy trình (nếu là Customer nhỏ) để giảm chi phí quản lý.
+        """)
+    else:
+        st.info("👈 Vui lòng chọn Dimension và Metric ở trên để bắt đầu phân tích.")
