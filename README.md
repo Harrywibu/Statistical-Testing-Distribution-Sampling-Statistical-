@@ -1,19 +1,30 @@
-📊 Audit Statistics App
-Audit Statistics App là một ứng dụng phân tích dữ liệu toàn diện được xây dựng trên nền tảng Streamlit, hỗ trợ đắc lực cho công việc Kiểm toán (Audit), Kiểm soát nội bộ và Phân tích dữ liệu (Data Analytics).
+# 📊 Audit Statistics App
 
-Ứng dụng cung cấp quy trình khép kín từ kiểm tra chất lượng dữ liệu, phân tích xu hướng kinh doanh, đến áp dụng các kỹ thuật kiểm toán chuyên sâu như Benford Law, Pareto (ABC Analysis) và Machine Learning để phát hiện gian lận/bất thường.
+**Audit Statistics App** là ứng dụng phân tích dữ liệu được xây dựng trên nền tảng **Streamlit**, hỗ trợ các chuyên gia Kiểm toán, Tài chính và Phân tích dữ liệu thực hiện các thủ tục kiểm tra, đánh giá rủi ro và phát hiện gian lận một cách tự động và trực quan.
 
-🛠️ Yêu cầu hệ thống & Cài đặt
-1. Yêu cầu
-Python 3.8 trở lên.
+---
 
-Các thư viện Python cần thiết.
+## 🌟 Tính năng nổi bật
 
-2. Cài đặt thư viện
-Tạo file requirements.txt với nội dung sau hoặc chạy lệnh cài đặt trực tiếp:
+* **Kiểm tra chất lượng dữ liệu:** Tự động phát hiện giá trị thiếu, giá trị rỗng, và các vấn đề định dạng.
+* **Phát hiện gian lận (Benford Law):** Kỹ thuật kiểm toán chuyên sâu để tìm các dữ liệu tài chính bị thao túng.
+* **Phân tích hồi quy & Rủi ro (Regression):** Tìm kiếm các giao dịch bất thường (Outliers) không tuân theo xu hướng chung.
+* **Phân tích Pareto (ABC):** Xác định rủi ro tập trung (Concentration Risk) theo nguyên tắc 80/20.
+* **Kiểm định thống kê:** So sánh sự khác biệt giữa các nhóm dữ liệu (ANOVA, T-test, Kruskal-Wallis).
+* **Biểu đồ tương tác:** Hỗ trợ Drill-down (khoanh vùng dữ liệu) sâu theo từng vùng, kênh, hoặc thời gian.
 
-Plaintext
+---
 
+## 🛠️ Cài đặt & Yêu cầu hệ thống
+
+### 1. Yêu cầu
+* Python 3.8 trở lên.
+* Khuyến nghị sử dụng môi trường ảo (virtualenv/conda).
+
+### 2. Cài đặt thư viện
+Tạo file `requirements.txt` với nội dung sau:
+
+```txt
 streamlit
 pandas
 numpy
@@ -24,135 +35,89 @@ statsmodels
 openpyxl
 pyarrow
 duckdb
-Chạy lệnh cài đặt trong Terminal/Command Prompt:
+Chạy lệnh cài đặt:
 
 Bash
 
 pip install -r requirements.txt
-3. Khởi chạy ứng dụng
-Tại thư mục chứa file Audit_Statistics_App.py, chạy lệnh:
+3. Chạy ứng dụng
+Mở Terminal hoặc Command Prompt tại thư mục chứa file code và chạy lệnh:
 
 Bash
 
 streamlit run Audit_Statistics_App.py
-🚀 Quy trình làm việc (Workflow)
-Luồng làm việc của ứng dụng được thiết kế theo trình tự logic: Input -> Quality Check -> General Analysis -> Deep Dive & Audit.
+🚀 Hướng dẫn sử dụng (Workflow)
+Quy trình làm việc được thiết kế theo luồng: Nạp dữ liệu ➔ Kiểm tra tổng quan ➔ Phân tích sâu.
 
-🟢 Bước 1: Nạp dữ liệu (Sidebar)
-Đây là bước bắt buộc đầu tiên.
+📂 Bước 1: Nạp dữ liệu (Sidebar)
+Đây là bước bắt buộc để kích hoạt ứng dụng.
 
-Upload File: Kéo thả file .csv hoặc .xlsx vào khung bên trái.
+Upload: Tải lên file .csv hoặc .xlsx.
 
-Cấu hình đọc file (Excel):
+Cấu hình (Excel): Chọn Sheet, dòng Header và số dòng cần bỏ qua (nếu có).
 
-Chọn Sheet cần đọc.
+Load: Nhấn nút 📥 Load full data. Dữ liệu chỉ được xử lý khi bạn thấy thông báo "Loaded...".
 
-Header row: Chọn dòng chứa tiêu đề cột (thường là 1).
+Cache: Bật "Disk cache" để tăng tốc độ nếu làm việc với file lớn.
 
-Skip rows: Số dòng trống cần bỏ qua ở đầu file (nếu có).
+🔍 Bước 2: Các Tab phân tích
+Tab 0: Data Quality
+Xem nhanh sức khỏe dữ liệu: Số lượng dòng, giá trị Null (NaN), số 0, giá trị duy nhất.
 
-Preview & Filter Column:
+Giúp xác định nhanh các cột dữ liệu "bẩn" cần xử lý.
 
-Xem trước bảng dữ liệu nhỏ (50-500 dòng).
+Tab 1: Overview (Sales Activity)
+Yêu cầu: Cần chọn (map) các cột tương ứng: Time, Revenue, Customer, Product...
 
-Chọn các cột cần thiết để load (giúp giảm bộ nhớ nếu file quá lớn).
+Phân tích:
 
-LOAD DATA: Nhấn nút 📥 Load full data.
+Xu hướng doanh thu (Trend) theo tháng/quý.
 
-Lưu ý: Bạn phải nhấn nút này thì dữ liệu mới được nạp vào bộ nhớ để các Tab phân tích hoạt động.
+Phân tích tỷ lệ chiết khấu (Discount Analysis).
 
-Cache (Tùy chọn): Bật "Disk cache" để tăng tốc độ nếu bạn thao tác reload nhiều lần trên cùng một file lớn.
+So sánh Doanh thu vs Sản lượng.
 
-🟢 Bước 2: Kiểm tra sức khỏe dữ liệu (Tab 0)
-Mục tiêu: Đảm bảo dữ liệu sạch trước khi phân tích.
-
-Truy cập Tab 0) Data Quality.
-
-Kiểm tra:
-
-Số lượng dòng (Rows).
-
-Giá trị thiếu (NaN, Blank).
-
-Giá trị bằng 0 (Zero).
-
-Số lượng giá trị duy nhất (Unique).
-
-Hành động: Nếu thấy cột quan trọng (VD: Doanh thu) có quá nhiều NaN, hãy quay lại xử lý file gốc.
-
-🟢 Bước 3: Phân tích tổng quan & Kinh doanh (Tab 1)
-Mục tiêu: Hiểu bức tranh toàn cảnh về hoạt động kinh doanh (Sales, Transactions).
-
-Mapping (Quan trọng): Tại khung "Import Input Data", bạn cần chỉ định cột nào tương ứng với:
-
-Time: Ngày chứng từ/hạch toán.
-
-Revenue: Số tiền/Doanh thu.
-
-Customer, Product, Region, Channel.
-
-Xem Dashboard:
-
-Trend: Biểu đồ xu hướng theo Tháng/Quý/Năm.
-
-Discount Analysis: Phân tích tỷ lệ chiết khấu (phát hiện chiết khấu cao bất thường).
-
-Revenue vs Weight: So sánh tương quan Doanh thu và Sản lượng.
-
-Pareto/Contribution: Top đóng góp lớn nhất.
-
-Drill-down: Sử dụng bộ lọc trong từng biểu đồ để "khoanh vùng" dữ liệu (Ví dụ: Chỉ xem xu hướng của 1 Chi nhánh cụ thể).
-
-🟢 Bước 4: Phân tích sâu & Phát hiện rủi ro (Các Tab 2-7)
 Tab 2: Profiling (Phân phối)
-Dùng để kiểm tra cấu trúc của 1 cột số (Numeric).
+Chọn 1 cột số (Numeric) để xem biểu đồ Histogram và Box Plot.
 
-Xem Histogram (biểu đồ tần suất) và Box Plot (biểu đồ hộp) để phát hiện các giá trị ngoại lai (Outliers) nằm xa vùng trung tâm.
-
-Kiểm tra tính chuẩn (Normality) của dữ liệu.
+Hệ thống tự động nhận định về độ lệch (Skewness) và kiểm định tính chuẩn (Normality) của dữ liệu.
 
 Tab 3: Correlation (Tương quan)
-Tìm mối liên hệ giữa các biến số (Ví dụ: Chi phí quảng cáo có đi cùng Doanh thu không?).
+Tìm mối liên hệ giữa biến mục tiêu (Target) và các biến tác động (Drivers).
 
-Scatter Plot: Vẽ biểu đồ phân tán để nhìn rõ các điểm bất thường phá vỡ quy luật tương quan.
+Cảnh báo hiện tượng đa cộng tuyến (Collinearity) giữa các biến độc lập.
 
 Tab 4: Benford Law (Phát hiện gian lận) 🕵️
-Công dụng: Kỹ thuật Audit kinh điển để phát hiện số liệu bị "xào nấu" (manipulated).
+Công cụ mạnh mẽ cho kiểm toán viên.
 
-Cách dùng: Chọn cột số tiền -> Chạy Benford 1D (chữ số đầu) hoặc 2D (2 chữ số đầu).
+So sánh tần suất xuất hiện của chữ số đầu tiên trong dữ liệu thực tế (Observed) so với lý thuyết (Expected).
 
-Đọc kết quả:
+Cảnh báo: Các thanh màu đỏ cho thấy sự sai lệch đáng ngờ cần kiểm tra chứng từ.
 
-Đường Observed (Thực tế) lệch xa đường Expected (Lý thuyết).
+Tab 5: Hypothesis (Kiểm định giả thuyết)
+So sánh trung bình/trung vị giữa các nhóm (VD: Doanh thu các miền có khác nhau thực sự không?).
 
-Các thanh màu đỏ/cảnh báo đỏ: Dấu hiệu rủi ro cao cần kiểm tra chứng từ.
-
-Tab 5: ANOVA & Hypothesis (Kiểm định)
-So sánh xem có sự khác biệt thực sự giữa các nhóm không (VD: Doanh thu trung bình giữa 3 miền Bắc-Trung-Nam có khác nhau không hay chỉ là ngẫu nhiên?).
-
-Hỗ trợ cả kiểm định tham số (ANOVA) và phi tham số (Kruskal-Wallis/Mann-Whitney).
+Tự động gợi ý dùng kiểm định tham số (ANOVA) hoặc phi tham số (Kruskal-Wallis) dựa trên dữ liệu.
 
 Tab 6: Regression (Dự báo & Audit) 🔮
-Mục tiêu: Tìm các giao dịch bất thường mà mô hình không giải thích được.
+Chạy mô hình hồi quy để dự báo giá trị.
 
-Cách dùng: Chọn biến mục tiêu (Y) và các biến giải thích (X).
+Residual Audit: Quan trọng nhất cho kiểm toán. Hệ thống tìm ra các giao dịch có chênh lệch lớn nhất giữa Thực tế và Dự báo (Outliers) - đây là các giao dịch rủi ro cao.
 
-Residual Audit: Ứng dụng sẽ tính toán chênh lệch giữa Thực tế và Dự báo.
+What-if Simulator: Giả lập kịch bản thay đổi đầu vào.
 
-Outliers (Dư số lớn): Là các giao dịch rủi ro cao (VD: Doanh thu quá cao/thấp so với điều kiện bình thường).
+Tab 7: Pareto (80/20 Analysis)
+Phân tích nhóm ABC:
 
-Tab 7: Pareto (ABC Analysis) ⚖️
-Quy tắc 80/20: Xác định nhóm "Vital Few" (Nhóm A - Số lượng ít nhưng giá trị lớn).
+Nhóm A: Chiếm 80% giá trị (Cần kiểm soát chặt chẽ).
 
-Ứng dụng: Tập trung nguồn lực kiểm toán vào nhóm A (chiếm 80% giá trị).
+Nhóm B & C: Số lượng nhiều nhưng giá trị thấp.
 
-Gini Coefficient: Đo lường độ tập trung rủi ro.
+Tính hệ số Gini để đo lường rủi ro tập trung.
 
-💡 Mẹo sử dụng (Tips)
-Format dữ liệu: File Excel/CSV nên có dòng tiêu đề (Header) nằm ở dòng 1, không nên có các ô merge (trộn ô) phức tạp.
+💡 Mẹo (Tips)
+Drill-down Filter: Sử dụng tính năng bộ lọc (xuất hiện ở Tab 1, 2, 3, 6) để khoanh vùng dữ liệu (ví dụ: Chỉ chạy Benford cho 1 Chi nhánh cụ thể).
 
-Drill-down Filter: Tính năng này có ở Tab 1, 2, 3, 6. Hãy tận dụng nó để lọc dữ liệu (ví dụ: lọc bỏ các giao dịch nội bộ, lọc theo vùng miền) trước khi chạy mô hình để có kết quả chính xác hơn.
+File lớn: Với dữ liệu > 100MB, hãy ưu tiên dùng định dạng .csv để nạp nhanh hơn gấp nhiều lần so với .xlsx.
 
-Bộ nhớ: Với file lớn (>100MB), nên ưu tiên dùng .csv thay vì .xlsx để nạp nhanh hơn.
-
-Benford: Chỉ áp dụng cho tập dữ liệu tự nhiên (Doanh thu, Chi phí). Không áp dụng cho dữ liệu bị giới hạn (như số điện thoại, mã số thuế, hoặc dữ liệu đã bị cắt ngọn như "chỉ lấy hóa đơn > 1 triệu").
+Benford: Chỉ áp dụng cho tập dữ liệu tự nhiên (Doanh thu, Chi phí). Không dùng cho dữ liệu bị giới hạn (Số điện thoại, Mã số thuế) hoặc dữ liệu đã qua ngưỡng cắt (Cut-off).
