@@ -1,201 +1,158 @@
-# Audit Statistics — README (Public)
+📊 Audit Statistics App
+Audit Statistics App là một ứng dụng phân tích dữ liệu toàn diện được xây dựng trên nền tảng Streamlit, hỗ trợ đắc lực cho công việc Kiểm toán (Audit), Kiểm soát nội bộ và Phân tích dữ liệu (Data Analytics).
 
-> **Mục tiêu:** Cung cấp một ứng dụng Streamlit “all‑in‑one” cho **kiểm toán nội bộ** và **phân tích kinh doanh** (sales/operations), giúp **kiểm tra chất lượng dữ liệu**, **khai phá phân phối**, **tìm mối liên hệ**, **phát hiện bất thường (Benford)**, **kiểm định thống kê (ANOVA/phi tham số)** và **mô hình hoá (Linear/Logistic)** — kèm **Export** báo cáo.
+Ứng dụng cung cấp quy trình khép kín từ kiểm tra chất lượng dữ liệu, phân tích xu hướng kinh doanh, đến áp dụng các kỹ thuật kiểm toán chuyên sâu như Benford Law, Pareto (ABC Analysis) và Machine Learning để phát hiện gian lận/bất thường.
 
----
+🛠️ Yêu cầu hệ thống & Cài đặt
+1. Yêu cầu
+Python 3.8 trở lên.
 
-## 1) Bức tranh tổng quan
+Các thư viện Python cần thiết.
 
-**Khi nào dùng?** Khi bạn muốn **soát, phân tích và kể “câu chuyện dữ liệu”** cho team kinh doanh/kiểm toán mà không cần viết code.
+2. Cài đặt thư viện
+Tạo file requirements.txt với nội dung sau hoặc chạy lệnh cài đặt trực tiếp:
 
-**Bạn nhận được gì?**
-- Một **luồng làm việc rõ ràng**: Ingest → Data Quality → Overview → Distribution → Correlation → Benford → ANOVA → Regression → Export.
-- **Dashboard theo tab** với KPI/biểu đồ “nói tiếng business”.
-- **Drill‑down** vào điểm lệch/khác biệt đáng chú ý.
-- **Export** bảng + biểu đồ + nhận định đã hiển thị trong từng tab.
+Plaintext
 
----
+streamlit
+pandas
+numpy
+plotly
+scipy
+scikit-learn
+statsmodels
+openpyxl
+pyarrow
+duckdb
+Chạy lệnh cài đặt trong Terminal/Command Prompt:
 
-## 2) Luồng làm việc (workflow)
+Bash
 
-```text
-[Upload/Load full] → [Data Quality] → [Overview] → [Profiling/Distribution]
-→ [Correlation] → [Benford 1D/2D] → [ANOVA/Nonparametric] → [Regression] → [Export]
-```
+pip install -r requirements.txt
+3. Khởi chạy ứng dụng
+Tại thư mục chứa file Audit_Statistics_App.py, chạy lệnh:
 
-**Nguyên tắc “đi đúng flow”**  
-1) **Nạp dữ liệu** (CSV/XLSX) → chọn cột cần thiết → **Load full** để mọi tab cùng chạy trên **full data**.  
-2) **Data Quality** để nắm tình trạng sạch/bẩn của từng cột (valid, nan, blank, zero, unique…).  
-3) **Overview** để xem trend, cơ cấu đóng góp, KPI chính.  
-4) **Distribution** để hiểu hình dạng dữ liệu (ECDF, box/violin), phát hiện outlier/đuôi dài.  
-5) **Correlation** để xem biến nào liên quan mạnh tới mục tiêu (Revenue/Discount%…).  
-6) **Benford** để soát các giá trị tiền tệ theo chữ số đầu (1D/2D) và drill‑down lệch ≥ 5%.  
-7) **ANOVA/Nonparametric** để so sánh nhóm có khác biệt có ý nghĩa hay không.  
-8) **Regression** để mô tả/ước lượng (Linear) hoặc phân loại nhị phân (Logistic).  
-9) **Export** để kết báo cáo theo tab đã xem.
+Bash
 
----
-
-## 3) Cài đặt & chạy
-
-### Yêu cầu môi trường
-- **Python** 3.10–3.13 (khuyến nghị môi trường ảo)
-- Thư viện cốt lõi: `streamlit`, `pandas`, `numpy`, `pyarrow`, `scipy`, `statsmodels`, `scikit-learn`
-- Mở file Excel: `openpyxl`
-- Trực quan: `plotly` (khuyến nghị)
-- **Tuỳ chọn cho Export** (nếu cần Word/PDF/Hình):  
-  - Word: `python-docx`  
-  - PDF / ảnh biểu đồ: `pymupdf` (tên gói `PyMuPDF`) và/hoặc `kaleido`
-
-> Nếu bạn dùng **CSV lớn**, `pyarrow` giúp nạp nhanh hơn và tiết kiệm bộ nhớ.
-
-### Cài đặt nhanh
-```bash
-# 1) Tạo & kích hoạt môi trường ảo (ví dụ Windows PowerShell)
-python -m venv .venv
-.venv\Scripts\activate
-
-# 2) Cài thư viện
-pip install -U pip
-pip install streamlit pandas numpy pyarrow scipy statsmodels scikit-learn openpyxl plotly
-# (Tuỳ chọn Export)
-pip install python-docx PyMuPDF kaleido
-```
-
-### Chạy ứng dụng
-```bash
 streamlit run Audit_Statistics_App.py
-```
+🚀 Quy trình làm việc (Workflow)
+Luồng làm việc của ứng dụng được thiết kế theo trình tự logic: Input -> Quality Check -> General Analysis -> Deep Dive & Audit.
 
----
+🟢 Bước 1: Nạp dữ liệu (Sidebar)
+Đây là bước bắt buộc đầu tiên.
 
-## 4) Chuẩn bị dữ liệu (gợi ý business)
+Upload File: Kéo thả file .csv hoặc .xlsx vào khung bên trái.
 
-- **Cột thời gian**: định dạng datetime nhất quán (YYYY‑MM‑DD…), không trộn text.  
-- **Cột giá trị**: `Revenue`/`Amount` dạng số, tránh ký tự tiền tệ/khoảng trắng.  
-- **Cột nhóm/chiều**: `Product`, `Customer`, `Channel`, `Region`…  
-- **Chiết khấu/giá trị âm**: quy ước rõ ràng (âm = hoàn/giảm trừ?).  
-- **Giảm cột thừa** ngay khi nạp để nhẹ bộ nhớ (chỉ tick các cột thực sự dùng).
+Cấu hình đọc file (Excel):
 
-> **Best practice**: thống nhất mapping tên cột một lần (time, revenue, weight, product, customer, region…), hạn chế “đổi cột giữa chừng” vì có thể làm thay đổi kết quả biểu đồ.
+Chọn Sheet cần đọc.
 
----
+Header row: Chọn dòng chứa tiêu đề cột (thường là 1).
 
-## 5) Hướng dẫn theo từng tab (ngôn ngữ business/audit)
+Skip rows: Số dòng trống cần bỏ qua ở đầu file (nếu có).
 
-### 0) **Data Quality** — *“Dữ liệu sạch tới đâu?”*
-- **Mục đích**: chụp nhanh sức khoẻ dữ liệu theo từng cột.
-- **Bạn xem gì**: `type`, `rows`, `valid%`, `nan%`, `blank%` (text), `zero%` (numeric), `unique`, `memory_MB`.
-- **Cách đọc**: 
-  - Cột tính toán doanh thu/chiết khấu cần **valid% cao**, **nan/blank/zero hợp lý**.
-  - ID nên có `unique` lớn; cột thời gian phải đúng **kiểu datetime**.
+Preview & Filter Column:
 
----
+Xem trước bảng dữ liệu nhỏ (50-500 dòng).
 
-### 1) **Overview — Sales Activities** *“Bức tranh lớn”*
-- **Mục đích**: tổng quan trend + cơ cấu đóng góp.
-- **Thao tác nhanh**: chọn **Time**, **Revenue**, (tuỳ chọn **Weight**), lọc theo **Region/Channel/Product/Customer**.
-- **Bạn xem gì**:
-  - **KPI**: Tổng Revenue, #Orders, #Products, tỉ trọng theo nghiệp vụ (nếu app có phần mapping theo giao dịch).
-  - **Trend**: Cột (Revenue) + Line (%Δ so kỳ trước/YoY).
-  - **Revenue vs Weight** theo thời gian → xem mối quan hệ doanh thu–sản lượng.
-  - **Top Contribution** & **Pie** theo chiều chọn (Top‑N, gộp nhãn dài).
-- **Cách đọc**:
-  - %Δ âm nhiều kỳ → rủi ro sụt doanh. Pie tập trung cao → rủi ro phụ thuộc khách hàng/sản phẩm. Weight ↑ mà Revenue không ↑ → cần xem lại giá/chiết khấu.
+Chọn các cột cần thiết để load (giúp giảm bộ nhớ nếu file quá lớn).
 
----
+LOAD DATA: Nhấn nút 📥 Load full data.
 
-### 2) **Profiling / Distribution** — *“Hình dạng dữ liệu”*
-- **Mục đích**: hiểu phân phối, phát hiện lệch/đuôi dài/outlier.
-- **Bạn xem gì**:
-  - **ECDF**: đường tích luỹ + Q1/Median/Mean/Q3.
-  - **Spread**: **Box** (fence/outlier) & **Violin** (mật độ).
-- **Cách đọc**:
-  - Skew dương mạnh → một số đơn rất lớn kéo trung bình; hãy báo cáo cả **median/percentile**.
-  - Outlier nhiều → rà quy trình nhập liệu/chính sách khuyến mại.
+Lưu ý: Bạn phải nhấn nút này thì dữ liệu mới được nạp vào bộ nhớ để các Tab phân tích hoạt động.
 
----
+Cache (Tùy chọn): Bật "Disk cache" để tăng tốc độ nếu bạn thao tác reload nhiều lần trên cùng một file lớn.
 
-### 3) **Correlation** — *“Biến nào liên quan mạnh tới mục tiêu?”*
-- **Mục đích**: nhận diện biến X ảnh hưởng tới Y (ví dụ Y=Revenue/Discount%).
-- **Thao tác**: chọn **Target (Y)**, danh sách **X**, **Pearson** (tuyến tính) hoặc **Spearman** (xếp hạng/đơn điệu).
-- **Bạn xem gì**: 
-  - **Bar r + 95% CI** (Pearson) kèm dấu (+/–) & mức độ (“yếu/trung bình/mạnh”). 
-  - **Heatmap** cho nhóm biến tiêu biểu; **Scatter** cho cặp X–Y top để nhìn hình dạng quan hệ.
-- **Cách đọc**:
-  - `|r| ≥ 0.5` thường đáng chú ý (tuỳ ngành). Spearman hữu dụng khi có outlier/phi tuyến.
+🟢 Bước 2: Kiểm tra sức khỏe dữ liệu (Tab 0)
+Mục tiêu: Đảm bảo dữ liệu sạch trước khi phân tích.
 
----
+Truy cập Tab 0) Data Quality.
 
-### 4) **Benford’s Law** — *1D & 2D (chữ số đầu)*
-- **Mục đích**: soát số tiền/giá trị nghi ngờ (gian lận/nhập sai), đặc biệt khi dữ liệu lớn.
-- **Thao tác**: chọn cột **Amount** cho **1D** và **2D**; chạy từng nút.
-- **Bạn xem gì**:
-  - **Obs% vs Exp%** và **diff%**, chất lượng dữ liệu cột (**NaN/None/0/+/–/Used**).
-  - **Drill‑down** tự động cho **digit lệch ≥ 5%** (chế độ “Ngắn gọn”/“Xổ hết”).
-- **Cách đọc (auditing)**:
-  - Lệch Benford không tự động = gian lận. Hãy drill‑down theo **đơn/chính sách/nhân viên/khách hàng** liên quan những digit lệch mạnh & lặp lại.
+Kiểm tra:
 
----
+Số lượng dòng (Rows).
 
-### 5) **Hypothesis — ANOVA & Nonparametric**
-- **Mục đích**: so sánh trung bình/medians giữa các **nhóm** (khu vực/kênh/sản phẩm).
-- **Thao tác**: **One‑way** hoặc bật **Two‑way**, chọn **Top‑N nhóm**, hiển thị **95% CI**, **Pairwise (Holm)** nếu cần.
-- **Cách đọc**:
-  - p‑value < 0.05 → có **khác biệt có ý nghĩa** giữa nhóm; dùng **pairwise** để biết nhóm nào khác nhóm nào.
-  - Dữ liệu lệch/nhiễu → cân nhắc kiểm định **không tham số** (Kruskal‑Wallis/Friedman/Wilcoxon).
+Giá trị thiếu (NaN, Blank).
 
----
+Giá trị bằng 0 (Zero).
 
-### 6) **Regression** — *Mô tả/Ước lượng & Phân loại*
-- **Linear Regression**:
-  - **Kết quả**: R², RMSE, MAE, MAPE, biểu đồ Pred vs Actual, Bias, % trong ±10%, hệ số nổi bật.
-  - **Đọc**: R² cao nhưng residual có pattern → xem lại biến/biến đổi (log/scale); MAPE cao ở giá trị nhỏ → dùng median/percentile hoặc biến đổi.
-- **Logistic Regression**:
-  - **Kết quả**: Accuracy, Precision, Recall, F1, ROC‑AUC, PR‑AUC; gợi ý **threshold** (F1/Youden), **ROC/PR curve**, **Confusion matrix**, **Odds Ratio**.
-  - **Đọc**: ROC‑AUC ≥ 0.7 thường khá; chọn threshold theo **mục tiêu business** (ưu tiên Recall khi sàng lọc rủi ro).
+Số lượng giá trị duy nhất (Unique).
 
----
+Hành động: Nếu thấy cột quan trọng (VD: Doanh thu) có quá nhiều NaN, hãy quay lại xử lý file gốc.
 
-### 7) **Export** — *Kết xuất báo cáo*
-- Ứng dụng **tự ghi nhận** các **bảng/biểu đồ** bạn đã xem theo từng tab.
-- Trong tab **Export**, bạn có thể **chọn tab** muốn xuất; hệ thống sẽ kết xuất **đúng hình và bảng** đã hiển thị (kèm nhận định nếu có).
-- **Định dạng đầu ra** tuỳ vào thư viện sẵn có (ví dụ Word/PDF/ảnh).
+🟢 Bước 3: Phân tích tổng quan & Kinh doanh (Tab 1)
+Mục tiêu: Hiểu bức tranh toàn cảnh về hoạt động kinh doanh (Sales, Transactions).
 
-> Mẹo: Hoàn tất việc xem/chỉnh từng tab **trước khi Export** để báo cáo khớp 100% nội dung bạn đã duyệt.
+Mapping (Quan trọng): Tại khung "Import Input Data", bạn cần chỉ định cột nào tương ứng với:
 
----
+Time: Ngày chứng từ/hạch toán.
 
-## 6) Mẹo & Best Practices
+Revenue: Số tiền/Doanh thu.
 
-- **Đi đúng thứ tự tab**, tránh bỏ qua **Data Quality**.
-- **Chốt mapping cột** (time/revenue/weight/product/customer/region) sớm để mọi biểu đồ nhất quán.
-- Dữ liệu có **outlier/đuôi dài** → xem **ECDF** & dùng **Spearman** ngoài Pearson.
-- Với **Benford**, coi đó là **đèn vàng**; kết hợp drill‑down theo nghiệp vụ để đưa ra kết luận.
-- **Bộ màu theo tab**: dùng preset (Business Light/Dark, Colorblind Safe, Audit Teal, Monochrome) để dễ đọc trong báo cáo.
+Customer, Product, Region, Channel.
 
----
+Xem Dashboard:
 
-## 7) Khắc phục sự cố (FAQ)
+Trend: Biểu đồ xu hướng theo Tháng/Quý/Năm.
 
-- **Tải XLSX bị lỗi `BadZipFile`** → hãy lưu lại file Excel dạng **.xlsx** chuẩn, hoặc xuất CSV; đảm bảo `openpyxl` đã cài đặt.
-- **CSV lớn mở chậm** → cài `pyarrow`; chọn ít cột ngay khi nạp.
-- **Biểu đồ không hiện/Plotly không cài** → cài `plotly>=5` (khuyến nghị). Nếu thiếu, một số hình có thể không hiển thị.
-- **Ký tự tiền tệ/%, khoảng trắng** → chuẩn hoá trước khi nạp; cột số chỉ nên chứa số/dấu thập phân.
-- **Export không ra PDF/ảnh** → cài `PyMuPDF` và/hoặc `kaleido`; kiểm tra quyền ghi thư mục đầu ra.
+Discount Analysis: Phân tích tỷ lệ chiết khấu (phát hiện chiết khấu cao bất thường).
 
----
+Revenue vs Weight: So sánh tương quan Doanh thu và Sản lượng.
 
-## 8) Quyền riêng tư & Bảo mật dữ liệu
+Pareto/Contribution: Top đóng góp lớn nhất.
 
-- Dữ liệu của bạn chỉ xử lý **cục bộ** trên máy chạy ứng dụng (trừ khi bạn tự triển khai máy chủ).
-- Kiểm tra chính sách nội bộ khi xuất báo cáo có chứa dữ liệu khách hàng/giá bán.
+Drill-down: Sử dụng bộ lọc trong từng biểu đồ để "khoanh vùng" dữ liệu (Ví dụ: Chỉ xem xu hướng của 1 Chi nhánh cụ thể).
 
----
+🟢 Bước 4: Phân tích sâu & Phát hiện rủi ro (Các Tab 2-7)
+Tab 2: Profiling (Phân phối)
+Dùng để kiểm tra cấu trúc của 1 cột số (Numeric).
 
-## 9) Góp ý & Phát triển
+Xem Histogram (biểu đồ tần suất) và Box Plot (biểu đồ hộp) để phát hiện các giá trị ngoại lai (Outliers) nằm xa vùng trung tâm.
 
-- Tạo issue/PR nếu bạn muốn bổ sung tab, preset màu, hoặc mẫu export.
-- Định hướng tương lai: template nhận định auto theo tab, thêm Nonparametric sâu hơn, và tuỳ chọn export “one‑click”.
+Kiểm tra tính chuẩn (Normality) của dữ liệu.
 
+Tab 3: Correlation (Tương quan)
+Tìm mối liên hệ giữa các biến số (Ví dụ: Chi phí quảng cáo có đi cùng Doanh thu không?).
 
+Scatter Plot: Vẽ biểu đồ phân tán để nhìn rõ các điểm bất thường phá vỡ quy luật tương quan.
+
+Tab 4: Benford Law (Phát hiện gian lận) 🕵️
+Công dụng: Kỹ thuật Audit kinh điển để phát hiện số liệu bị "xào nấu" (manipulated).
+
+Cách dùng: Chọn cột số tiền -> Chạy Benford 1D (chữ số đầu) hoặc 2D (2 chữ số đầu).
+
+Đọc kết quả:
+
+Đường Observed (Thực tế) lệch xa đường Expected (Lý thuyết).
+
+Các thanh màu đỏ/cảnh báo đỏ: Dấu hiệu rủi ro cao cần kiểm tra chứng từ.
+
+Tab 5: ANOVA & Hypothesis (Kiểm định)
+So sánh xem có sự khác biệt thực sự giữa các nhóm không (VD: Doanh thu trung bình giữa 3 miền Bắc-Trung-Nam có khác nhau không hay chỉ là ngẫu nhiên?).
+
+Hỗ trợ cả kiểm định tham số (ANOVA) và phi tham số (Kruskal-Wallis/Mann-Whitney).
+
+Tab 6: Regression (Dự báo & Audit) 🔮
+Mục tiêu: Tìm các giao dịch bất thường mà mô hình không giải thích được.
+
+Cách dùng: Chọn biến mục tiêu (Y) và các biến giải thích (X).
+
+Residual Audit: Ứng dụng sẽ tính toán chênh lệch giữa Thực tế và Dự báo.
+
+Outliers (Dư số lớn): Là các giao dịch rủi ro cao (VD: Doanh thu quá cao/thấp so với điều kiện bình thường).
+
+Tab 7: Pareto (ABC Analysis) ⚖️
+Quy tắc 80/20: Xác định nhóm "Vital Few" (Nhóm A - Số lượng ít nhưng giá trị lớn).
+
+Ứng dụng: Tập trung nguồn lực kiểm toán vào nhóm A (chiếm 80% giá trị).
+
+Gini Coefficient: Đo lường độ tập trung rủi ro.
+
+💡 Mẹo sử dụng (Tips)
+Format dữ liệu: File Excel/CSV nên có dòng tiêu đề (Header) nằm ở dòng 1, không nên có các ô merge (trộn ô) phức tạp.
+
+Drill-down Filter: Tính năng này có ở Tab 1, 2, 3, 6. Hãy tận dụng nó để lọc dữ liệu (ví dụ: lọc bỏ các giao dịch nội bộ, lọc theo vùng miền) trước khi chạy mô hình để có kết quả chính xác hơn.
+
+Bộ nhớ: Với file lớn (>100MB), nên ưu tiên dùng .csv thay vì .xlsx để nạp nhanh hơn.
+
+Benford: Chỉ áp dụng cho tập dữ liệu tự nhiên (Doanh thu, Chi phí). Không áp dụng cho dữ liệu bị giới hạn (như số điện thoại, mã số thuế, hoặc dữ liệu đã bị cắt ngọn như "chỉ lấy hóa đơn > 1 triệu").
