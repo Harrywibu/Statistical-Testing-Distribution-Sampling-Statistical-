@@ -272,12 +272,21 @@ def list_sheets_xlsx(file_bytes: bytes) -> List[str]:
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def read_csv_fast(file_bytes: bytes, usecols=None) -> pd.DataFrame:
     bio = io.BytesIO(file_bytes)
+    # --- FASTEST PATH: Polars ---
     try:
-        df = pd.read_csv(bio, usecols=usecols, engine='pyarrow')
+        import polars as pl
+        # Đọc Polars và chuyển sang Pandas (zero-copy nếu có Arrow)
+        df = pl.read_csv(bio, columns=usecols).to_pandas(use_pyarrow_extension_array=True)
+        return _downcast_numeric(df)
     except Exception:
         bio.seek(0)
-        df = pd.read_csv(bio, usecols=usecols, low_memory=False, memory_map=True)
-    return _downcast_numeric(df)
+        # --- FALLBACK PATH: Pandas/PyArrow ---
+        try:
+            df = pd.read_csv(bio, usecols=usecols, engine='pyarrow')
+        except Exception:
+            bio.seek(0)
+            df = pd.read_csv(bio, usecols=usecols, low_memory=False, memory_map=True)
+        return _downcast_numeric(df)
 
 @st.cache_data(ttl=6*3600, show_spinner=False, max_entries=16)
 def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None,
@@ -336,7 +345,7 @@ def read_xlsx_fast(file_bytes: bytes, sheet: str, usecols=None,
             with contextlib.suppress(Exception):
                 os.unlink(tmp.name)
 
-    # --- FALLBACK: pandas + openpyxl (như cũ) ---
+    # --- FALLBACK: pandas + openpyxl
     skiprows = list(range(header_row, header_row + skip_top)) if skip_top > 0 else None
     bio = io.BytesIO(file_bytes)
     df = pd.read_excel(
@@ -1630,84 +1639,85 @@ with TAB2:
                 )
 
     # ---------- Drill-down đúng UI ----------
-    def drilldown_panel_distribution(df: pd.DataFrame, prefix="pr"):
-        st.markdown("### 🔎 Drill-down filter — Khoanh vùng dữ liệu")
-        ckR, ckC, ckP, ckU, ckT = st.columns([1, 1, 1, 1, 1])
-        useR = ckR.checkbox("Region", key=f"{prefix}_useR")
-        useC = ckC.checkbox("Channel", key=f"{prefix}_useC")
-        useP = ckP.checkbox("Product", key=f"{prefix}_useP")
-        useU = ckU.checkbox("Customer", key=f"{prefix}_useU")
-        useT = ckT.checkbox("Time", key=f"{prefix}_useT", value=True)
+    def _render_filter_inline(df_in, key_prefix="prof"):
+        """Hàm lọc cục bộ, cho phép chọn cột tự do"""
+        with st.expander("🔎 Drill-down Filter (Bộ lọc dữ liệu)", expanded=False):
+            st.caption("Chọn cột và giá trị để khoanh vùng dữ liệu trước khi phân tích.")
+            
+            all_cols = ["—"] + list(df_in.columns)
+            mask = pd.Series(True, index=df_in.index)
 
-        time_col = None
-        per_rule = "M"
-        sel_periods = []
-        region_col = channel_col = prod_col = cust_col = None
-        selR = selC = selP = selU = []
+            # Hàng Checkbox
+            c1, c2, c3, c4, c5 = st.columns(5)
+            use_1 = c1.checkbox("Filter 1 (Region)", key=f"{key_prefix}_chk_1")
+            use_2 = c2.checkbox("Filter 2 (Channel)", key=f"{key_prefix}_chk_2")
+            use_3 = c3.checkbox("Filter 3 (Product)", key=f"{key_prefix}_chk_3")
+            use_4 = c4.checkbox("Filter 4 (Customer)", key=f"{key_prefix}_chk_4")
+            use_t = c5.checkbox("Time Filter", key=f"{key_prefix}_chk_t", value=True)
 
-        if useT:
-            st.caption("Cột thời gian")
-            time_col = st.selectbox(
-                " ", ["—"] + list(df.columns),
-                index=0, key=f"{prefix}_timecol", label_visibility="collapsed"
-            )
-            st.caption("Granularity")
-            per_txt = st.radio(
-                " ", ["Month", "Quarter", "Year"],
-                horizontal=True, key=f"{prefix}_gran", label_visibility="collapsed"
-            )
-            per_rule = {"Month": "M", "Quarter": "Q", "Year": "Y"}[per_txt]
-            if time_col and time_col != "—":
-                t = _clean_time(df[time_col])
-                periods = t.dt.to_period(per_rule).astype(str).dropna()
-                uniq = sorted(periods.unique().tolist())
-                cap = MAX_TIME_OPTIONS[per_rule]
-                if len(uniq) > cap:
-                    uniq = uniq[-cap:]
-                st.caption("Khoảng thời gian")
-                sel_periods = st.multiselect(
-                    " ", uniq, default=uniq[-1:] if uniq else [],
-                    key=f"{prefix}_selT", label_visibility="collapsed"
-                )
+            # Layout chọn cột
+            r1, r2 = st.columns([1.5, 2.5])
+            
+            def _render_sel(label, use_flag, keyword, suffix):
+                col_name = None
+                if use_flag:
+                    with r1:
+                        def_idx = 0
+                        if keyword: # Tìm cột khớp từ khóa
+                            for i, c in enumerate(all_cols):
+                                if keyword.lower() in str(c).lower(): def_idx = i; break
+                        col_name = st.selectbox(f"Chọn Cột ({label})", all_cols, index=def_idx, key=f"{key_prefix}_col_{suffix}")
+                    
+                    if col_name and col_name != "—":
+                        with r2:
+                            # Lấy Top 200 giá trị để hiển thị
+                            top_vals = df_in[col_name].astype(str).value_counts().head(200).index.tolist()
+                            vals = st.multiselect(f"Giá trị ({col_name})", top_vals, key=f"{key_prefix}_val_{suffix}")
+                            return col_name, vals
+                return None, []
 
-        if useR:
-            region_col = st.selectbox("Cột Region", ["—"] + list(df.columns), index=0, key=f"{prefix}_colR")
-            if region_col and region_col != "—":
-                selR = st.multiselect("Region (top 200)", _top_values(df, region_col), key=f"{prefix}_valR")
-        if useC:
-            channel_col = st.selectbox("Cột Channel", ["—"] + list(df.columns), index=0, key=f"{prefix}_colC")
-            if channel_col and channel_col != "—":
-                selC = st.multiselect("Channel (top 200)", _top_values(df, channel_col), key=f"{prefix}_valC")
-        if useP:
-            prod_col = st.selectbox("Cột Product", ["—"] + list(df.columns), index=0, key=f"{prefix}_colP")
-            if prod_col and prod_col != "—":
-                selP = st.multiselect("Product (top 200)", _top_values(df, prod_col), key=f"{prefix}_valP")
-        if useU:
-            cust_col = st.selectbox("Cột Customer", ["—"] + list(df.columns), index=0, key=f"{prefix}_colU")
-            if cust_col and cust_col != "—":
-                selU = st.multiselect("Customer (top 200)", _top_values(df, cust_col), key=f"{prefix}_valU")
+            # Render 4 filter
+            c1_n, v1 = _render_sel("Vị trí", use_1, "region", "1")
+            if c1_n and v1: mask &= df_in[c1_n].astype(str).isin(v1)
+            
+            c2_n, v2 = _render_sel("Kênh", use_2, "channel", "2")
+            if c2_n and v2: mask &= df_in[c2_n].astype(str).isin(v2)
+            
+            c3_n, v3 = _render_sel("Sản phẩm", use_3, "prod", "3")
+            if c3_n and v3: mask &= df_in[c3_n].astype(str).isin(v3)
+            
+            c4_n, v4 = _render_sel("Khách hàng", use_4, "cust", "4")
+            if c4_n and v4: mask &= df_in[c4_n].astype(str).isin(v4)
 
-        # mask
-        mask = pd.Series(True, index=df.index)
-        if useT and time_col and time_col != "—" and sel_periods:
-            cur = _clean_time(df[time_col]).dt.to_period(per_rule).astype(str)
-            mask &= cur.isin(set(sel_periods))
-        if useR and region_col and region_col != "—" and selR:
-            mask &= df[region_col].astype(str).isin(selR)
-        if useC and channel_col and channel_col != "—" and selC:
-            mask &= df[channel_col].astype(str).isin(selC)
-        if useP and prod_col and prod_col != "—" and selP:
-            mask &= df[prod_col].astype(str).isin(selP)
-        if useU and cust_col and cust_col != "—" and selU:
-            mask &= df[cust_col].astype(str).isin(selU)
+            # Time Filter
+            time_col = None
+            if use_t:
+                with r1:
+                    dt_cands = [c for c in df_in.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
+                    dt_opts = ["—"] + dt_cands + [c for c in df_in.columns if c not in dt_cands]
+                    time_col = st.selectbox("Cột Thời gian", dt_opts, key=f"{key_prefix}_col_time")
+                
+                if time_col and time_col != "—":
+                    with r2:
+                        try:
+                            ts = _clean_time(df_in[time_col])
+                            # Mặc định lọc theo Tháng
+                            periods = sorted(ts.dt.to_period("M").astype(str).dropna().unique())
+                            def_sel = periods[-3:] if len(periods) > 3 else periods
+                            sel_t = st.multiselect(f"Chọn khoảng thời gian (Tháng)", periods, default=def_sel, key=f"{key_prefix}_val_time")
+                            
+                            if sel_t: mask &= ts.dt.to_period("M").astype(str).isin(sel_t)
+                        except: st.warning("Lỗi định dạng thời gian.")
 
-        return (time_col if time_col != "—" else None), per_rule, region_col, channel_col, prod_col, cust_col, mask
+            n_remain = mask.sum()
+            st.caption(f"⚡ Dữ liệu sau lọc: **{n_remain:,}** / {len(df_in):,} dòng.")
+            return df_in.loc[mask]
 
-    # ---- dùng drilldown mới ----
-    time_col, per_rule, region_col, channel_col, prod_col, cust_col, mask = drilldown_panel_distribution(df, "pr")
-    dfx = df.loc[mask].copy()
+    # --- ÁP DỤNG BỘ LỌC ---
+    dfx = _render_filter_inline(df, "prof")
+
     if dfx.empty:
-        st.warning("Không còn dữ liệu sau khi khoanh vùng.")
+        st.warning("Không còn dữ liệu sau khi khoanh vùng. Vui lòng nới lỏng bộ lọc.")
         st.stop()
 
     # ---------- chọn biến numeric ----------
@@ -1839,29 +1849,6 @@ with TAB2:
         height=min(520, 34 * (len(metric_tbl) + 1)),
     )
 
-    # ---------- Nhận định gộp toàn bộ giải thích ----------
-    st.markdown(
-        f"""
-### 🧠 Nhận định từ dữ liệu hiện tại{log_note}
-
-**Hình dạng (Shape) & Chuẩn hoá**  
-• **Skewness** = `{_fmt_safe(skew_v,'.3f')}` ⇒ **{skew_dir}** (dương: đuôi phải; âm: đuôi trái; ≈0: gần đối xứng).  
-• **Kurtosis (excess)** = `{_fmt_safe(kurt_v,'.3f')}` ⇒ **{tail_txt}** (0 ≈ Gaussian).  
-• **Normality (D’Agostino K²)**: p-value = `{_fmt_safe(p_norm,'.3f')}` ⇒ {normal_txt}. *(Quy ước: p≥0.05 ⇒ chưa có bằng chứng lệch chuẩn).*
-
-**Xu hướng trung tâm**  
-• **Mean** = `{_fmt_safe(mean_v,'.4g')}`, **Median** = `{_fmt_safe(median_v,'.4g')}`, **Mode** = `{_fmt_safe(mode_v,'.4g')}` → **{c_tend}**.
-
-**Độ phân tán (Spread)**  
-• **σ (Std)** = `{_fmt_safe(std_v,'.4g')}`, **IQR** = `{_fmt_safe(iqr_v,'.4g')}`, **CV** = `{_fmt_safe(cv_v,'.2f')}%` ⇒ mức phân tán **{spread_g}**.  
-• **Range** = `max − min = {_fmt_safe(range_val,'.4g')}` cho biết độ trải rộng tổng thể.
-
-**Khoảng kiểm soát & Outlier (Tukey fence)**  
-• **Fence**: **[{_fmt_safe(lf,'.4g')} ; {_fmt_safe(uf,'.4g')}]** (Q1−1.5×IQR ; Q3+1.5×IQR).  
-• **Outliers** vượt fence: **{out_cnt:,}** điểm (**{_fmt_safe(out_pct,'.2f')}%**) → mức ảnh hưởng {("đáng kể" if out_pct>5 else ("vừa" if out_pct>1 else "thấp"))}.
-"""
-    )
-
     # ---------- màu & bins cho phần biểu đồ chính ----------
     with st.expander("🎨 Tùy biến hiển thị (màu/bins)", expanded=False):
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
@@ -1871,130 +1858,173 @@ with TAB2:
         clr_box  = c4.color_picker("Box/Violin", "#a29bfe")
         bins = st.slider("Số bins (Histogram)", 20, 120, 50, 2, key="pr_bins")
 
-    # ---------- Charts ----------
-    st.markdown("### 📈 Phân phối (Histogram) & ECDF")
-    gL, gR = st.columns(2)
+    st.markdown("### 📈 Phân tích Phân phối & Diễn giải Dữ liệu")
+    
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        from scipy import stats
 
-    # Histogram + Bell với legend mốc ở bên phải + nhãn ngay trên đồ thị
-    with gL:
-        xs = np.linspace(float(s.min()), float(s.max()), 400)
-        sigma = float(s.std(ddof=1)) if len(s) > 1 else np.nan
-        mu = float(s.mean())
-
-        if np.isfinite(sigma) and sigma > 0:
-            bell = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((xs - mu) / sigma) ** 2)
-            binw = (s.max() - s.min()) / bins if (np.ptp(s) > 0 and bins > 0) else 1.0
-            bell_scaled = bell * len(s) * binw
+        # --- 1. CHUẨN BỊ DỮ LIỆU & TÍNH TOÁN ---
+        # Lấy mẫu nếu dữ liệu quá lớn (>500k)
+        if len(s) > 500_000:
+            s_chart = s.sample(500_000, random_state=42)
+            st.caption("⚠️ Dữ liệu > 500k dòng, biểu đồ & tính toán dùng mẫu 500k để tối ưu.")
         else:
-            bell_scaled = np.zeros_like(xs)
+            s_chart = s
 
-        # lấy y_max để kéo vlines tới đỉnh plot
-        counts, _ = np.histogram(s, bins=bins)
-        y_max = max(
-            float(counts.max()) if len(counts) else 0.0,
-            float(bell_scaled.max() if len(bell_scaled) else 0.0)
-        ) * 1.05
+        # Các chỉ số xu hướng trung tâm
+        mu, sigma = float(s.mean()), float(s.std())
+        min_val, max_val = float(s.min()), float(s.max())
+        median_val = float(s.median())
+        try:
+            mode_val = float(s.mode().iloc[0])
+        except:
+            mode_val = np.nan
+            
+        # Các chỉ số hình dáng & phân tán
+        skewness = float(s.skew())
+        kurtosis = float(s.kurt())
+        cv_pct = (sigma / mu * 100) if mu != 0 else 0
+        range_val = max_val - min_val
 
-        figH = go.Figure()
-        # 1. Bin dữ liệu bằng NumPy (cực nhanh)
-        counts, bin_edges = np.histogram(s, bins=bins)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2 # Lấy điểm giữa của mỗi bin
+        # Outliers (IQR method)
+        Q1, Q3 = s.quantile(0.25), s.quantile(0.75)
+        IQR = Q3 - Q1
+        lower_fence, upper_fence = Q1 - 1.5*IQR, Q3 + 1.5*IQR
+        n_outliers = ((s < lower_fence) | (s > upper_fence)).sum()
+        pct_outliers = n_outliers / len(s) * 100
+        
+        # Normality Test (Chỉ chạy nếu đủ mẫu và < 5000 để chính xác, hoặc dùng s_stats_sample đã có từ trước)
+        # Giả sử dùng p_norm đã tính ở phần trên (nếu có), hoặc tính nhanh lại
+        try:
+            if len(s) >= 8:
+                stat_norm, p_norm = stats.normaltest(s_chart if len(s_chart)<5000 else s_chart.sample(5000))
+            else:
+                p_norm = np.nan
+        except:
+            p_norm = np.nan
 
-        # 2. Lấy y_max từ counts (đã bin)
-        y_max = float(counts.max()) if len(counts) > 0 else 0.0
+        # --- 2. VẼ BIỂU ĐỒ SUBPLOTS ---
+        fig = make_subplots(
+            rows=1, cols=2, 
+            column_widths=[0.7, 0.3], 
+            subplot_titles=("Phân phối tần suất (Histogram)", "Mật độ & Outliers (Violin)"),
+            horizontal_spacing=0.12 
+        )
 
-        figH = go.Figure()
+        # Cột 1: Histogram + Bell Curve + Lines
+        n_bins = SS.get('pr_bins', 50)
+        counts, bin_edges = np.histogram(s, bins=n_bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        y_max_hist = max(counts)
 
-        # 3. Dùng go.Bar để vẽ các bin (chỉ gửi 'bins' (50) điểm dữ liệu)
-        figH.add_trace(go.Bar(
-            x=bin_centers,
-            y=counts,
-            name="Frequency",
-            marker_color=clr_hist,
-            width=(bin_edges[1]-bin_edges[0]) # Độ rộng của bin
-        ))
+        fig.add_trace(
+            go.Bar(x=bin_centers, y=counts, name="Thực tế", marker_color=clr_hist, opacity=0.6, showlegend=True),
+            row=1, col=1
+        )
 
-        # 4. Tính toán Bell curve (như cũ)
-        xs = np.linspace(float(s.min()), float(s.max()), 400)
-        sigma = float(s.std(ddof=1)) if len(s) > 1 else np.nan
-        mu = float(s.mean())
+        if sigma > 0:
+            x_bell = np.linspace(min_val, max_val, 200)
+            pdf = stats.norm.pdf(x_bell, mu, sigma)
+            y_bell = pdf * len(s) * (max_val - min_val) / n_bins
+            fig.add_trace(
+                go.Scatter(x=x_bell, y=y_bell, mode='lines', name='Phân phối chuẩn (Lý thuyết)', 
+                           line=dict(color='#57606f', width=2, dash='solid')),
+                row=1, col=1
+            )
+            y_max_hist = max(y_max_hist, max(y_bell))
 
-        if np.isfinite(sigma) and sigma > 0:
-            bell = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((xs - mu) / sigma) ** 2)
-            # Sửa 'binw' để khớp với tính toán của NumPy
-            binw = (bin_edges[1]-bin_edges[0]) if len(bin_edges)>1 else 1.0
-            bell_scaled = bell * len(s) * binw
+        # Các đường chỉ báo (Mean, Median, Mode)
+        y_range = [0, y_max_hist * 1.1]
+        fig.add_trace(go.Scatter(x=[mu, mu], y=y_range, mode='lines', name=f'Mean: {mu:,.2f}',
+                       line=dict(color='#e74c3c', width=2.5, dash='dash')), row=1, col=1)
+        
+        if abs(median_val - mu) > sigma*0.01: # Chỉ vẽ Median nếu lệch Mean một chút
+             fig.add_trace(go.Scatter(x=[median_val, median_val], y=y_range, mode='lines', name=f'Median: {median_val:,.2f}',
+                           line=dict(color='#2ecc71', width=2.5, dash='dot')), row=1, col=1)
+
+        if not np.isnan(mode_val) and abs(mode_val - mu) > sigma*0.1:
+             fig.add_trace(go.Scatter(x=[mode_val, mode_val], y=y_range, mode='lines', name=f'Mode: {mode_val:,.2f}',
+                           line=dict(color='#9b59b6', width=2, dash='dashdot')), row=1, col=1)
+
+        # Cột 2: Violin + Box
+        fig.add_trace(
+            go.Violin(y=s_chart, name=x_title, box_visible=True, meanline_visible=True, points=False,
+                line_color=clr_box, fillcolor=clr_box, opacity=0.6, showlegend=False),
+            row=1, col=2
+        )
+
+        # Layout
+        fig.update_layout(
+            height=460, hovermode="x unified",
+            margin=dict(l=10, r=10, t=40, b=20),
+            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(255,255,255,0.8)")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- 3. LOGIC DIỄN GIẢI TỰ ĐỘNG (MERGED) ---
+        
+        # A. Đánh giá Hình dáng (Shape) & Chuẩn hóa
+        skew_lbl = "đối xứng (Symmetrical)"
+        if skewness > 0.5: skew_lbl = "lệch phải (Right Skewed) - Đuôi kéo về phía giá trị lớn"
+        elif skewness < -0.5: skew_lbl = "lệch trái (Left Skewed) - Đuôi kéo về phía giá trị nhỏ"
+        
+        kurt_lbl = "bình thường"
+        if kurtosis > 1: kurt_lbl = "nhọn (Leptokurtic) - Dữ liệu tập trung quanh tâm, đuôi dày"
+        elif kurtosis < -1: kurt_lbl = "bẹt (Platykurtic) - Dữ liệu phân tán dàn trải"
+
+        norm_status = "Dữ liệu KHÔNG tuân theo phân phối chuẩn (p < 0.05)." if (p_norm < 0.05) else "Chưa đủ bằng chứng bác bỏ phân phối chuẩn (p >= 0.05)."
+
+        # B. Đánh giá Xu hướng trung tâm
+        trend_insight = ""
+        if abs(mu - median_val) / (abs(mu)+1) < 0.05:
+            trend_insight = "Mean ≈ Median: Dữ liệu khá cân bằng, có thể dùng Mean làm đại diện."
+        elif mu > median_val:
+            trend_insight = "Mean > Median: Giá trị trung bình bị kéo lên bởi các giá trị lớn đột biến."
         else:
-            bell_scaled = np.zeros_like(xs)
+            trend_insight = "Mean < Median: Giá trị trung bình bị kéo xuống bởi các giá trị nhỏ đột biến."
 
-        # 5. Thêm bell curve và vlines (như cũ)
-        figH.add_scatter(
-            x=xs, y=bell_scaled, mode="lines",
-            name="Normal bell (scaled)", line=dict(color=clr_bell, width=2)
-        )
+        # C. Đánh giá Độ phân tán (Spread)
+        spread_eval = "Thấp (Ổn định)"
+        if cv_pct > 50: spread_eval = "Rất cao (Biến động mạnh)"
+        elif cv_pct > 20: spread_eval = "Trung bình"
+        
+        # D. Khuyến nghị Audit
+        audit_action = "Dữ liệu ổn định, có thể dùng các phương pháp kiểm toán thông thường (Analytical Review)."
+        if n_outliers > 0 and pct_outliers > 5:
+            audit_action = "⚠️ Rủi ro cao: Tỷ lệ ngoại lai lớn (>5%). Cần trích mẫu kiểm tra các giao dịch vượt ngưỡng (Upper Fence) để phát hiện gian lận/sai sót."
+        elif cv_pct > 100:
+            audit_action = "⚠️ Rủi ro biến động: Dữ liệu dao động quá mạnh. Mean không còn ý nghĩa đại diện. Cần phân nhóm (Stratification) trước khi phân tích."
+        elif skewness > 1:
+            audit_action = "ℹ️ Lưu ý: Dữ liệu lệch phải. Nên dùng Median thay vì Mean để đánh giá xu hướng chung."
 
-        # Cập nhật y_max để bao gồm cả bell curve
-        y_max = max(y_max, float(bell_scaled.max() if len(bell_scaled) else 0.0)) * 1.05
+        # --- 4. HIỂN THỊ BOX DIỄN GIẢI (ST.INFO) ---
+        st.info(f"""
+        **🧠 Nhận định & Diễn giải Dữ liệu:**
+        
+        **1. Hình dáng Phân phối (Shape & Normality):**
+        - Dữ liệu có xu hướng **{skew_lbl}**.
+        - Độ nhọn: **{kurt_lbl}** (Kurtosis={kurtosis:.2f}).
+        - Kiểm định chuẩn: {norm_status}
+        
+        **2. Xu hướng Trung tâm (Central Tendency):**
+        - **Mean** ({mu:,.2f}) vs **Median** ({median_val:,.2f}).
+        - 👉 **Nhận xét:** {trend_insight}
+        
+        **3. Độ Phân tán & Biến động (Spread):**
+        - Độ biến động (CV) là **{cv_pct:.1f}%** ⇒ Mức độ phân tán **{spread_eval}**.
+        - Khoảng trải rộng (Range) từ {min_val:,.2f} đến {max_val:,.2f}.
+        
+        **4. Ngoại lai (Outliers - Tukey's Fence):**
+        - Phát hiện **{n_outliers:,}** điểm ngoại lai (chiếm **{pct_outliers:.2f}%**).
+        - Các điểm này nằm ngoài khoảng: [{lower_fence:,.2f} ; {upper_fence:,.2f}].
+        
+        💡 **Khuyến nghị Audit:** {audit_action}
+        """)
 
-        marks = {
-            "Min": float(s.min()),
-            "Q1": q1,
-            "Median": median_v,
-            "Mean": mean_v,
-            "Q3": q3,
-            "Max": float(s.max()),
-        }
-        _add_vlines_with_legend(figH, marks, y_max, annotate=True)
-        st.plotly_chart(figH, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Cột thể hiện tần suất; đường *bell* cho biết mức độ gần chuẩn. Các mốc Min/Q1/Median/Mean/Q3/Max hiển thị rõ trên biểu đồ và ở legend bên phải.")
-
-    # ECDF với legend mốc ở bên phải + nhãn trên đồ thị
-    with gR:
-        s_sorted = np.sort(s_sampled_charts.values)
-        y_ecdf = np.arange(1, len(s_sorted) + 1) / len(s_sorted)
-        figE = go.Figure()
-        figE.add_scatter(
-            x=s_sorted, y=y_ecdf,
-            mode="lines" if not show_points_ecdf else "lines+markers",
-            name="ECDF", line=dict(color=clr_ecdf),
-            hovertemplate="x=%{x:,.4g}<br>P=%{y:.3f}<extra></extra>"
-        )
-
-        ecdf_marks = {"Q1": q1, "Median": median_v, "Mean": mean_v, "Q3": q3}
-        _add_vlines_with_legend(figE, ecdf_marks, 1.0, annotate=True)
-
-        figE.update_layout(
-            title=f"ECDF — Cumulative Distribution of {x_title}",
-            xaxis_title=x_title, yaxis_title="Probability",
-            height=430,
-            legend=dict(orientation="v", y=1, x=1.02, yanchor="top", xanchor="left"),
-            margin=dict(l=10, r=160, t=40, b=10),
-        )
-        st.plotly_chart(figE, use_container_width=True, config={"displayModeBar": False})
-        st.caption("ECDF cho biết xác suất tích luỹ P(X ≤ x). Các mốc Q1/Median/Mean/Q3 được gắn màu riêng và nhãn trực tiếp trên đồ thị.")
-
-    # Box & Violin (Spread)
-    st.markdown("### 🧷 Spread — Box & Violin")
-    b1, b2 = st.columns(2)
-    with b1:
-        figB = go.Figure()
-        figB.add_box(y=s_sampled_charts, name=x_title, boxpoints="outliers", marker_color=clr_box)
-        figB.update_layout(
-            title="Box Plot", yaxis_title=x_title, height=400,
-            margin=dict(l=10, r=10, t=40, b=10)
-        )
-        st.plotly_chart(figB, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Hộp giữa Q1–Q3; đường giữa là Median; điểm vượt *fence* là outlier tiềm năng.")
-    with b2:
-        figV = go.Figure()
-        figV.add_violin(y=s_sampled_charts, name=x_title, line_color=clr_box,
-                        fillcolor="rgba(162,155,254,0.25)", meanline_visible=True)
-        figV.update_layout(
-            title="Violin Plot", yaxis_title=x_title, height=400,
-            margin=dict(l=10, r=10, t=40, b=10), showlegend=False
-        )
-        st.plotly_chart(figV, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Hình *violin* biểu thị mật độ phân phối; meanline hiển thị Mean/Median.")
+    except Exception as e:
+        st.error(f"Lỗi hiển thị biểu đồ: {e}")
 
 # ============================== TAB 3 — CORRELATION (BUSINESS-ORIENTED) ==============================
 with TAB3:
@@ -2100,84 +2130,90 @@ with TAB3:
 
     st.subheader("🔗 Correlation")
 
-    # ====================== Drill-down filter ======================
-    def drilldown_panel_corr(df: pd.DataFrame, prefix="corr"):
-        st.markdown("### 🔎 Drill-down filter — Khoanh vùng dữ liệu")
-        ckR, ckC, ckP, ckU, ckT = st.columns([1, 1, 1, 1, 1])
-        useR = ckR.checkbox("Region", key=f"{prefix}_useR")
-        useC = ckC.checkbox("Channel", key=f"{prefix}_useC")
-        useP = ckP.checkbox("Product", key=f"{prefix}_useP")
-        useU = ckU.checkbox("Customer", key=f"{prefix}_useU")
-        useT = ckT.checkbox("Time", key=f"{prefix}_useT", value=True)
+    # ====================== 1. Drill-down filter (INLINE & FLEXIBLE) ======================
+    def _render_filter_inline(df_in, key_prefix="corr"):
+        """Hàm lọc cục bộ, cho phép chọn cột tự do"""
+        with st.expander("🔎 Drill-down Filter (Bộ lọc dữ liệu)", expanded=False):
+            st.caption("Chọn cột và giá trị để khoanh vùng dữ liệu trước khi phân tích.")
+            
+            all_cols = ["—"] + list(df_in.columns)
+            mask = pd.Series(True, index=df_in.index)
 
-        time_col = None
-        per_rule = "M"
-        sel_periods = []
-        region_col = channel_col = prod_col = cust_col = None
-        selR = selC = selP = selU = []
+            # Hàng Checkbox
+            c1, c2, c3, c4, c5 = st.columns(5)
+            use_1 = c1.checkbox("Filter 1 (Region)", key=f"{key_prefix}_chk_1")
+            use_2 = c2.checkbox("Filter 2 (Channel)", key=f"{key_prefix}_chk_2")
+            use_3 = c3.checkbox("Filter 3 (Product)", key=f"{key_prefix}_chk_3")
+            use_4 = c4.checkbox("Filter 4 (Customer)", key=f"{key_prefix}_chk_4")
+            use_t = c5.checkbox("Time Filter", key=f"{key_prefix}_chk_t", value=True)
 
-        if useT:
-            st.caption("Cột thời gian")
-            time_col = st.selectbox(
-                " ", ["—"] + list(df.columns),
-                index=0, key=f"{prefix}_timecol", label_visibility="collapsed"
-            )
-            st.caption("Granularity")
-            per_txt = st.radio(
-                " ", ["Month", "Quarter", "Year"],
-                horizontal=True, key=f"{prefix}_gran", label_visibility="collapsed"
-            )
-            per_rule = {"Month": "M", "Quarter": "Q", "Year": "Y"}[per_txt]
-            if time_col and time_col != "—":
-                t = _clean_time(df[time_col])
-                periods = t.dt.to_period(per_rule).astype(str).dropna()
-                uniq = sorted(periods.unique().tolist())
-                cap = MAX_TIME_OPTIONS[per_rule]
-                if len(uniq) > cap:
-                    uniq = uniq[-cap:]
-                st.caption("Khoảng thời gian")
-                sel_periods = st.multiselect(
-                    " ", uniq, default=uniq[-1:] if uniq else [],
-                    key=f"{prefix}_selT", label_visibility="collapsed"
-                )
+            # Layout chọn cột
+            r1, r2 = st.columns([1.5, 2.5])
+            
+            def _render_sel(label, use_flag, keyword, suffix):
+                col_name = None
+                if use_flag:
+                    with r1:
+                        def_idx = 0
+                        if keyword: # Tìm cột khớp từ khóa
+                            for i, c in enumerate(all_cols):
+                                if keyword.lower() in str(c).lower(): def_idx = i; break
+                        col_name = st.selectbox(f"Chọn Cột ({label})", all_cols, index=def_idx, key=f"{key_prefix}_col_{suffix}")
+                    
+                    if col_name and col_name != "—":
+                        with r2:
+                            top_vals = df_in[col_name].astype(str).value_counts().head(200).index.tolist()
+                            vals = st.multiselect(f"Giá trị ({col_name})", top_vals, key=f"{key_prefix}_val_{suffix}")
+                            return col_name, vals
+                return None, []
 
-        if useR:
-            region_col = st.selectbox("Cột Region", ["—"] + list(df.columns), index=0, key=f"{prefix}_colR")
-            if region_col and region_col != "—":
-                selR = st.multiselect("Region (top 200)", _top_values(df, region_col), key=f"{prefix}_valR")
-        if useC:
-            channel_col = st.selectbox("Cột Channel", ["—"] + list(df.columns), index=0, key=f"{prefix}_colC")
-            if channel_col and channel_col != "—":
-                selC = st.multiselect("Channel (top 200)", _top_values(df, channel_col), key=f"{prefix}_valC")
-        if useP:
-            prod_col = st.selectbox("Cột Product", ["—"] + list(df.columns), index=0, key=f"{prefix}_colP")
-            if prod_col and prod_col != "—":
-                selP = st.multiselect("Product (top 200)", _top_values(df, prod_col), key=f"{prefix}_valP")
-        if useU:
-            cust_col = st.selectbox("Cột Customer", ["—"] + list(df.columns), index=0, key=f"{prefix}_colU")
-            if cust_col and cust_col != "—":
-                selU = st.multiselect("Customer (top 200)", _top_values(df, cust_col), key=f"{prefix}_valU")
+            # Render 4 filter
+            c1_n, v1 = _render_sel("Vị trí", use_1, "region", "1")
+            if c1_n and v1: mask &= df_in[c1_n].astype(str).isin(v1)
+            
+            c2_n, v2 = _render_sel("Kênh", use_2, "channel", "2")
+            if c2_n and v2: mask &= df_in[c2_n].astype(str).isin(v2)
+            
+            c3_n, v3 = _render_sel("Sản phẩm", use_3, "prod", "3")
+            if c3_n and v3: mask &= df_in[c3_n].astype(str).isin(v3)
+            
+            c4_n, v4 = _render_sel("Khách hàng", use_4, "cust", "4")
+            if c4_n and v4: mask &= df_in[c4_n].astype(str).isin(v4)
 
-        # mask
-        mask = pd.Series(True, index=df.index)
-        if useT and time_col and time_col != "—" and sel_periods:
-            cur = _clean_time(df[time_col]).dt.to_period(per_rule).astype(str)
-            mask &= cur.isin(set(sel_periods))
-        if useR and region_col and region_col != "—" and selR:
-            mask &= df[region_col].astype(str).isin(selR)
-        if useC and channel_col and channel_col != "—" and selC:
-            mask &= df[channel_col].astype(str).isin(selC)
-        if useP and prod_col and prod_col != "—" and selP:
-            mask &= df[prod_col].astype(str).isin(selP)
-        if useU and cust_col and cust_col != "—" and selU:
-            mask &= df[cust_col].astype(str).isin(selU)
+            # Time Filter
+            time_col, per_rule_out = None, "M"
+            if use_t:
+                with r1:
+                    dt_cands = [c for c in df_in.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
+                    dt_opts = ["—"] + dt_cands + [c for c in df_in.columns if c not in dt_cands]
+                    time_col = st.selectbox("Cột Thời gian", dt_opts, key=f"{key_prefix}_col_time")
+                
+                if time_col and time_col != "—":
+                    with r2:
+                        c_gra, c_per = st.columns([1, 1.5])
+                        per_rule_raw = c_gra.radio("Kỳ", ["Month", "Quarter", "Year"], horizontal=True, key=f"{key_prefix}_rule_time")
+                        per_rule_out = {"Month":"M", "Quarter":"Q", "Year":"Y"}.get(per_rule_raw, "M")
+                        
+                        try:
+                            ts = _clean_time(df_in[time_col])
+                            periods = sorted(ts.dt.to_period(per_rule_out).astype(str).dropna().unique())
+                            def_sel = periods[-3:] if len(periods) > 3 else periods
+                            sel_t = c_per.multiselect(f"Chọn khoảng thời gian", periods, default=def_sel, key=f"{key_prefix}_val_time")
+                            if sel_t: mask &= ts.dt.to_period(per_rule_out).astype(str).isin(sel_t)
+                        except: st.warning("Lỗi định dạng thời gian.")
 
-        return (time_col if time_col != "—" else None), per_rule, region_col, channel_col, prod_col, cust_col, mask
+            n_remain = mask.sum()
+            st.caption(f"⚡ Dữ liệu sau lọc: **{n_remain:,}** / {len(df_in):,} dòng.")
+            
+            # --- FIX QUAN TRỌNG: Trả về None nếu time_col là '—' ---
+            safe_time_col = time_col if (time_col and time_col != "—") else None
+            return df_in.loc[mask], safe_time_col, per_rule_out
 
-    time_col, per_rule, region_col, channel_col, prod_col, cust_col, mask = drilldown_panel_corr(df, "corr")
-    dfx = df.loc[mask].copy()
+    # GỌI HÀM LỌC (INLINE)
+    dfx, time_col, per_rule = _render_filter_inline(df, "corr")
+
     if dfx.empty:
-        st.warning("Không còn dữ liệu sau khi khoanh vùng.")
+        st.warning("Không còn dữ liệu sau khi khoanh vùng. Vui lòng nới lỏng bộ lọc.")
         st.stop()
 
     # ====================== Chọn biến ======================
@@ -2207,104 +2243,140 @@ with TAB3:
     use_log  = o3.checkbox("log10 (áp dụng với biến >0)", value=False)
     method   = o4.radio("Phương pháp", ["Pearson", "Spearman"], horizontal=True)
 
-    # ================== ⏱ Trend theo thời gian (FIX) ==================
-    st.markdown("### ⏱ Trend theo thời gian (Y & 1 driver)")
-    if guard(time_col is not None, "Bật **Time** trong Drill-down để xem Trend."):
-        drv_for_trend = st.selectbox("Chọn 1 driver", x_cols, index=0, key="corr_trend_x")
+    # ================== 4. Phân tích Chuỗi thời gian & Tương quan ==================
+    with st.expander("⏱ Phân tích Chuỗi thời gian & Tương quan (Y vs X)", expanded=True):
+        if guard(time_col is not None and len(x_cols) > 0, 
+                "Cần bật **Time** trong Drill-down và chọn **Target/Driver** để xem phân tích Chuỗi thời gian."):
+            
+            st.markdown("#### ⚙️ Cấu hình Trend & Lag")
+            c_driver, c_index, c_win, c_lag = st.columns([1.5, 1.2, 1.2, 1.2])
+            
+            drv_for_trend = c_driver.selectbox("Chọn 1 driver (X)", x_cols, index=0, key="corr_trend_x")
+            
+            c_agg = st.columns(2)
+            aggY = c_agg[0].radio("Gộp Y theo", ["sum", "mean"], horizontal=True, key="corr_aggY")
+            aggX = c_agg[1].radio("Gộp X theo", ["sum", "mean"], horizontal=True, key="corr_aggX")
+            
+            use_index = c_index.checkbox("Chuẩn hoá Index = 100", value=True, key="corr_use_index")
+            win = c_win.slider("Cửa sổ Rolling-corr", 3, 24, 6, key="corr_roll_win")
+            
+            # --- Tính toán Trend và Lag ---
+            tdt = _clean_time(dfx[time_col])
+            tmp = (pd.DataFrame({"t": tdt, "Y": dfx[y_col], "X": dfx[drv_for_trend]})
+                    .replace([np.inf, -np.inf], np.nan).dropna())
+            if drop_lt0: tmp = tmp[(tmp["Y"] >= 0) & (tmp["X"] >= 0)]
+            if drop_eq0: tmp = tmp[(tmp["Y"] != 0) & (tmp["X"] != 0)]
+            if use_log:
+                tmp = tmp[(tmp["Y"] > 0) & (tmp["X"] > 0)]
+                tmp["Y"] = np.log10(tmp["Y"]); tmp["X"] = np.log10(tmp["X"])
 
-        c1t, c2t, c3t = st.columns([1, 1, 1])
-        aggY = c1t.radio("Gộp Y theo", ["sum", "mean"], horizontal=True, key="corr_aggY")
-        aggX = c2t.radio("Gộp X theo", ["sum", "mean"], horizontal=True, key="corr_aggX")
-        use_index = c3t.checkbox("Chuẩn hoá Index = 100 (kỳ đầu)", value=True, key="corr_use_index")
-        win = st.slider("Cửa sổ Rolling-corr (số kỳ)", 3, 24, 6, key="corr_roll_win")
+            def _agg_by(freq_code):
+                p = tmp["t"].dt.to_period(freq_code)
+                g = tmp.groupby(p).agg(
+                    Y=("Y", "sum" if aggY == "sum" else "mean"),
+                    X=("X", "sum" if aggX == "sum" else "mean"),
+                ).sort_index()
+                g.index = g.index.to_timestamp(how="start")
+                return g
 
-        # Dùng datetime thực cho trục thời gian
-        tdt = _clean_time(dfx[time_col])
-        tmp = (pd.DataFrame({"t": tdt, "Y": dfx[y_col], "X": dfx[drv_for_trend]})
-                 .replace([np.inf, -np.inf], np.nan).dropna())
-        if drop_lt0: tmp = tmp[(tmp["Y"] >= 0) & (tmp["X"] >= 0)]
-        if drop_eq0: tmp = tmp[(tmp["Y"] != 0) & (tmp["X"] != 0)]
-        if use_log:
-            tmp = tmp[(tmp["Y"] > 0) & (tmp["X"] > 0)]
-            tmp["Y"] = np.log10(tmp["Y"]); tmp["X"] = np.log10(tmp["X"])
+            try_order = [per_rule] + [f for f in ("Q", "M") if f != per_rule]
+            g, used_freq = None, per_rule
+            for f in try_order:
+                gg = _agg_by(f)
+                if len(gg) >= 12: 
+                    g, used_freq = gg, f
+                    break
+            
+            # --- Hiển thị kết quả Trend/Lag ---
+            if g is None:
+                st.info("Chỉ có dưới 12 kỳ sau khi nhóm theo thời gian. Không đủ dữ liệu để phân tích Lagged/Rolling Corr.")
+            else:
+                g_plot = (g / g.iloc[0] * 100.0) if use_index else g
+                y_left_title = "Y (Index=100)" if use_index else y_col
+                y_right_title = "X (Index=100)" if use_index else drv_for_trend
 
-        def _agg_by(freq_code):
-            p = tmp["t"].dt.to_period(freq_code)
-            g = tmp.groupby(p).agg(
-                Y=("Y", "sum" if aggY == "sum" else "mean"),
-                X=("X", "sum" if aggX == "sum" else "mean"),
-            ).sort_index()
-            g.index = g.index.to_timestamp(how="start")  # datetime thật
-            return g
+                # --- Chart 1: Trend Dual-Axis Chart (figT) ---
+                figT = make_subplots(specs=[[{"secondary_y": True}]])
+                figT.add_bar(x=g_plot.index, y=g_plot["Y"], name=y_col, marker_color="#74b9ff", opacity=0.9, secondary_y=False)
+                figT.add_scatter(x=g_plot.index, y=g_plot["X"], name=drv_for_trend, mode="lines+markers", line=dict(color="#e84393", width=2), marker=dict(size=5), secondary_y=True)
+                figT.update_layout(height=380, bargap=0.35, legend=dict(orientation="h", y=1.1, x=0), margin=dict(l=10, r=10, t=10, b=10))
+                if used_freq == "M":   figT.update_xaxes(dtick="M1",  tickformat="%b %Y")
+                elif used_freq == "Q": figT.update_xaxes(dtick="M3",  tickformat="%b %Y")
+                else:                   figT.update_xaxes(dtick="M12", tickformat="%Y")
+                figT.update_yaxes(title_text=y_left_title, secondary_y=False)
+                figT.update_yaxes(title_text=y_right_title, secondary_y=True, showgrid=False)
 
-        try_order = [per_rule] + [f for f in ("Q", "M") if f != per_rule]  # nếu ít kỳ → fallback
-        g, used_freq = None, per_rule
-        for f in try_order:
-            gg = _agg_by(f)
-            if len(gg) >= 2:
-                g, used_freq = gg, f
-                break
+                # --- Chart 3: Lagged Correlation (figL) ---
+                max_lag = c_lag.slider("Max Lag (Số kỳ trễ)", 1, min(len(g)//2, 24), 6, key="corr_lag_max", disabled=False)
+                lags, corrs = [], []
+                for lag in range(-max_lag, max_lag + 1):
+                    if lag == 0: r, _, _ = corr_one(g["Y"], g["X"], method="pearson")
+                    elif lag > 0: r, _, _ = corr_one(g["Y"], g["X"].shift(lag), method="pearson")
+                    else: r, _, _ = corr_one(g["Y"].shift(-lag), g["X"], method="pearson")
+                    lags.append(lag); corrs.append(r)
+                lag_df = pd.DataFrame({"Lag": lags, "Correlation": corrs}).dropna()
 
-        if g is None:
-            st.info("Chỉ có 1 kỳ sau khi nhóm theo thời gian. Hãy mở rộng khoảng thời gian hoặc chọn granularity nhỏ hơn.")
-        else:
-            g_plot = (g / g.iloc[0] * 100.0) if use_index else g
-            y_left_title  = "Y (Index=100)" if use_index else y_col
-            y_right_title = "X (Index=100)" if use_index else drv_for_trend
+                figL = go.Figure(go.Bar(x=lag_df["Lag"], y=lag_df["Correlation"], marker_color=np.where(lag_df["Correlation"] >= 0, "#27ae60", "#e74c3c")))
+                n_eff = len(g) - max_lag; ci_bound = 2 / np.sqrt(n_eff) if n_eff > 4 else np.nan
+                figL.add_hline(y=0, line=dict(color="#95a5a6", dash="dot"))
+                if np.isfinite(ci_bound):
+                    figL.add_hline(y=ci_bound, line=dict(color="#3498db", dash="dash"))
+                    figL.add_hline(y=-ci_bound, line=dict(color="#3498db", dash="dash"), name="95% CI")
+                figL.update_layout(height=380, title=f"Lagged Correlation", 
+                                   xaxis_title=f"Lag (Kỳ trễ - {used_freq})", yaxis_title="r",
+                                   yaxis=dict(range=[-1, 1]), showlegend=False, margin=dict(l=10, r=10, t=10, b=10))
 
-            figT = make_subplots(specs=[[{"secondary_y": True}]])
-            figT.add_bar(
-                x=g_plot.index, y=g_plot["Y"], name=y_col,
-                marker_color="#74b9ff", opacity=0.9,
-                hovertemplate="%{x|%Y-%m-%d}<br>Y=%{y:,.4g}<extra></extra>",
-                secondary_y=False
-            )
-            figT.add_scatter(
-                x=g_plot.index, y=g_plot["X"], name=drv_for_trend, mode="lines+markers",
-                line=dict(color="#e84393", width=2), marker=dict(size=5),
-                hovertemplate="%{x|%Y-%m-%d}<br>X=%{y:,.4g}<extra></extra>",
-                secondary_y=True
-            )
-            figT.update_layout(
-                height=420, bargap=0.35, hovermode="x unified",
-                legend=dict(orientation="h", y=1.1, x=0),
-                margin=dict(l=10, r=10, t=10, b=10),
-                xaxis=dict(type="date")
-            )
-            if used_freq == "M":   figT.update_xaxes(dtick="M1",  tickformat="%b %Y")
-            elif used_freq == "Q": figT.update_xaxes(dtick="M3",  tickformat="%b %Y")
-            else:                   figT.update_xaxes(dtick="M12", tickformat="%Y")
-
-            figT.update_yaxes(title_text=y_left_title, secondary_y=False)
-            figT.update_yaxes(title_text=y_right_title, secondary_y=True, showgrid=False)
-            st.plotly_chart(figT, use_container_width=True, config={"displayModeBar": False})
-
-            # Rolling-corr
-            if len(g) >= win:
+                # --- Chart 2: Rolling Correlation Chart (figR) ---
                 r_roll = g["Y"].rolling(win).corr(g["X"])
                 figR = go.Figure()
-                figR.add_scatter(
-                    x=g.index, y=r_roll, mode="lines+markers",
-                    name=f"Pearson-r rolling ({win})", line=dict(color="#2ecc71"),
-                    marker=dict(size=5),
-                    hovertemplate="%{x|%Y-%m-%d}<br>r=%{y:.3f}<extra></extra>"
-                )
+                figR.add_scatter(x=g.index, y=r_roll, mode="lines+markers", name=f"Pearson-r rolling ({win})", line=dict(color="#2ecc71"), marker=dict(size=5), yaxis='y1')
                 figR.add_hline(y=0, line=dict(color="#95a5a6", dash="dot"))
-                figR.update_layout(
-                    height=300, margin=dict(l=10, r=10, t=10, b=10),
-                    hovermode="x unified", yaxis=dict(range=[-1, 1])
-                )
+                figR.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", yaxis=dict(range=[-1, 1], title="Rolling r"))
                 figR.update_xaxes(type="date")
+
+                # --- OUTPUT CHARTS (Gom vào Columns) ---
+                st.markdown("---")
+                col_trend, col_lag = st.columns(2)
+                with col_trend:
+                    st.markdown("#### ⏱ Trend Y & X (Dual-Axis)")
+                    st.plotly_chart(figT, use_container_width=True, config={"displayModeBar": False})
+                with col_lag:
+                    st.markdown("#### ⏳ Lagged Correlation (Correlogram)")
+                    st.plotly_chart(figL, use_container_width=True, config={"displayModeBar": False})
+                
+                st.markdown("#### 🔄 Rolling Correlation")
                 st.plotly_chart(figR, use_container_width=True, config={"displayModeBar": False})
 
-                last_r = r_roll.dropna().iloc[-1] if r_roll.notna().any() else np.nan
+                # --- SUMMARY TEXT (Gom lại) ---
+                st.markdown("---")
+                st.markdown("#### 🧠 Nhận định từ Chuỗi thời gian")
+                
+                last_r_roll = r_roll.dropna().iloc[-1] if r_roll.notna().any() else np.nan
                 delta_y = (g.iloc[-1, 0] / g.iloc[0, 0] - 1) * 100 if len(g) >= 2 else np.nan
                 delta_x = (g.iloc[-1, 1] / g.iloc[0, 1] - 1) * 100 if len(g) >= 2 else np.nan
-                lbl = "tăng cùng chiều" if last_r == last_r and last_r > 0 else ("giảm ngược chiều" if last_r == last_r and last_r < 0 else "không rõ chiều")
+                lbl = "tăng cùng chiều" if last_r_roll == last_r_roll and last_r_roll > 0 else ("giảm ngược chiều" if last_r_roll == last_r_roll and last_r_roll < 0 else "không rõ chiều")
                 st.markdown(
-                    f"- **Diễn biến**: Y `{_fmt(delta_y,'.1f')}%`, X `{_fmt(delta_x,'.1f')}%` từ kỳ đầu → kỳ cuối.  "
-                    f"- **Rolling-r (gần nhất)**: r={_fmt(last_r,'.3f')} ⇒ **{lbl}** trong cửa sổ {win} kỳ."
+                    f"- **Diễn biến Trend**: Y `{_fmt(delta_y,'.1f')}%`, X `{_fmt(delta_x,'.1f')}%` từ kỳ đầu → kỳ cuối.  "
+                    f"- **Rolling-r (gần nhất)**: r={_fmt(last_r_roll,'.3f')} ⇒ **{lbl}** trong cửa sổ {win} kỳ."
                 )
+                
+                best_lag = lag_df.iloc[lag_df["Correlation"].abs().argmax()]
+                lag_dir = "Y (hiện tại) bị ảnh hưởng bởi X (quá khứ)" if best_lag["Lag"] > 0 else ("X (hiện tại) bị ảnh hưởng bởi Y (quá khứ)" if best_lag["Lag"] < 0 else "Tác động tức thì")
+                st.info(f"💡 **Tương quan Lagged mạnh nhất:** xảy ra ở **Lag {best_lag['Lag']}** (r={best_lag['Correlation']:.3f}). \n\n*Nhận định: {lag_dir} (với độ trễ {abs(best_lag['Lag'])} kỳ).*")
+                
+    # ==================== 5. Tính tương quan X~Y (Giữ nguyên) ====================
+    # (Đoạn code này tính toán r, p, n cho tất cả các biến X so với Y)
+    rows = []
+    for col in x_cols:
+        xx, yy = prepare_xy(dfx[col], dfx[y_col], drop_lt0, drop_eq0, use_log)
+        r, p, n = corr_one(xx, yy, method=method)
+        lo, hi = fisher_ci(r, n) if method.lower() == "pearson" else (np.nan, np.nan)
+        rows.append({
+            "X": col, "N": n, "r": r, "p_value": p, "CI_low": lo, "CI_high": hi,
+            "abs_r": abs(r), "direction": "dương (+)" if r == r and r > 0 else ("âm (−)" if r == r and r < 0 else "—"),
+            "strength": strength_label(abs(r)) if r == r else "—",
+        })
+    corr_tbl = pd.DataFrame(rows).sort_values("abs_r", ascending=False).reset_index(drop=True)
 
     # ==================== Tính tương quan X~Y ====================
     rows = []
@@ -2477,6 +2549,7 @@ with TAB3:
 
     pos = corr_tbl[corr_tbl["r"] > 0].head(3)
     neg = corr_tbl[corr_tbl["r"] < 0].head(3)
+    top_x_col = corr_tbl.loc[0, 'X'] if len(corr_tbl) else None
 
     if not pos.empty:
         s_txt = "; ".join(
@@ -3390,7 +3463,6 @@ with TAB5:
                     else:
                         st.warning("Cần ít nhất 2 điều kiện để so sánh.")
 ## ============================== TAB 6 : REGRESSION (Predictive & Audit) ==============================
-# ============================== TAB 6 : REGRESSION (Predictive & Audit) ==============================
 with TAB6:
     from sklearn.model_selection import train_test_split
     from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -3409,71 +3481,91 @@ with TAB6:
     if df_root is None or df_root.empty:
         st.info("Chưa có dữ liệu."); st.stop()
 
-    # --- 1. Local Drill-down Filter (Gọn gàng trong Expander) ---
+    # --- 1. Local Drill-down Filter (ĐÃ SỬA: Flexible Selection) ---
     def _local_drilldown(df_in):
-        # Mặc định đóng (expanded=False) để gọn màn hình
         with st.expander("🔎 Bộ lọc dữ liệu (Drill-down Filter)", expanded=False):
-            st.caption("Chọn các điều kiện bên dưới để khoanh vùng dữ liệu chạy mô hình.")
+            st.caption("Chọn cột và giá trị để khoanh vùng dữ liệu trước khi chạy mô hình.")
             
-            # Hàng 1: Checkbox chọn cột
-            c1, c2, c3, c4, c5 = st.columns(5)
-            use_reg = c1.checkbox("Region", key="reg_chk_r")
-            use_chan = c2.checkbox("Channel", key="reg_chk_c")
-            use_prod = c3.checkbox("Product", key="reg_chk_p")
-            use_cust = c4.checkbox("Customer", key="reg_chk_u")
-            use_time = c5.checkbox("Time", key="reg_chk_t", value=True)
-
+            # Lấy danh sách tất cả các cột để người dùng tự chọn
+            all_cols = ["—"] + list(df_in.columns)
             mask = pd.Series(True, index=df_in.index)
-            
-            # Logic Time Filter
-            col_time = SS.get('ov_time')
-            if not col_time:
-                 col_time = next((c for c in df_in.columns if 'date' in c.lower() or 'time' in c.lower()), None)
-            
-            if use_time and col_time:
-                try:
-                    time_s = pd.to_datetime(df_in[col_time], errors='coerce')
-                    periods = sorted(time_s.dt.to_period("M").astype(str).dropna().unique())
-                    default_sel = periods[-3:] if len(periods) > 3 else periods
-                    sel_t = st.multiselect(f"Thời gian ({col_time})", periods, default=default_sel, key="reg_sel_t")
-                    if sel_t: mask &= time_s.dt.to_period("M").astype(str).isin(sel_t)
-                except: st.warning("Lỗi xử lý cột thời gian.")
 
-            # Logic Categorical Filters
-            c_fil1, c_fil2 = st.columns(2)
-            with c_fil1:
-                if use_reg:
-                    col_reg = next((c for c in df_in.columns if 'region' in c.lower() or 'loc' in c.lower()), None)
-                    if col_reg:
-                        sel_r = st.multiselect(f"Region ({col_reg})", df_in[col_reg].unique(), key="reg_sel_r")
-                        if sel_r: mask &= df_in[col_reg].isin(sel_r)
-                if use_prod:
-                    col_prod = next((c for c in df_in.columns if 'product' in c.lower() or 'item' in c.lower()), None)
-                    if col_prod:
-                        opts = df_in[col_prod].value_counts().head(200).index.tolist()
-                        sel_p = st.multiselect(f"Product ({col_prod}) - Top 200", opts, key="reg_sel_p")
-                        if sel_p: mask &= df_in[col_prod].isin(sel_p)
-            with c_fil2:
-                if use_chan:
-                    col_chan = next((c for c in df_in.columns if 'channel' in c.lower()), None)
-                    if col_chan:
-                        sel_c = st.multiselect(f"Channel ({col_chan})", df_in[col_chan].unique(), key="reg_sel_c")
-                        if sel_c: mask &= df_in[col_chan].isin(sel_c)
-                if use_cust:
-                    col_cust = next((c for c in df_in.columns if 'cust' in c.lower()), None)
-                    if col_cust:
-                        opts = df_in[col_cust].value_counts().head(200).index.tolist()
-                        sel_u = st.multiselect(f"Customer ({col_cust}) - Top 200", opts, key="reg_sel_u")
-                        if sel_u: mask &= df_in[col_cust].isin(sel_u)
+            # Hàng 1: Checkbox kích hoạt bộ lọc
+            c1, c2, c3, c4, c5 = st.columns(5)
+            use_1 = c1.checkbox("Filter 1 (Region/Loc)", key="reg_chk_1")
+            use_2 = c2.checkbox("Filter 2 (Channel)", key="reg_chk_2")
+            use_3 = c3.checkbox("Filter 3 (Product)", key="reg_chk_3")
+            use_4 = c4.checkbox("Filter 4 (Customer)", key="reg_chk_4")
+            use_t = c5.checkbox("Time Filter", key="reg_chk_t", value=True)
 
-        return df_in.loc[mask].copy()
+            # Layout cho phần chọn cột và giá trị
+            r1, r2 = st.columns([1.5, 2.5])
+
+            # Hàm helper để render cặp Selectbox (Cột) + Multiselect (Giá trị)
+            def _render_selector(label, use_flag, keyword, key_suffix):
+                col_name = None
+                if use_flag:
+                    with r1:
+                        # Tự động tìm index mặc định nếu tên cột khớp từ khóa
+                        def_idx = 0
+                        if keyword:
+                            for i, c in enumerate(all_cols):
+                                if keyword.lower() in str(c).lower():
+                                    def_idx = i; break
+                        
+                        col_name = st.selectbox(f"Chọn Cột ({label})", all_cols, index=def_idx, key=f"reg_col_{key_suffix}")
+                    
+                    if col_name and col_name != "—":
+                        with r2:
+                            # Lấy Top 200 giá trị để tránh lag UI
+                            top_vals = df_in[col_name].astype(str).value_counts().head(200).index.tolist()
+                            vals = st.multiselect(f"Giá trị ({col_name})", top_vals, key=f"reg_val_{key_suffix}")
+                            return col_name, vals
+                return None, []
+
+            # Render 4 bộ lọc Categorical
+            c1_n, v1 = _render_selector("Vị trí", use_1, "region", "1")
+            if c1_n and v1: mask &= df_in[c1_n].astype(str).isin(v1)
+
+            c2_n, v2 = _render_selector("Kênh", use_2, "channel", "2")
+            if c2_n and v2: mask &= df_in[c2_n].astype(str).isin(v2)
+
+            c3_n, v3 = _render_selector("Sản phẩm", use_3, "prod", "3")
+            if c3_n and v3: mask &= df_in[c3_n].astype(str).isin(v3)
+
+            c4_n, v4 = _render_selector("Khách hàng", use_4, "cust", "4")
+            if c4_n and v4: mask &= df_in[c4_n].astype(str).isin(v4)
+
+            # Xử lý riêng cho Time Filter
+            if use_t:
+                with r1:
+                    # Gợi ý cột datetime
+                    dt_cands = [c for c in df_in.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
+                    dt_opts = ["—"] + dt_cands + [c for c in df_in.columns if c not in dt_cands]
+                    time_col = st.selectbox("Chọn Cột Thời gian", dt_opts, key="reg_col_time")
+                
+                if time_col and time_col != "—":
+                    with r2:
+                        try:
+                            ts = pd.to_datetime(df_in[time_col], errors='coerce')
+                            # Gom nhóm theo Tháng (Month) để lọc cho gọn
+                            periods = sorted(ts.dt.to_period("M").astype(str).dropna().unique())
+                            def_sel = periods[-3:] if len(periods) > 3 else periods
+                            sel_t = st.multiselect(f"Chọn Kỳ (Tháng)", periods, default=def_sel, key="reg_val_time")
+                            
+                            if sel_t:
+                                mask &= ts.dt.to_period("M").astype(str).isin(sel_t)
+                        except:
+                            st.warning(f"Cột '{time_col}' không chuẩn định dạng ngày tháng.")
+
+            return df_in.loc[mask].copy()
 
     # Áp dụng lọc
     df_reg = _local_drilldown(df_root)
     
     # Chỉ hiện số dòng nếu dữ liệu thay đổi hoặc người dùng quan tâm
     if len(df_reg) < len(df_root):
-        st.caption(f"⚡ Dữ liệu phân tích: **{len(df_reg):,}** dòng (đã lọc).")
+        st.caption(f"⚡ Dữ liệu phân tích: **{len(df_reg):,}** dòng (đã lọc từ {len(df_root):,}).")
 
     if df_reg.empty: st.warning("Dữ liệu rỗng sau khi lọc."); st.stop()
 
@@ -3637,7 +3729,33 @@ with TAB6:
             with c_g2:
                 st.markdown("**Top giao dịch lệch nhiều nhất:**")
                 st.dataframe(top_outliers.style.format("{:,.2f}"), use_container_width=True, height=400)
+            # THÊM VÀO CUỐI PHẦN 4.3 Residuals Audit (dưới c_g2):
 
+            # Tính toán các chỉ số rủi ro cần thiết
+            res_mean = residuals.mean()
+            res_std = residuals.std()
+            
+            # Đếm số lượng giao dịch vượt ngưỡng 2 Sigma
+            # 2 Sigma là ngưỡng phổ biến cho bất thường trong kiểm toán
+            two_sigma = 2 * res_std
+            outlier_mask = (residuals.abs() >= two_sigma)
+            n_high_risk = outlier_mask.sum()
+            
+            st.markdown("---")
+            st.markdown("#### 🚨 Nhận định Rủi ro về Độ lệch (Residual Risk Assessment)")
+            
+            with st.container(border=True):
+                st.markdown(f"""
+                * **Độ chính xác Trung bình (MAE):** {res['metrics']['mae']:,.2f}
+                * **Sai số Chuẩn (Std Dev of Residuals):** {res_std:,.2f}
+                * **Ngưỡng Rủi ro Cao (±2σ):** ±{two_sigma:,.2f} (Giá trị lệch so với dự báo lớn hơn ngưỡng này)
+                """)
+                
+                if n_high_risk > 0:
+                    st.error(f"**🚨 Cảnh báo Đỏ:** Phát hiện **{n_high_risk:,}** giao dịch có độ lệch vượt quá **±2 Std Dev** ({n_high_risk / len(y_test) * 100:.2f}% mẫu kiểm tra).")
+                    st.markdown(f"👉 **Hành động Audit:** Các giao dịch này đại diện cho **rủi ro cao nhất** vì mô hình không thể giải thích được hành vi của chúng. Trích xuất **Top 50** trong bảng bên cạnh để kiểm tra chi tiết.")
+                else:
+                    st.success("🟢 Độ lệch Residuals đang ở mức kiểm soát. Không có ngoại lai vượt ngưỡng 2σ rõ rệt.")
         else:
             # Binary charts (ROC, Confusion Matrix) - Giữ nguyên code logic cũ nếu cần
             st.markdown("#### 📐 Hệ số Log-Odds")
@@ -3707,162 +3825,215 @@ with TAB7:
     import plotly.express as px
     import plotly.graph_objects as go
     import streamlit as st
-
+    
+    # --- Định nghĩa lại hàm _top_values (cần cho Drill-down) ---
+    def _top_values(df_local, col, k=200):
+        if not col or col not in df_local.columns:
+            return pd.Series([], dtype='object')
+        return df_local[col].astype(str).value_counts(dropna=False).head(k)
+        
     st.subheader("⚖️ Pareto Principle (80/20 Rule) & Concentration Risk")
     
-    # --- 1. Input & Settings ---
+    # --- 1. Data Source & Filter (Giữ nguyên Drill-down) ---
     df = SS.get('df')
-    if df is None or df.empty:
-        st.info("Hãy nạp dữ liệu trước.")
-        st.stop()
+    if df is None or df.empty: st.info("Hãy nạp dữ liệu trước."); st.stop()
+        
+    def _render_filter_inline(df_in, key_prefix="par"):
+        # Hàm lọc cục bộ: giữ nguyên logic lọc phức hợp của bạn
+        with st.expander("🔎 Drill-down Filter (Bộ lọc dữ liệu)", expanded=False):
+            st.caption("Chọn cột và giá trị để khoanh vùng dữ liệu trước khi phân tích.")
+            all_cols_in = ["—"] + list(df_in.columns)
+            mask = pd.Series(True, index=df_in.index)
+            c1, c2, c3, c4, c5 = st.columns(5)
+            use_1 = c1.checkbox("Filter 1 (Region)", key=f"{key_prefix}_chk_1")
+            use_2 = c2.checkbox("Filter 2 (Channel)", key=f"{key_prefix}_chk_2")
+            use_3 = c3.checkbox("Filter 3 (Product)", key=f"{key_prefix}_chk_3")
+            use_4 = c4.checkbox("Filter 4 (Customer)", key=f"{key_prefix}_chk_4")
+            use_t = c5.checkbox("Time Filter", key=f"{key_prefix}_chk_t", value=False) 
+            r1, r2 = st.columns([1.5, 2.5])
+            def _render_sel(label, use_flag, keyword, suffix):
+                col_name = None
+                if use_flag:
+                    with r1:
+                        def_idx = 0
+                        if keyword: 
+                            for i, c in enumerate(all_cols_in):
+                                if keyword.lower() in str(c).lower(): def_idx = i; break
+                        col_name = st.selectbox(f"Chọn Cột ({label})", all_cols_in, index=def_idx, key=f"{key_prefix}_col_{suffix}")
+                    if col_name and col_name != "—":
+                        with r2:
+                            top_vals = _top_values(df_in, col_name).index.tolist()
+                            vals = st.multiselect(f"Giá trị ({col_name})", top_vals, key=f"{key_prefix}_val_{suffix}")
+                            return col_name, vals
+                return None, []
+            c1_n, v1 = _render_sel("Vị trí", use_1, "region", "1")
+            if c1_n and v1: mask &= df_in[c1_n].astype(str).isin(v1)
+            c2_n, v2 = _render_sel("Kênh", use_2, "channel", "2")
+            if c2_n and v2: mask &= df_in[c2_n].astype(str).isin(v2)
+            c3_n, v3 = _render_sel("Sản phẩm", use_3, "prod", "3")
+            if c3_n and v3: mask &= df_in[c3_n].astype(str).isin(v3)
+            c4_n, v4 = _render_sel("Khách hàng", use_4, "cust", "4")
+            if c4_n and v4: mask &= df_in[c4_n].astype(str).isin(v4)
+            if use_t:
+                with r1:
+                    dt_cands = [c for c in df_in.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
+                    dt_opts = ["—"] + dt_cands + [c for c in df_in.columns if c not in dt_cands]
+                    time_col = st.selectbox("Cột Thời gian", dt_opts, key=f"{key_prefix}_col_time")
+                if time_col and time_col != "—":
+                    with r2:
+                        try:
+                            ts = pd.to_datetime(df_in[time_col], errors='coerce')
+                            years = sorted(ts.dt.year.dropna().unique().astype(int).tolist())
+                            sel_y = st.multiselect(f"Chọn Năm", years, default=years, key=f"{key_prefix}_val_year")
+                            if sel_y: mask &= ts.dt.year.isin(sel_y)
+                        except: st.warning("Lỗi định dạng thời gian.")
+            return df_in.loc[mask]
 
-    # Lấy danh sách cột
-    all_cols = list(df.columns)
-    num_cols = list(df.select_dtypes(include=[np.number]).columns)
+    # --- ÁP DỤNG BỘ LỌC VÀ CẬP NHẬT SOURCE DATA ---
+    dfx = _render_filter_inline(df, "par")
+    all_cols = list(dfx.columns)
+    num_cols = list(dfx.select_dtypes(include=[np.number]).columns)
 
+    # --- 2. Cấu hình & Tính toán ---
+    st.markdown("### ⚙️ 1. Cấu hình Phân tích")
     with st.container(border=True):
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2 = st.columns(2)
         dim_col = c1.selectbox("🔍 Phân tích theo (Dimension)", ["—"] + all_cols, index=0, key="par_dim")
         met_col = c2.selectbox("💰 Giá trị đo lường (Metric)", ["—"] + num_cols, index=0, key="par_met")
         
-        threshold_A = c3.slider("Ngưỡng Nhóm A (Cumulative %)", 50, 90, 80, step=5, key="par_th_a", help="Mặc định 80%. Nhóm A đóng góp X% giá trị.")
-        threshold_B = c4.slider("Ngưỡng Nhóm B (Cumulative %)", threshold_A, 99, 95, step=1, key="par_th_b", help="Mặc định đến 95%. Nhóm B đóng góp tiếp theo.")
+        c3, c4 = st.columns(2)
+        threshold_A = c3.slider("Ngưỡng Nhóm A (Cumulative %)", 50, 90, 80, step=5, key="par_th_a")
+        threshold_B = c4.slider("Ngưỡng Nhóm B (Cumulative %)", threshold_A, 99, 95, step=1, key="par_th_b")
 
     if dim_col != "—" and met_col != "—":
-        # --- 2. Calculation Core ---
-        # Groupby và tính tổng
-        df_agg = df.groupby(dim_col)[met_col].sum().reset_index()
-        
-        # Lọc giá trị dương để Pareto có ý nghĩa (hoặc lấy trị tuyệt đối tùy nghiệp vụ, ở đây ta lấy > 0)
+        # --- Calculations ---
+        df_agg = dfx.groupby(dim_col)[met_col].sum().reset_index()
         df_agg = df_agg[df_agg[met_col] > 0].copy()
-        
-        if df_agg.empty:
-            st.warning("Không có dữ liệu > 0 để phân tích.")
-            st.stop()
-
-        # Sort giảm dần
+        if df_agg.empty: st.warning("Không có dữ liệu > 0 để phân tích."); st.stop()
         df_agg = df_agg.sort_values(by=met_col, ascending=False).reset_index(drop=True)
         
-        # Tính toán các chỉ số Pareto
         total_val = df_agg[met_col].sum()
         df_agg["Share"] = df_agg[met_col] / total_val
-        df_agg["CumSum"] = df_agg[met_col].cumsum()
-        df_agg["CumPct"] = df_agg["CumSum"] / total_val * 100.0
+        df_agg["CumPct"] = df_agg["Share"].cumsum() * 100.0
         
-        # Phân lớp A, B, C
         def classify_abc(cum_pct):
             if cum_pct <= threshold_A: return "A"
             elif cum_pct <= threshold_B: return "B"
             return "C"
         
-        # Lưu ý: Dòng ranh giới có thể bị lệch nhẹ do cumsum, logic này làm tròn theo dòng
         df_agg["Class"] = df_agg["CumPct"].apply(classify_abc)
-        
-        # Chỉnh lại dòng biên (để đảm bảo nhóm A không bị rỗng nếu item đầu tiên > threshold)
-        if df_agg.loc[0, "Class"] != "A" and df_agg.loc[0, "CumPct"] > threshold_A:
-             df_agg.loc[0, "Class"] = "A" # Item đầu tiên quá lớn, nó vẫn là A (Super A)
+        if df_agg.loc[0, "CumPct"] > threshold_A: df_agg.loc[0, "Class"] = "A" 
 
-        # --- 3. Summary Metrics & Gini ---
-        summary = df_agg.groupby("Class").agg(
-            Count=(dim_col, "count"),
-            Value=(met_col, "sum")
-        ).reindex(["A", "B", "C"]).fillna(0)
-        
+        summary = df_agg.groupby("Class").agg(Count=(dim_col, "count"), Value=(met_col, "sum")).reindex(["A", "B", "C"]).fillna(0)
         summary["Count %"] = summary["Count"] / len(df_agg) * 100
         summary["Value %"] = summary["Value"] / total_val * 100
 
-        # Tính hệ số Gini (Concentration Index)
-        # Công thức Gini giản lược cho dữ liệu rời rạc
         n = len(df_agg)
         cum_y = df_agg["CumPct"].values / 100.0
         cum_x = np.arange(1, n + 1) / n
-        # Diện tích dưới đường Lorenz (B) ~ xấp xỉ bằng hình thang
         area_under_curve = np.trapz(cum_y, cum_x)
         gini = 1 - 2 * area_under_curve
         
-        # Hiển thị KPI
-        st.markdown("#### 🏁 Kết quả Phân tích ABC")
-        k1, k2, k3, k4 = st.columns(4)
-        
-        cnt_A = int(summary.loc["A", "Count"])
-        val_A_pct = summary.loc["A", "Value %"]
-        
-        k1.metric("Nhóm A (Vital Few)", f"{cnt_A} items", f"Chiếm {val_A_pct:.1f}% Giá trị")
-        k2.metric("Nhóm C (Trivial Many)", f"{int(summary.loc['C', 'Count'])} items", f"Chiếm {summary.loc['C', 'Value %']:.1f}% Giá trị")
-        k3.metric("Tổng Items", f"{n:,}")
-        k4.metric("Hệ số Gini", f"{gini:.3f}", 
-                  help="0: Bình đẳng tuyệt đối (dàn đều)\n1: Bất bình đẳng tuyệt đối (tập trung vào 1 item). \nGini > 0.6 là rủi ro tập trung cao.")
+        df_agg["Share_Sq"] = df_agg["Share"] ** 2
+        hhi = float(df_agg["Share_Sq"].sum() * 10000.0)
 
-        # --- 4. Visualization (Lorenz Curve) ---
-        # Giới hạn hiển thị để chart không bị lag nếu có quá nhiều item
-        MAX_SHOW = 200
-        if n > MAX_SHOW:
-            st.caption(f"⚠️ Biểu đồ chỉ hiển thị Top {MAX_SHOW} items hàng đầu để tối ưu hiệu năng (Số liệu tính toán vẫn dùng toàn bộ {n} items).")
-            plot_df = df_agg.head(MAX_SHOW).copy()
+        if "A" in summary.index:
+            cnt_A = int(summary.loc["A", "Count"])
+            val_A_pct = summary.loc["A", "Value %"]
         else:
-            plot_df = df_agg.copy()
+            cnt_A = 0
+            val_A_pct = 0.0
+        # --- 3. Metrics & Insight ---
+        st.markdown("### 📊 2. Kết quả Metrics & Phân tích ABC")
+        
+        # 3.1. Hiển thị KPIs (HHI/Gini và Group A, B, C)
+        # SỬA LỖI TRÙNG LẶP: Đã bỏ Bảng Chi tiết ABC, dồn vào Metrics Card
+        
+        share_A = summary.loc["A", "Value %"] if "A" in summary.index else 0
+        share_B = summary.loc["B", "Value %"] if "B" in summary.index else 0
+        share_C = summary.loc["C", "Value %"] if "C" in summary.index else 0
+        cnt_A = int(summary.loc["A", "Count"])
+        
+        k1, k2, k3, k4, k5 = st.columns(5)
+
+        k1.metric("Nhóm A (Vital Few)", f"{cnt_A} items", f"Chiếm {share_A:.1f}% Giá trị")
+        k2.metric("Nhóm B", f"{int(summary.loc['B','Count'])} items", f"Chiếm {share_B:.1f}% Giá trị")
+        k3.metric("Nhóm C", f"{int(summary.loc['C','Count'])} items", f"Chiếm {share_C:.1f}% Giá trị")
+        k4.metric("Hệ số Gini", f"{gini:.3f}", help="Gini > 0.6 là rủi ro tập trung cao.")
+        k5.metric("Chỉ số HHI", f"{hhi:,.0f}", help="HHI > 1800 là Mức độ Tập trung Cao.")
+        
+        
+        # --- 4. Visualization (Bố cục gọn, tránh chồng lấn) ---
+        st.markdown("### 📈 3. Trực quan hóa (Pareto & Lorenz)")
+        
+        # 4.1. Pareto Bar và Cumulative % Line (Lorenz Line)
+        st.markdown("#### Pareto Bar (Theo Class ABC) & Cumulative % Line")
+        MAX_SHOW = 100
+        plot_df = df_agg.head(MAX_SHOW).copy() if n > MAX_SHOW else df_agg.copy()
 
         fig = go.Figure()
-        
-        # Bar chart (Giá trị)
-        fig.add_trace(go.Bar(
-            x=plot_df[dim_col].astype(str),
-            y=plot_df[met_col],
-            name=met_col,
-            marker_color=plot_df["Class"].map({"A": "#ff7675", "B": "#ffeaa7", "C": "#74b9ff"}),
-            text=plot_df["Class"],
-            hovertemplate="%{x}<br>Val: %{y:,.0f}<br>Class: %{text}<extra></extra>"
-        ))
 
-        # Line chart (Lũy kế %)
+        # Cumulative Percentage Line (Lorenz Line) - TRỤC PHẢI (Y2)
         fig.add_trace(go.Scatter(
             x=plot_df[dim_col].astype(str),
-            y=plot_df["CumPct"],
-            name="Cumulative %",
+            y=plot_df["CumPct"], 
+            name="Cumulative Share % (Line)",
             yaxis="y2",
-            mode="lines",
-            line=dict(color="#2d3436", width=2)
+            mode="lines+markers",
+            line=dict(color='#4d16b9', width=3),
+            # Hovertemplate gọn gàng:
+            hovertemplate="**Cumulative Share:** %{y:.1f}%<extra></extra>"
         ))
-
-        # Đường tham chiếu 80%
-        fig.add_hline(y=threshold_A, line_dash="dot", line_color="gray", annotation_text=f"Cut-off A ({threshold_A}%)")
-
+        
+        # Bar chart (Giá trị) - TRỤC TRÁI (Y1)
+        fig.add_trace(go.Bar(
+            x=plot_df[dim_col].astype(str), y=plot_df[met_col], name=met_col,
+            marker_color=plot_df["Class"].map({"A": "#ff7675", "B": "#ffeaa7", "C": "#74b9ff"}),
+            text=plot_df["Class"], yaxis="y1",
+            hovertemplate="**Value:** %{y:,.0f}<br>**Class:** %{text}<extra></extra>"
+        ))
+        
+        # Thêm đường 80%
+        fig.add_hline(y=threshold_A, line_dash="dot", line_color="red", annotation_text=f"Cut-off {threshold_A}% (Group A)", yref="y2")
         fig.update_layout(
-            title="Biểu đồ Pareto (Lorenz Curve)",
-            xaxis=dict(title=dim_col, type='category'),
-            yaxis=dict(title=met_col),
-            yaxis2=dict(title="Cumulative %", overlaying="y", side="right", range=[0, 105]),
-            legend=dict(x=0.8, y=1.1, orientation="h"),
             height=500,
-            bargap=0.1
+            xaxis=dict(title=dim_col, type='category'),
+            yaxis=dict(title=met_col, side='left', showgrid=False),
+            # Tinh chỉnh Y2: Range 0-110 và suffix %. Giảm khoảng cách titles để tránh chồng
+            yaxis2=dict(title="Cumulative %", side='right', overlaying='y', range=[0, 110], ticksuffix="%", title_standoff=0),
+            # Legend đặt ở trên cùng, trung tâm:
+            legend=dict(x=0.5, y=1.08, xanchor="center", orientation="h"),
+            margin=dict(l=20, r=20, t=50, b=20),
+            hovermode="x unified"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 5. Detail Table (Drill-down) ---
-        with st.expander("📄 Chi tiết phân loại ABC (Danh sách đầy đủ)", expanded=True):
-            # Filter tool
-            fil_c = st.radio("Lọc theo nhóm:", ["All", "A (Quan trọng)", "B (Trung bình)", "C (Ít quan trọng)"], horizontal=True)
+        # 4.3. Audit Insight
+        risk_hhi = "CAO (HHI > 1800)" if hhi >= 1800 else ("TRUNG BÌNH (HHI > 1000)" if hhi >= 1000 else "THẤP")
+        
+        st.info(f"""
+        **💡 Audit Insight:**
+        - **Rủi ro Tập trung (HHI & Gini):** Hệ số HHI là **{hhi:,.0f}** và Gini Index là **{gini:.3f}**. Mức rủi ro tập trung được đánh giá là **{risk_hhi}**. Rủi ro này cần được kiểm tra chi tiết trong nhóm A.
+        - **Nhóm A (Vital Few):** Gồm **{cnt_A}** {dim_col} ({(cnt_A/n*100):.1f}% số lượng) nhưng đóng góp **{val_A_pct:.1f}%** tổng {met_col}.
+          👉 **Hành động Audit:** Kiểm tra 100% các giao dịch trong nhóm A để đảm bảo tuân thủ chính sách giá/chiết khấu.
+        - **Nhóm C (Trivial Many):** Gồm **{int(summary.loc['C', 'Count'])}** {dim_col} nhưng chỉ đóng góp **{summary.loc['C', 'Value %']:.1f}%** giá trị.
+          👉 **Hành động Audit:** Tập trung vào kiểm tra tính **gian lận hệ thống** (ví dụ: các giao dịch nhỏ lặp lại) thay vì kiểm tra giá trị giao dịch đơn lẻ.
+        """)
+        
+        # 4.4. Detail Table (Bọc trong Expander)
+        with st.expander("📄 Chi tiết phân loại ABC (Danh sách đầy đủ)", expanded=False):
+            fil_c = st.radio("Lọc theo nhóm:", ["All", "A (Quan trọng)", "B (Trung bình)", "C (Ít quan trọng)"], horizontal=True, key='fil_abc')
             
             view_df = df_agg.copy()
             if fil_c == "A (Quan trọng)": view_df = view_df[view_df["Class"]=="A"]
             elif fil_c == "B (Trung bình)": view_df = view_df[view_df["Class"]=="B"]
             elif fil_c == "C (Ít quan trọng)": view_df = view_df[view_df["Class"]=="C"]
             
-            # Format số liệu thủ công để tránh lỗi version
             view_df_show = view_df.copy()
             view_df_show[met_col] = view_df_show[met_col].map(lambda x: f"{x:,.0f}")
             view_df_show["Share"] = view_df_show["Share"].map(lambda x: f"{x*100:.2f}%")
             view_df_show["CumPct"] = view_df_show["CumPct"].map(lambda x: f"{x:.2f}%")
-            
             st.dataframe(view_df_show, use_container_width=True, hide_index=True)
 
-        # --- 6. Audit Insight / Recommendation ---
-        st.info(f"""
-        **💡 Audit Insight:**
-        - **Nhóm A:** Gồm **{cnt_A}** {dim_col} ({(cnt_A/n*100):.1f}% số lượng) nhưng đóng góp **{val_A_pct:.1f}%** tổng {met_col}.
-          👉 **Hành động:** Kiểm kê định kỳ 100%, đàm phán giá tốt nhất, ưu tiên chăm sóc (nếu là khách hàng).
-        - **Nhóm C:** Gồm **{int(summary.loc['C', 'Count'])}** {dim_col} nhưng chỉ đóng góp **{summary.loc['C', 'Value %']:.1f}%** giá trị.
-          👉 **Hành động:** Xem xét loại bỏ mã hàng (nếu là Product), tự động hóa quy trình (nếu là Customer nhỏ) để giảm chi phí quản lý.
-        """)
     else:
         st.info("👈 Vui lòng chọn Dimension và Metric ở trên để bắt đầu phân tích.")
